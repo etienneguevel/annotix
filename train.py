@@ -1,10 +1,10 @@
 """
-Train Spec2Vec model
+Train Spec2Vec model on spectrum data.
+
+This script loads reference and test spectra from CSV files, processes them,
+trains a Spec2Vec model, and computes similarity scores between spectra.
 """
 
-"""
-Train a Spec2Vec model, i.e. Word2Vec on spectrum data
-"""
 import sys
 
 from loguru import logger
@@ -19,7 +19,15 @@ from tqdm import tqdm
 
 
 def spectrum_processing(s):
-    """This is how one would typically design a desired pre- and post-processing pipeline."""
+    """
+    Apply a series of preprocessing and filtering steps to a spectrum.
+
+    Args:
+        s (Spectrum): Input spectrum.
+
+    Returns:
+        Spectrum: Processed spectrum.
+    """
     s = msfilters.default_filters(s)
     s = msfilters.add_parent_mass(s)
     s = msfilters.normalize_intensities(s)
@@ -31,6 +39,15 @@ def spectrum_processing(s):
 
 
 def get_peaks(peaks_list):
+    """
+    Parse a string of peaks into a sorted numpy array.
+
+    Args:
+        peaks_list (str): String containing peaks, separated by newlines.
+
+    Returns:
+        np.ndarray: Sorted array of peaks by m/z.
+    """
     if not isinstance(peaks_list, str):
         return None
     # peaks = np.array([np.array(item.split(" "), dtype=float) for item in peaks_list.split("\\n") if item and isinstance(item, str)])
@@ -49,6 +66,16 @@ def get_peaks(peaks_list):
     return peaks[sorted_indexes]
 
 def get_spectrum(series, verbose=True):
+    """
+    Convert a pandas Series to a Spectrum object.
+
+    Args:
+        series (pd.Series): Row from dataframe containing spectrum info.
+        verbose (bool): If True, print spectrum details.
+
+    Returns:
+        Spectrum or None: Spectrum object or None if peaks are missing.
+    """
     peaks = get_peaks(series["peaks_list"])
     if peaks is None:
         return None
@@ -70,6 +97,13 @@ def get_spectrum(series, verbose=True):
     return Spectrum(mz=peaks[:, 0], intensities=peaks[:, 1], metadata=metadata)
 
 def plot_spectrum(spectrum, other_spectrum=None):
+    """
+    Plot one or two spectra.
+
+    Args:
+        spectrum (Spectrum): First spectrum to plot.
+        other_spectrum (Spectrum, optional): Second spectrum to plot against.
+    """
     
     if not other_spectrum:
         spectrum.plot() #Plot one spectrum
@@ -78,6 +112,15 @@ def plot_spectrum(spectrum, other_spectrum=None):
     plt.show()
 
 def get_documents(input_data):
+    """
+    Convert a dataframe of spectrum data to a list of SpectrumDocument objects.
+
+    Args:
+        input_data (pd.DataFrame): DataFrame containing spectrum data.
+
+    Returns:
+        list: List of SpectrumDocument objects.
+    """
     spectrums = [get_spectrum(row, verbose=False) for _, row in tqdm(input_data.iterrows(), desc="Fetch the spectrums", total=len(input_data))]
 
     # print(spectrum.losses) #Empty…

@@ -1,3 +1,10 @@
+"""
+Fetch spectral and compound data from a PostgreSQL database.
+
+This script connects to a specified database, queries for spectral data from selected sources,
+and optionally outputs the results as a pandas DataFrame or CSV file.
+"""
+
 from argparse import ArgumentParser
 from dotenv import dotenv_values
 import pandas as pd
@@ -5,6 +12,19 @@ import psycopg2
 
 
 def connect(database, user, password, host, port):
+    """
+    Establish a connection to a PostgreSQL database.
+
+    Args:
+        database (str): Database name.
+        user (str): Username.
+        password (str): Password.
+        host (str): Host address.
+        port (int): Port number.
+
+    Returns:
+        connection: psycopg2 connection object.
+    """
     return psycopg2.connect(
         database=database,
         user=user,
@@ -14,6 +34,17 @@ def connect(database, user, password, host, port):
     )
 
 def query(database, schema, origin_db="Bacterial_metabolites_database"):
+    """
+    Generate a SQL query to fetch spectral and compound data for a given source.
+
+    Args:
+        database (str): Database name.
+        schema (str): Schema name.
+        origin_db (str): Source database name.
+
+    Returns:
+        str: SQL query string.
+    """
     return f"""select distinct
                 S.spectral_data_id, S.pepmass, S.num_peaks, S.peaks_list, S.data_id,
                 C.smiles,  C.compound_name,
@@ -31,6 +62,12 @@ def query(database, schema, origin_db="Bacterial_metabolites_database"):
                 where D.database_name='{origin_db}' and S.pepmass!=999.9999;"""
 
 def get_arguments():
+    """
+    Parse command-line arguments for source databases and output options.
+
+    Returns:
+        argparse.Namespace: Parsed arguments.
+    """
     sources = ["Bacterial_metabolites_database", "Emerging_pollutants_database", "Metabolite_database", "POS_LC", "NEG_LC", "GNPS-LIBRARY"]
     parser = ArgumentParser(prog="Annotix")
     parser.add_argument("--sources_db", required=True, type=str, nargs="+", choices=sources)
@@ -39,6 +76,18 @@ def get_arguments():
     return parser.parse_args()
 
 def fetch_source(source_db, database, schema, cursor):
+    """
+    Execute a query for a given source database and fetch results.
+
+    Args:
+        source_db (str): Source database name.
+        database (str): Database name.
+        schema (str): Schema name.
+        cursor: psycopg2 cursor object.
+
+    Returns:
+        list: List of rows fetched from the database.
+    """
     msg = query(database, schema, source_db)
     cursor.execute(msg)
     row_lst = [row for row in cursor]
