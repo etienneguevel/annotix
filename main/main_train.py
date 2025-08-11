@@ -6,18 +6,17 @@ import pandas as pd
 from spec2vec import Spec2Vec
 from spec2vec.model_building import train_new_word2vec_model
 
-from annotix_ml.train import get_documents
+from annotix_ml.spectrum import get_documents
 from annotix_ml.word2vec import train, process_text
 
 
 logger.info("Load reference data and get documents")
-# references = pd.read_csv("main/test_data/references.csv")
+references = pd.read_csv("main/test_data/references.csv")
 
-# logger.info("Filter by the charge")
-# references = references[references.charge == "1+"]
-# logger.info(len(references))
-
-# reference_documents = get_documents(references)
+logger.info("Filter by the charge")
+references = references[references.charge == "1+"]
+reference_documents = get_documents(references)
+logger.info(f"{len(reference_documents)} reference documents loaded")
 
 logger.info("Load test data and get documents")
 test = pd.read_csv("main/test_data/test-data.csv")
@@ -42,10 +41,10 @@ test_documents = get_documents(test)
 algo = "cbow"  # or "ngram"
 
 train_data = []
-for doc in test_documents:
+for doc in reference_documents:
     train_data += doc.words
 ngrams, vocab, word_to_ix = process_text(train_data, context_size=2, type=algo)
-model, losses = train(ngrams=ngrams, vocab=vocab, word_to_ix=word_to_ix, embedding_dim=300, context_size=500, epochs=30, device="mps", batch_size=128, algo=algo)
+model, losses = train(ngrams=ngrams, vocab=vocab, word_to_ix=word_to_ix, embedding_dim=150, context_size=500, epochs=10, device="mps", batch_size=1024, algo=algo)
 
 plt.plot(losses)
 plt.xlabel("Epoch")
