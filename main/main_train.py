@@ -1,15 +1,22 @@
 import pickle
 
 from loguru import logger
-from matchms import calculate_scores
 import matplotlib.pyplot as plt
 import pandas as pd
-from spec2vec import Spec2Vec
-from spec2vec.model_building import train_new_word2vec_model
 
 from annotix_ml.spectrum import get_documents
 from annotix_ml.word2vec import train, process_text
 
+import argparse
+
+parser = argparse.ArgumentParser(description="Train a word2vec model.")
+parser.add_argument("--context_size", type=int, default=2, help="Size of context window")
+parser.add_argument("--embedding_dim", type=int, default=10, help="Dimension of word embeddings")
+parser.add_argument("--algo", type=str, choices=["ngram", "cbow"], default="ngram", help="Algorithm: 'ngram' or 'cbow'")
+parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
+parser.add_argument("--device", type=str, default="mps", help="GPU device to use (e.g., 'cpu', 'cuda', 'mps')")
+parser.add_argument("--epoch", type=int, default=10, help="Number of training epochs")
+args = parser.parse_args()
 
 logger.info("Load reference data and get documents")
 references = pd.read_csv("main/test_data/references.csv")
@@ -23,26 +30,12 @@ logger.info("Load test data and get documents")
 test = pd.read_csv("main/test_data/test-data.csv")
 test_documents = get_documents(test)
 
-# Several options to train the model:
-
-# 1. using spec2vec package
-# logger.info("Train Spec2Vec model")
-# model = train_new_word2vec_model(test_documents, iterations=30, filename="references.model", workers=4, progress_logger=True)
-
-# 2. using gensim directly
-# from gensim.models import Word2Vec
-# model = Word2Vec(test_documents, vector_size=300, window=500, min_count=1, sg=0, negative=5, workers=4, epochs=30, compute_loss=True)
-
-# 3. using own CBOW/NGRAM implementation for GPU support
-# need to preprocess the text first
-
-algo = "cbow"  # or "ngram"
-
 train_data = []
 for doc in reference_documents:
     train_data += doc.words
-ngrams, vocab, word_to_ix = process_text(train_data, context_size=2, type=algo)
-model, losses = train(ngrams=ngrams, vocab=vocab, word_to_ix=word_to_ix, embedding_dim=150, context_size=500, epochs=10, device="mps", batch_size=1024, algo=algo)
+ngrams, vocab, word_to_ix = process_text(train_data, context_size=args.context_size, type=args.algo)
+model, losses = train(ngrams=ngrams, vocab=vocab, word_to_ix=word_to_ix, embedding_dim=args.embedding_dim, context_size=args.context_size, 
+                      epochs=args.epochs, device=args.device, batch_size=args.batch_size, algo=args.algo)
 
 plt.plot(losses)
 plt.xlabel("Epoch")
