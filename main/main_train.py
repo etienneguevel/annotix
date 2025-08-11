@@ -1,3 +1,4 @@
+import pickle
 
 from loguru import logger
 from matchms import calculate_scores
@@ -22,8 +23,7 @@ logger.info("Load test data and get documents")
 test = pd.read_csv("main/test_data/test-data.csv")
 test_documents = get_documents(test)
 
-
-#TODO we train the model on the test data, but we should use the reference data instead but much slower
+reference_documents = test_documents
 
 # Several options to train the model:
 
@@ -63,3 +63,6 @@ if hasattr(model, "wv"):
 # logger.info("Compute the similarities")
 # scores = calculate_scores(reference_documents, test_documents, Spec2Vec(model, allowed_missing_percentage=5.0))
 # print(scores.to_array())
+
+with open("./model.pkl", "wb") as f:
+    pickle.dump({"model": model, "losses": losses}, f)
