@@ -23,8 +23,6 @@ logger.info("Load test data and get documents")
 test = pd.read_csv("main/test_data/test-data.csv")
 test_documents = get_documents(test)
 
-reference_documents = test_documents
-
 # Several options to train the model:
 
 # 1. using spec2vec package
