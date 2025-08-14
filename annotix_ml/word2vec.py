@@ -5,13 +5,14 @@ This module provides implementations for n-gram and continuous bag-of-words (CBO
 It includes utilities for processing text, batching data, and training the models.
 """
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from tqdm import tqdm
 
-
+#TODO add word_to_idx in the objects
 class NGramLanguageModeler(nn.Module):
     """
     Neural network for n-gram language modeling.
@@ -25,8 +26,16 @@ class NGramLanguageModeler(nn.Module):
         forward(inputs): Forward pass for batch of context word indices.
     """
 
-    def __init__(self, vocab_size, embedding_dim, context_size):
+    def __init__(self, vocab_size, embedding_dim, context_size, word_to_ix):
         super(NGramLanguageModeler, self).__init__()
+        
+        # Attributes
+        self.vocab_size = vocab_size
+        self.context_size = context_size  # Number of context words
+        self.embedding_dim = embedding_dim  # Dimension of word embeddings
+        self.word_to_ix = word_to_ix  # Store the mapping for later use
+
+        # Layers
         self.embeddings = nn.Embedding(vocab_size, embedding_dim)
         self.linear1 = nn.Linear(context_size * embedding_dim, 128)
         self.linear2 = nn.Linear(128, vocab_size)
@@ -60,11 +69,19 @@ class CBOW(nn.Module):
         forward(inputs): Forward pass for batch of context word indices.
     """
 
-    def __init__(self, vocab_size, embedding_dim, context_size):
+    def __init__(self, vocab_size, embedding_dim, word_to_ix, context_size=None):
         super(CBOW, self).__init__()
+
+        # Attributes
+        self.vocab_size = vocab_size
+        self.context_size = context_size  # Number of context words
+        self.embedding_dim = embedding_dim  # Dimension of word embeddings
+        self.word_to_ix = word_to_ix  # Store the mapping for later use
+
         self.embeddings = nn.Embedding(vocab_size, embedding_dim)
         self.linear1 = nn.Linear(embedding_dim, 128)
         self.linear2 = nn.Linear(128, vocab_size)
+        self.word_to_ix = word_to_ix
 
     def forward(self, inputs):
         """
@@ -121,7 +138,6 @@ def process_text_ngram(text, context_size):
     """
     ngrams = [([text[i - j - 1] for j in range(context_size)], text[i]) for i in range(context_size, len(text))]
     # Print the first 3, just so you can see what they look like.
-    print(ngrams[:3])
 
     vocab = set(text)
     word_to_ix = {word: i for i, word in enumerate(vocab)}
@@ -234,6 +250,85 @@ def batchify(ngrams, batch_size):
         targets = [target for _, target in batch]
         yield contexts, targets
 
+def cosine_similarity(vec1, vec2):
+    """
+    Computes cosine similarity between two vectors.
+
+    Args:
+        vec1 (Tensor): First vector.
+        vec2 (Tensor): Second vector.
+
+    Returns:
+        float: Cosine similarity value.
+    """
+    if not isinstance(vec1, torch.Tensor):
+        vec1 = torch.tensor(vec1, dtype=torch.float32)
+    if not isinstance(vec2, torch.Tensor):
+        vec2 = torch.tensor(vec2, dtype=torch.float32)
+    cos = nn.CosineSimilarity(dim=0)
+    return cos(vec1, vec2).item()
+
+def word_similarity(model, word1, word2):
+    """
+    Computes similarity between two words using the trained model.
+
+    Args:
+        model (nn.Module): Trained word2vec model.
+        word1 (str): First word.
+        word2 (str): Second word.
+        word_to_ix (dict): Mapping from word to index.
+
+    Returns:
+        float: Similarity score between the two words.
+    """
+    if hasattr(model, "wv"):
+        vec1 = model.wv[word1]
+        vec2 = model.wv[word2]
+    else:
+        idx1 = model.word_to_ix.get(word1)
+        idx2 = model.word_to_ix.get(word2)
+
+        if not idx1 or not idx2:
+            raise ValueError(f"Words '{word1}' or '{word2}' not found in vocabulary.")
+
+        vec1 = model.embeddings.weight[idx1].cpu()
+        vec2 = model.embeddings.weight[idx2].cpu()
+
+    return cosine_similarity(torch.tensor(vec1), torch.tensor(vec2))
+
+def embedding(model, word):
+    """
+    Retrieves the embedding vector for a given word from the specified model.
+
+    Args:
+        model: An object containing word embeddings and a mapping from words to indices.
+        word (str): The word for which to obtain the embedding vector.
+
+    Returns:
+        numpy.ndarray: The embedding vector corresponding to the given word.
+
+    Raises:
+        KeyError: If the word is not present in the model's vocabulary.
+    """
+    indexes = model.word_to_ix[word]
+    return model.embeddings.weight[indexes].detach().numpy()
+
+def spectrum_simularity(model, spec_doc_1, spec_doc_2):
+    """
+    Computes the cosine similarity between the average word embeddings of two spectrum documents.
+
+    Args:
+        model: The word embedding model used to generate embeddings for words.
+        spec_doc_1: An object representing the first spectrum document, expected to have a 'words' attribute.
+        spec_doc_2: An object representing the second spectrum document, expected to have a 'words' attribute.
+
+    Returns:
+        float: The cosine similarity between the averaged embeddings of the two spectrum documents.
+    """
+    vec_spec1 = np.mean([embedding(model, word) for word in spec_doc_1.words], axis=0)
+    vec_spec2 = np.mean([embedding(model, word) for word in spec_doc_2.words], axis=0)
+    return cosine_similarity(vec_spec1, vec_spec2)
+
 def train(ngrams, vocab, word_to_ix, embedding_dim, context_size, epochs=10, device="cpu", batch_size=32, algo="ngram"):
     """
     Trains the n-gram or CBOW language model.
@@ -256,10 +351,12 @@ def train(ngrams, vocab, word_to_ix, embedding_dim, context_size, epochs=10, dev
     """
     losses = []
     loss_function = nn.NLLLoss()
+
     if algo == "cbow":
-        model = CBOW(len(vocab), embedding_dim, context_size)
+        model = CBOW(vocab_size=len(vocab), embedding_dim=embedding_dim, word_to_ix=word_to_ix)
     else:
-        model = NGramLanguageModeler(len(vocab), embedding_dim, context_size)
+        model = NGramLanguageModeler(vocab_size=len(vocab), embedding_dim=embedding_dim, word_to_ix=word_to_ix, context_size=context_size)
+
     model.to(torch.device(device))
     optimizer = optim.SGD(model.parameters(), lr=0.001)
 
@@ -277,4 +374,6 @@ def train(ngrams, vocab, word_to_ix, embedding_dim, context_size, epochs=10, dev
             optimizer.step()
             total_loss += loss.item()
         losses.append(total_loss)
+        print(f"Epoch {epoch + 1}/{epochs}, Loss: {total_loss:.4f}")
+
     return model, losses
