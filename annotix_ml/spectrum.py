@@ -7,13 +7,62 @@ trains a Spec2Vec model, and computes similarity scores between spectra.
 
 import sys
 
-from matchms import Spectrum
+import matchms
 import matchms.filtering as msfilters
 import matplotlib.pyplot as plt
 import numpy as np
 from spec2vec import SpectrumDocument
 from tqdm import tqdm
 
+
+class Spectrum(matchms.Spectrum):
+    def __init__(self, input_data):
+        mz, intensities, metadata = get_spectrum(input_data)
+        super().__init__(mz=mz, intensities=intensities, metadata=metadata)
+
+    def document(self, n_decimals=2, processing_first=True):
+        """
+        Convert the Spectrum to a SpectrumDocument with specified decimal precision.
+
+        Args:
+            n_decimals (int): Number of decimal places for m/z and intensity values.
+
+        Returns:
+            SpectrumDocument: Document representation of the spectrum.
+        """
+
+        spectrum = spectrum_processing(self) if processing_first else self
+        return SpectrumDocument(spectrum, n_decimals=n_decimals)
+
+    def __repr__(self):
+        string = f"""
+Spectrum(id={self.metadata.get('id')}, mz=[{self.mz[0]}, ..., {self.mz[-1]}], intensities=[{self.intensities[0]}, ..., {self.intensities[-1]}])
+
+Metadata:
+Spectrum ID:     {self.metadata.get('id')}
+Smiles:          {self.metadata.get('smiles')}
+Compound name:   {self.metadata.get('compound_name')}
+Pepmass:         {self.metadata.get('pepmass')}
+Charge:          {self.metadata.get('charge')}
+Number of peaks: {len(self.peaks)}
+"""
+        return string.strip()
+
+    def __str__(self):
+        return self.__repr__()
+
+    @property
+    def name(self):
+        """
+        Return the compound name from the metadata.
+        """
+        return self.metadata.get("compound_name", "Unknown Compound")
+    @property
+    def smiles(self):
+        """
+        Return the SMILES representation from the metadata.
+        """
+        return self.metadata.get("smiles", "Unknown SMILES")
 
 def spectrum_processing(s):
     """
@@ -62,7 +111,7 @@ def get_peaks(peaks_list):
     sorted_indexes = np.argsort(peaks[:, 0])
     return peaks[sorted_indexes]
 
-def get_spectrum(series, verbose=True):
+def get_spectrum(series):
     """
     Convert a pandas Series to a Spectrum object.
 
@@ -81,17 +130,11 @@ def get_spectrum(series, verbose=True):
         pepmass=series["pepmass"],
         smiles=series["smiles"],
         compound_name=series["compound_name"],
-        charge=series["charge"]
+        charge=series["charge"],
+        id=series["spectral_data_id"]
     )
 
-    if verbose:
-        print(f"Reading spectrum for {metadata.get('id')}")
-        print(f"Pepmass:            {metadata.get('pepmass')}")
-        print(f"Smiles:             {metadata.get('smiles')}")
-        print(f"Number of peaks:    {len(peaks)}")
-
-
-    return Spectrum(mz=peaks[:, 0], intensities=peaks[:, 1], metadata=metadata)
+    return peaks[:, 0], peaks[:, 1], metadata
 
 def plot_spectrum(spectrum, other_spectrum=None):
     """
@@ -107,27 +150,3 @@ def plot_spectrum(spectrum, other_spectrum=None):
     else:
         spectrum.plot_against(other_spectrum)
     plt.show()
-
-def get_documents(input_data):
-    """
-    Convert a dataframe of spectrum data to a list of SpectrumDocument objects.
-
-    Args:
-        input_data (pd.DataFrame): DataFrame containing spectrum data.
-
-    Returns:
-        list: List of SpectrumDocument objects.
-    """
-    spectrums = [get_spectrum(row, verbose=False) for _, row in tqdm(input_data.iterrows(), desc="Fetch the spectrums", total=len(input_data))]
-
-    # print(spectrum.losses) #Empty…
-
-    # plot_spectrum(spectrums[0])
-    # plot_spectrum(spectrums[0], spectrums[12])
-
-    spectrums = [spectrum_processing(spectrum) for spectrum in spectrums if spectrum is not None]
-    spectrums = [spectrum for spectrum in spectrums if spectrum is not None]
-
-    # plot_spectrum(spectrums[0], spectrums[12])
-
-    return [SpectrumDocument(s, n_decimals=2) for s in spectrums]

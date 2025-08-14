@@ -18,7 +18,7 @@ parser.add_argument("--epoch", type=int, default=10, help="Number of training ep
 args = parser.parse_args()
 
 logger.info("Load reference data and get documents")
-references = pd.read_csv("main/test_data/references.csv")
+references = pd.read_csv("main/test_data/references.csv") #TODO in args
 
 logger.info("Filter by the charge")
 references = references[references.charge == "1+"]
@@ -43,6 +43,6 @@ plt.title("Training Loss Over Epochs")
 fig.savefig("losses.png")
 
 logger.info("Saving the model in ./model.pt")
-torch.save(model, "./model.pt")
+torch.save(model, "models/model.pt")
 
 logger.info("Model training complete")

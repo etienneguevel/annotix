@@ -12,7 +12,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 from tqdm import tqdm
 
-#TODO add word_to_idx in the objects
+from annotix_ml.spectrum import Spectrum
+
+
 class NGramLanguageModeler(nn.Module):
     """
     Neural network for n-gram language modeling.
@@ -313,20 +315,26 @@ def embedding(model, word):
     indexes = model.word_to_ix[word]
     return model.embeddings.weight[indexes].detach().numpy()
 
-def spectrum_simularity(model, spec_doc_1, spec_doc_2):
+def spectrum_similarity(model, spec_1, spec_2):
     """
-    Computes the cosine similarity between the average word embeddings of two spectrum documents.
+    Computes the cosine similarity between the average word embeddings of two spectrum object or documents (str).
 
     Args:
         model: The word embedding model used to generate embeddings for words.
-        spec_doc_1: An object representing the first spectrum document, expected to have a 'words' attribute.
-        spec_doc_2: An object representing the second spectrum document, expected to have a 'words' attribute.
+        spec_1: An object representing the first spectrum. If class Spectrum, convert to a SpectrumDocument first.
+        spec_2: An object representing the second spectrum. If class Spectrum, convert to a SpectrumDocument first.
 
     Returns:
         float: The cosine similarity between the averaged embeddings of the two spectrum documents.
     """
-    vec_spec1 = np.mean([embedding(model, word) for word in spec_doc_1.words], axis=0)
-    vec_spec2 = np.mean([embedding(model, word) for word in spec_doc_2.words], axis=0)
+    if isinstance(spec_1, Spectrum):
+        spec_1 = spec_1.document()
+    if isinstance(spec_2, Spectrum):
+        spec_2 = spec_2.document()
+
+    vec_spec1 = np.mean([embedding(model, word) for word in spec_1.words], axis=0)
+    vec_spec2 = np.mean([embedding(model, word) for word in spec_2.words], axis=0)
+
     return cosine_similarity(vec_spec1, vec_spec2)
 
 def train(ngrams, vocab, word_to_ix, embedding_dim, context_size, epochs=10, device="cpu", batch_size=32, algo="ngram"):

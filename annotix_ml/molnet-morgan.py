@@ -151,7 +151,10 @@ if __name__ == "__main__":
         classes = dataset["compound_name"].tolist()
 
     network = MolecularNetwork(descriptor="morgan2", sim_metric="tanimoto", sim_threshold=0.85)
-    graph = network.create_graph(smiles_list, classes) #TODO how to add the MS/MS spectra to the network computation?
+    #TODO how to add the MS/MS spectra to the network computation? Via another similarity metric, possibly a spec2vec model?
+    # network.similarity_calculator = SimilarityWord2Vec(model, allowed_missing_percentage=5.0) need to be implemented
+    # network.fingerprint_calculator = like FingerprintCalculator but from the peaks instead of smiles need to be implemented
+    graph = network.create_graph(smiles_list, classes)
     print_graph_info(graph, node_names=smiles_list)
 
 
