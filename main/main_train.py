@@ -18,45 +18,31 @@ parser.add_argument("--epoch", type=int, default=10, help="Number of training ep
 args = parser.parse_args()
 
 logger.info("Load reference data and get documents")
-# references = pd.read_csv("main/test_data/references.csv")
+references = pd.read_csv("main/test_data/references.csv")
 
-# logger.info("Filter by the charge")
-# references = references[references.charge == "1+"]
-# reference_documents = get_documents(references)
-# logger.info(f"{len(reference_documents)} reference documents loaded")
+logger.info("Filter by the charge")
+references = references[references.charge == "1+"]
+reference_documents = get_documents(references)
+logger.info(f"{len(reference_documents)} reference documents loaded")
 
-logger.info("Load test data and get documents")
-test = pd.read_csv("main/test_data/test-data.csv")
-test_documents = get_documents(test)
-
-reference_documents = test_documents
-
+# Extract the words from the data, a.k.a. the spectra peaks
 train_data = []
 for doc in reference_documents:
     train_data += doc.words
 
+# Prepare the docuemnts for training
 ngrams, vocab, word_to_ix = process_text(train_data, context_size=args.context_size, type=args.algo)
 model, losses = train(ngrams=ngrams, vocab=vocab, word_to_ix=word_to_ix, embedding_dim=args.embedding_dim, context_size=args.context_size, 
                       epochs=args.epoch, device=args.device, batch_size=args.batch_size, algo=args.algo)
 
+fig = plt.figure(figsize=(10, 5))
 plt.plot(losses)
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
 plt.title("Training Loss Over Epochs")
-plt.show()
+fig.savefig("losses.png")
+
+logger.info("Saving the model in ./model.pt")
+torch.save(model, "./model.pt")
 
 logger.info("Model training complete")
-
-# Get the vectors
-if hasattr(model, "wv"):
-    vectors = model.wv.vectors
-    print(f"Number of vectors: {len(vectors)}")
-
-# # Compute the similarities scores
-# logger.info("Compute the similarities")
-# scores = calculate_scores(reference_documents, test_documents, Spec2Vec(model, allowed_missing_percentage=5.0))
-# print(scores.to_array())
-
-print("losses:", losses)
-
-torch.save(model, "./model.pt")

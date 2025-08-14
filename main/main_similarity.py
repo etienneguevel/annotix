@@ -1,9 +1,10 @@
 """
-Similarity for two spectra using cosine similarity.
+Test script: Similarity for two spectra using cosine similarity.
 """
 
+from argparse import ArgumentParser
+
 from loguru import logger
-import numpy as np
 import pandas as pd
 import torch
 
@@ -11,8 +12,20 @@ from annotix_ml.spectrum import get_documents
 from annotix_ml.word2vec import word_similarity, embedding, spectrum_simularity
 
 
+def arguments():
+    """
+    Parse command line arguments.
+    
+    Returns:
+        Namespace: Parsed arguments.
+    """
+    parser = ArgumentParser(description="Compute similarity between spectra.")
+    parser.add_argument("--model_path", type=str, default="./model.pt", help="Path to the trained model.")
+    return parser.parse_args()
 
 if __name__ == "__main__":
+
+    args = arguments()
 
     logger.info("Load test data and get documents")
     test = pd.read_csv("main/test_data/test-data.csv")
@@ -22,7 +35,7 @@ if __name__ == "__main__":
     word1 = doc.words[0]
     word2 = doc.words[1]
 
-    model = torch.load("model.pt", map_location=torch.device("cpu"))
+    model = torch.load(args.model_path, map_location=torch.device("cpu"))
 
     logger.warning("Similarity between two words in the model")
     vector = embedding(model, word1)
