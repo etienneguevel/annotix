@@ -63,12 +63,12 @@ logger.info(train.shape)
 
 model = Mass2SmilesModel(
     units=2048,
-    heads=16,
+    heads=8,  # 129 is not divisible by 16, but 128 is divisible by 8
     dropout=.1,
     dense_dropout=.1,
     filters=256,
     num_layers=5,
-    embed_dim=256
+    embed_dim=128  # Use 128 positional encoding dimensions only
 )
 
 model.forward(xtrain)

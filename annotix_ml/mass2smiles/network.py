@@ -160,7 +160,7 @@ def prepro_specs_train(df):
 def encoding(rag_tensor, positional_encoding, dimn):
     to_pad=[]
     for sample in rag_tensor:
-        all_dim = [sample[0].numpy().tolist()]
+        all_dim = []
         pos_enc = [positional_encoding[int(i)-1] for i in sample[1].numpy().tolist()]
         for dim in range(dimn):
             dim_n = [i[dim] for i in pos_enc]
