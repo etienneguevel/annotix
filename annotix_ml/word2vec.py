@@ -327,10 +327,10 @@ def spectrum_similarity(model, spec_1, spec_2):
     Returns:
         float: The cosine similarity between the averaged embeddings of the two spectrum documents.
     """
-    if isinstance(spec_1, Spectrum):
-        spec_1 = spec_1.document()
-    if isinstance(spec_2, Spectrum):
-        spec_2 = spec_2.document()
+    # if isinstance(spec_1, Spectrum):
+    #     spec_1 = spec_1.document()
+    # if isinstance(spec_2, Spectrum):
+    #     spec_2 = spec_2.document()
 
     vec_spec1 = np.mean([embedding(model, word) for word in spec_1.words], axis=0)
     vec_spec2 = np.mean([embedding(model, word) for word in spec_2.words], axis=0)

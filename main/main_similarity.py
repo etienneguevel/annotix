@@ -44,12 +44,12 @@ if __name__ == "__main__":
     sim1 = word_similarity(model, word1, word2)
     sim2 = word_similarity(model, word1, word1)
 
-    logger.warning(f"Similarity between {word1} and {word2}: {round(sim1, 2)}")
-    logger.warning(f"Similarity between {word1} and {word1}: {round(sim2, 2)}")
+    logger.success(f"Similarity between {word1} and {word2}: {round(sim1, 2)}")
+    logger.success(f"Similarity between {word1} and {word1}: {round(sim2, 2)}")
 
     logger.info("Similarity between two spectra (already processed as documents)")
     sim1 = spectrum_similarity(model, spec_1, spec_2)
-    logger.warning(f"Similarity between {spec_1.name} and {spec_2.name}: {round(sim1, 2)}")
+    logger.success(f"Similarity between {spec_1.name} and {spec_2.name}: {round(sim1, 2)}")
 
     sim2 = spectrum_similarity(model, spec_1, spec_1)
-    logger.warning(f"Similarity between {spec_1.name} and {spec_1.name}: {round(sim2, 2)}")
+    logger.success(f"Similarity between {spec_1.name} and {spec_1.name}: {round(sim2, 2)}")
