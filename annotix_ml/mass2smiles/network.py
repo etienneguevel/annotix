@@ -79,9 +79,15 @@ class TCN(nn.Module):
         return self.network(x)
 
 class Mass2SmilesModel(nn.Module):
-    def __init__(self, units, heads, dropout, dense_dropout, filters, num_layers, embed_dim):
+    def __init__(self, units, heads, dropout, dense_dropout, filters, num_layers, embed_dim, output_dim_smiles, output_dim_fg, input_dim=2):
         super().__init__()
-        self.mask_value = 10
+        self.mask_value = 0  # Changed from 10 to 0 for direct encoding
+        self.input_dim = input_dim
+        self.embed_dim = embed_dim
+        
+        # Project input features to embedding dimension
+        self.input_projection = nn.Linear(input_dim, embed_dim)
+        
         self.encoder_layers = nn.ModuleList([
             EncoderLayer(d_model=embed_dim, num_heads=heads, dff=units, dropout_rate=dropout)
             for _ in range(num_layers)
@@ -89,14 +95,18 @@ class Mass2SmilesModel(nn.Module):
         self.tcn = TCN(num_layers=6, in_channels=embed_dim, out_channels=filters, kernel_size=8, dilations=[2 ** i for i in range(6)])
         self.dropout_fg = nn.Dropout(dense_dropout)
         self.dense_fg1 = nn.Linear(filters, 128)
-        self.dense_fg2 = nn.Linear(128, 71)
+        self.dense_fg2 = nn.Linear(128, output_dim_fg)
         self.dropout_smiles = nn.Dropout(dense_dropout)
-        self.dense_smiles1 = nn.Linear(filters, 512)
-        self.dense_smiles2 = nn.Linear(512, 512)
+        self.dense_smiles1 = nn.Linear(filters, output_dim_smiles)
+        self.dense_smiles2 = nn.Linear(output_dim_smiles, output_dim_smiles)
 
     def forward(self, x):
-        # Masking
+        # Project input to embedding dimension
+        x = self.input_projection(x)
+        
+        # Masking (not needed for direct encoding but kept for compatibility)
         x = torch.where(x == self.mask_value, torch.zeros_like(x), x)
+        
         for layer in self.encoder_layers:
             x = layer(x)
 
@@ -157,20 +167,181 @@ def prepro_specs_train(df):
 
     return torch.nn.utils.rnn.pad_sequence([torch.tensor(v, dtype=torch.float32) for v in valid], batch_first=True)
 
-def encoding(rag_tensor, positional_encoding, dimn):
-    to_pad=[]
+def direct_spectral_encoding(rag_tensor, max_length=None):
+    """
+    Direct encoding keeping both m/z and intensity information
+    Args:
+        rag_tensor: tensor with shape [batch, 2, seq_len] where 2 = [intensities, mz_values]
+        max_length: maximum sequence length for padding
+    Returns:
+        tensor with shape [batch, max_seq_len, 2] where 2 = [normalized_mz, normalized_intensity]
+    """
+    encoded = []
+    
+    if max_length is None:
+        max_length = max([tensor.shape[1] for tensor in rag_tensor])
+    
     for sample in rag_tensor:
-        all_dim = []
-        pos_enc = [positional_encoding[int(i)-1] for i in sample[1].numpy().tolist()]
-        for dim in range(dimn):
-            dim_n = [i[dim] for i in pos_enc]
-            all_dim.append(dim_n)
-        to_pad.append(all_dim)
+        intensities = sample[0].numpy()  # First row: intensities
+        mz_values = sample[1].numpy()    # Second row: m/z values
+        
+        # Remove zero-padded values (where both mz and intensity are 0)
+        valid_indices = (intensities != 0) | (mz_values != 0)
+        valid_intensities = intensities[valid_indices]
+        valid_mz = mz_values[valid_indices]
+        
+        if len(valid_intensities) == 0:
+            # Handle empty spectra
+            peaks = torch.zeros((max_length, 2))
+        else:
+            # Normalize values
+            normalized_mz = valid_mz / 1000.0  # Scale m/z to reasonable range
+            normalized_intensities = valid_intensities / max(valid_intensities) if max(valid_intensities) > 0 else valid_intensities
+            
+            # Stack m/z and intensity as features
+            peaks = torch.stack([torch.tensor(normalized_mz, dtype=torch.float32), 
+                               torch.tensor(normalized_intensities, dtype=torch.float32)], dim=1)
+            
+            # Pad or truncate to max_length
+            if len(peaks) < max_length:
+                padding = torch.zeros((max_length - len(peaks), 2))
+                peaks = torch.cat([peaks, padding], dim=0)
+            elif len(peaks) > max_length:
+                peaks = peaks[:max_length]
+        
+        encoded.append(peaks)
+    
+    return torch.stack(encoded)
 
-    # pad to maxlen=501 along the sequence dimension
-    to_pad = [torch.nn.functional.pad(torch.tensor(i, dtype=torch.float32), (0, 501 - len(i[0]), 0, 0), value=10) \
-              if len(i[0]) < 501 else torch.tensor(i, dtype=torch.float32)[:, :501] for i in to_pad]
+class SpectrumEncoder(nn.Module):
+    """
+    Option 2: Learned embeddings for m/z values with intensity projection
+    """
+    def __init__(self, embed_dim, num_mz_bins=20000, mz_max=2000):
+        super().__init__()
+        self.mz_max = mz_max
+        self.num_mz_bins = num_mz_bins
+        self.embed_dim = embed_dim
+        
+        # Learn embeddings for discretized m/z values
+        self.mz_embedding = nn.Embedding(num_mz_bins, embed_dim//2)
+        self.intensity_projection = nn.Linear(1, embed_dim//2)
+        
+    def forward(self, mz, intensities):
+        """
+        Args:
+            mz: tensor of shape [batch, seq_len] with m/z values
+            intensities: tensor of shape [batch, seq_len] with intensity values
+        Returns:
+            embedded features of shape [batch, seq_len, embed_dim]
+        """
+        # Discretize m/z into bins (scale and clamp to valid range)
+        mz_scaled = (mz / self.mz_max * self.num_mz_bins).clamp(0, self.num_mz_bins - 1).long()
+        
+        # Get m/z embeddings
+        mz_emb = self.mz_embedding(mz_scaled)
+        
+        # Project intensities
+        int_emb = self.intensity_projection(intensities.unsqueeze(-1))
+        
+        # Concatenate m/z and intensity embeddings
+        return torch.cat([mz_emb, int_emb], dim=-1)
 
-    to_pad = np.swapaxes(np.stack((to_pad)), 1, -1)
+def learned_spectral_encoding(rag_tensor, max_length=None):
+    """
+    Preprocessing for learned embeddings approach
+    Args:
+        rag_tensor: tensor with shape [batch, 2, seq_len] where 2 = [intensities, mz_values]
+        max_length: maximum sequence length for padding
+    Returns:
+        tuple (mz_tensor, intensity_tensor) both with shape [batch, max_seq_len]
+    """
+    mz_list = []
+    intensity_list = []
+    
+    if max_length is None:
+        max_length = max([tensor.shape[1] for tensor in rag_tensor])
+    
+    for sample in rag_tensor:
+        intensities = sample[0].numpy()  # First row: intensities
+        mz_values = sample[1].numpy()    # Second row: m/z values
+        
+        # Remove zero-padded values (where both mz and intensity are 0)
+        valid_indices = (intensities != 0) | (mz_values != 0)
+        valid_intensities = intensities[valid_indices]
+        valid_mz = mz_values[valid_indices]
+        
+        # Normalize intensities to [0, 1]
+        if len(valid_intensities) > 0 and max(valid_intensities) > 0:
+            valid_intensities = valid_intensities / max(valid_intensities)
+        
+        # Pad or truncate to max_length
+        if len(valid_mz) < max_length:
+            # Pad with zeros
+            padded_mz = np.zeros(max_length)
+            padded_intensities = np.zeros(max_length)
+            padded_mz[:len(valid_mz)] = valid_mz
+            padded_intensities[:len(valid_intensities)] = valid_intensities
+        else:
+            # Truncate
+            padded_mz = valid_mz[:max_length]
+            padded_intensities = valid_intensities[:max_length]
+        
+        mz_list.append(torch.tensor(padded_mz, dtype=torch.float32))
+        intensity_list.append(torch.tensor(padded_intensities, dtype=torch.float32))
+    
+    return torch.stack(mz_list), torch.stack(intensity_list)
 
-    return torch.tensor(to_pad)
+class Mass2SmilesModelV2(nn.Module):
+    """
+    Model using learned embeddings for m/z values (Option 2)
+    """
+    def __init__(self, units, heads, dropout, dense_dropout, filters, num_layers, embed_dim, 
+                 output_dim_smiles, output_dim_fg, num_mz_bins=20000, mz_max=2000):
+        super().__init__()
+        self.embed_dim = embed_dim
+        
+        # Spectrum encoder with learned embeddings
+        self.spectrum_encoder = SpectrumEncoder(embed_dim, num_mz_bins, mz_max)
+        
+        self.encoder_layers = nn.ModuleList([
+            EncoderLayer(d_model=embed_dim, num_heads=heads, dff=units, dropout_rate=dropout)
+            for _ in range(num_layers)
+        ])
+        self.tcn = TCN(num_layers=6, in_channels=embed_dim, out_channels=filters, kernel_size=8, 
+                       dilations=[2 ** i for i in range(6)])
+        
+        self.dropout_fg = nn.Dropout(dense_dropout)
+        self.dense_fg1 = nn.Linear(filters, 128)
+        self.dense_fg2 = nn.Linear(128, output_dim_fg)
+        self.dropout_smiles = nn.Dropout(dense_dropout)
+        self.dense_smiles1 = nn.Linear(filters, output_dim_smiles)
+        self.dense_smiles2 = nn.Linear(output_dim_smiles, output_dim_smiles)
+
+    def forward(self, mz, intensities):
+        # Encode spectra using learned embeddings
+        x = self.spectrum_encoder(mz, intensities)
+        
+        # Transformer layers
+        for layer in self.encoder_layers:
+            x = layer(x)
+
+        # TCN layer
+        x = self.tcn(x)
+
+        # Take mean over sequence (global pooling)
+        x = x.mean(dim=1)
+
+        # Functional groups output
+        fg = self.dropout_fg(x)
+        fg = torch.tanh(self.dense_fg1(fg))
+        fg = self.dropout_fg(fg)
+        fg = torch.sigmoid(self.dense_fg2(fg))
+
+        # Smiles output
+        smiles = self.dropout_smiles(x)
+        smiles = F.relu(self.dense_smiles1(smiles))
+        smiles = self.dropout_smiles(smiles)
+        smiles = self.dense_smiles2(smiles)
+
+        return smiles, fg

@@ -8,7 +8,7 @@ import time
 from loguru import logger
 from torchinfo import summary
 
-from annotix_ml.mass2smiles.network import positional_encoding, Mass2SmilesModel, prepro_specs_train, direct_spectral_encoding
+from annotix_ml.mass2smiles.network import Mass2SmilesModelV2, prepro_specs_train, learned_spectral_encoding
 from annotix_ml.mass2smiles.process_spectrum import spectrum_processing, metadata_processing
 
 set_matchms_logger_level("ERROR")
@@ -53,15 +53,16 @@ metadata = pd.DataFrame(list(zip(IDs, precs,mzs,ints,loss_mzs,loss_ints)), colum
 logger.info('Building training data')
 train = prepro_specs_train(metadata) #OK HERE
 
-logger.info('Direct spectral encoding (Option 1)')
-xtrain = direct_spectral_encoding(train, max_length=501)
+logger.info('Learned spectral encoding (Option 2)')
+mz_data, intensity_data = learned_spectral_encoding(train, max_length=501)
 logger.info(f"train.shape: {train.shape}")
-logger.info(f"xtrain.shape: {xtrain.shape}")
+logger.info(f"mz_data.shape: {mz_data.shape}")
+logger.info(f"intensity_data.shape: {intensity_data.shape}")
 
 # Set embedding dimension for the model
 embedding_dim = 128
 
-model = Mass2SmilesModel(
+model = Mass2SmilesModelV2(
     units=2048,
     heads=8,  # 128 is divisible by 8
     dropout=.1,
@@ -71,16 +72,15 @@ model = Mass2SmilesModel(
     embed_dim=embedding_dim,  # Embedding dimension for transformer layers
     output_dim_smiles=512,
     output_dim_fg=71,
-    input_dim=2  # m/z and intensity
+    num_mz_bins=20000,  # Number of m/z bins for embedding
+    mz_max=2000  # Maximum m/z value expected
 )
 
-# smiles, fg = model.forward(xtrain)
+# Test forward pass
+smiles_output, fg_output = model.forward(mz_data, intensity_data)
+logger.info(f"smiles_output.shape: {smiles_output.shape}")
+logger.info(f"fg_output.shape: {fg_output.shape}")
 
-print(summary(model, input_size=(xtrain.shape[0], xtrain.shape[1], xtrain.shape[2]), col_names=["input_size", "output_size", "num_params", "trainable"], device="cpu"))
-
-# model.load_weights("/app/misunderstood-fire-207/model")
-# result= model.predict(xtrain)
-# np.save(f'{args.output}/result_predict.npy', result[0])
-# np.save(f'{args.output}/result_predict1.npy', result[1])
+print(summary(model, input_data=[mz_data, intensity_data], col_names=["input_size", "output_size", "num_params", "trainable"], device="cpu"))
 
 logger.success("Everything was successfully done.")
