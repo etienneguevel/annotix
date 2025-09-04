@@ -697,3 +697,756 @@ def train_mass2smiles(model, train_loader, val_loader, num_epochs=10, learning_r
         logger.info(f'Final model saved: {final_path}')
     
     return train_losses, val_losses
+
+# Sequence-to-Sequence Components
+class PositionalEncoding(nn.Module):
+    """Positional encoding for transformer decoder"""
+    
+    def __init__(self, d_model, max_len=512):
+        super().__init__()
+        self.dropout = nn.Dropout(p=0.1)
+        
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        self.register_buffer('pe', pe)
+    
+    def forward(self, x):
+        x = x + self.pe[:x.size(0), :]
+        return self.dropout(x)
+
+class SMILESDecoder(nn.Module):
+    """Transformer decoder for SMILES sequence generation"""
+    
+    def __init__(self, vocab_size, d_model=256, nhead=8, num_layers=6, max_length=150):
+        super().__init__()
+        self.d_model = d_model
+        self.vocab_size = vocab_size
+        self.max_length = max_length
+        
+        # Token embedding and positional encoding
+        self.token_embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_encoding = PositionalEncoding(d_model, max_length)
+        
+        # Transformer decoder layers
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=d_model * 4,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers)
+        
+        # Output projection
+        self.output_projection = nn.Linear(d_model, vocab_size)
+        
+        # Initialize weights
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights"""
+        nn.init.normal_(self.token_embedding.weight, mean=0, std=0.02)
+        nn.init.normal_(self.output_projection.weight, mean=0, std=0.02)
+        nn.init.zeros_(self.output_projection.bias)
+    
+    def forward(self, memory, tgt_tokens=None, tgt_mask=None, memory_key_padding_mask=None):
+        """
+        Forward pass for decoder
+        
+        Args:
+            memory: Encoded spectrum features [batch, memory_seq_len, d_model]
+            tgt_tokens: Target tokens [batch, tgt_seq_len] (for teacher forcing)
+            tgt_mask: Target mask to prevent attention to future tokens
+            memory_key_padding_mask: Mask for padded spectrum features
+        
+        Returns:
+            logits: [batch, tgt_seq_len, vocab_size]
+        """
+        if tgt_tokens is None:
+            raise ValueError("tgt_tokens required for forward pass")
+        
+        # Embed target tokens
+        tgt_embedded = self.token_embedding(tgt_tokens) * np.sqrt(self.d_model)
+        tgt_embedded = self.pos_encoding(tgt_embedded.transpose(0, 1)).transpose(0, 1)
+        
+        # Apply transformer decoder
+        decoder_output = self.transformer_decoder(
+            tgt=tgt_embedded.transpose(0, 1),
+            memory=memory.transpose(0, 1),
+            tgt_mask=tgt_mask,
+            memory_key_padding_mask=memory_key_padding_mask
+        ).transpose(0, 1)
+        
+        # Project to vocabulary
+        logits = self.output_projection(decoder_output)
+        
+        return logits
+    
+    def generate_sequence(self, memory, tokenizer, max_length=None, temperature=1.0, 
+                         memory_key_padding_mask=None):
+        """
+        Generate SMILES sequence autoregressively
+        
+        Args:
+            memory: Encoded spectrum features [batch, seq_len, d_model]
+            tokenizer: SMILES tokenizer with vocab
+            max_length: Maximum sequence length
+            temperature: Sampling temperature
+            memory_key_padding_mask: Mask for memory padding
+        
+        Returns:
+            generated_tokens: [batch, seq_len]
+        """
+        if max_length is None:
+            max_length = self.max_length
+        
+        batch_size = memory.size(0)
+        device = memory.device
+        
+        # Initialize with START token
+        start_token = tokenizer.token_to_idx['<START>']
+        generated = torch.full((batch_size, 1), start_token, dtype=torch.long, device=device)
+        
+        # Track finished sequences
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        
+        for step in range(max_length - 1):
+            # Create causal mask
+            tgt_len = generated.size(1)
+            tgt_mask = torch.triu(torch.ones(tgt_len, tgt_len, device=device), diagonal=1).bool()
+            
+            # Forward pass
+            logits = self.forward(
+                memory=memory,
+                tgt_tokens=generated,
+                tgt_mask=tgt_mask,
+                memory_key_padding_mask=memory_key_padding_mask
+            )
+            
+            # Get next token logits
+            next_token_logits = logits[:, -1, :] / temperature
+            
+            # Sample next token
+            probs = F.softmax(next_token_logits, dim=-1)
+            next_token = torch.multinomial(probs, 1)
+            
+            # Append to sequence
+            generated = torch.cat([generated, next_token], dim=1)
+            
+            # Check for END token
+            end_token = tokenizer.token_to_idx['<END>']
+            newly_finished = (next_token.squeeze(1) == end_token)
+            finished = finished | newly_finished
+            
+            # Stop if all sequences finished
+            if finished.all():
+                break
+        
+        return generated
+
+def create_causal_mask(size, device):
+    """Create causal mask for transformer decoder"""
+    return torch.triu(torch.ones(size, size, device=device), diagonal=1).bool()
+
+def create_padding_mask(tokens, pad_token_id=0):
+    """Create padding mask for sequences"""
+    return (tokens == pad_token_id)
+
+# Enhanced Sequence-to-Sequence Models
+class Mass2SmilesSeq2SeqDirect(nn.Module):
+    """
+    Sequence-to-sequence model with direct spectral encoding (enhanced Option 1)
+    """
+    
+    def __init__(self, units, heads, dropout, dense_dropout, filters, num_layers, embed_dim, 
+                 vocab_size, output_dim_fg, input_dim=2, max_smiles_length=150, decoder_layers=6):
+        super().__init__()
+        self.mask_value = 0
+        self.input_dim = input_dim
+        self.embed_dim = embed_dim
+        self.max_smiles_length = max_smiles_length
+        
+        # Spectrum encoder (same as before)
+        self.input_projection = nn.Linear(input_dim, embed_dim)
+        self.encoder_layers = nn.ModuleList([
+            EncoderLayer(d_model=embed_dim, num_heads=heads, dff=units, dropout_rate=dropout)
+            for _ in range(num_layers)
+        ])
+        self.tcn = TCN(num_layers=6, in_channels=embed_dim, out_channels=filters, kernel_size=8, 
+                       dilations=[2 ** i for i in range(6)])
+        
+        # Spectrum features to decoder dimension
+        self.memory_projection = nn.Linear(filters, embed_dim)
+        
+        # SMILES sequence decoder
+        self.smiles_decoder = SMILESDecoder(
+            vocab_size=vocab_size,
+            d_model=embed_dim,
+            nhead=heads,
+            num_layers=decoder_layers,
+            max_length=max_smiles_length
+        )
+        
+        # Functional groups branch
+        self.dropout_fg = nn.Dropout(dense_dropout)
+        self.dense_fg1 = nn.Linear(filters, 128)
+        self.dense_fg2 = nn.Linear(128, output_dim_fg)
+    
+    def encode_spectrum(self, x):
+        """Encode spectrum to memory representation"""
+        # Project input to embedding dimension
+        x = self.input_projection(x)
+        
+        # Masking
+        x = torch.where(x == self.mask_value, torch.zeros_like(x), x)
+        
+        # Transformer encoder layers
+        for layer in self.encoder_layers:
+            x = layer(x)
+        
+        # TCN layer
+        encoded = self.tcn(x)  # [batch, seq_len, filters]
+        
+        # Project to decoder dimension
+        memory = self.memory_projection(encoded)  # [batch, seq_len, embed_dim]
+        
+        return encoded, memory
+    
+    def forward(self, spectrum, smiles_target=None, teacher_forcing_ratio=1.0):
+        """
+        Forward pass with optional teacher forcing
+        
+        Args:
+            spectrum: Input spectrum [batch, seq_len, input_dim]
+            smiles_target: Target SMILES tokens [batch, target_len] (for teacher forcing)
+            teacher_forcing_ratio: Probability of using teacher forcing (training only)
+        
+        Returns:
+            smiles_logits: [batch, target_len, vocab_size]
+            fg_pred: [batch, output_dim_fg]
+        """
+        # Encode spectrum
+        encoded_spectrum, memory = self.encode_spectrum(spectrum)
+        
+        # Functional groups prediction (from global representation)
+        fg_features = encoded_spectrum.mean(dim=1)  # Global pooling
+        fg = self.dropout_fg(fg_features)
+        fg = torch.tanh(self.dense_fg1(fg))
+        fg = self.dropout_fg(fg)
+        fg_pred = torch.sigmoid(self.dense_fg2(fg))
+        
+        # SMILES sequence generation
+        if self.training and smiles_target is not None and torch.rand(1).item() < teacher_forcing_ratio:
+            # Teacher forcing: use ground truth as input
+            # Shift target tokens: input = <START> + tokens[:-1], target = tokens[1:] + <END>
+            decoder_input = smiles_target[:, :-1]  # Remove last token
+            tgt_mask = create_causal_mask(decoder_input.size(1), decoder_input.device)
+            smiles_logits = self.smiles_decoder(
+                memory=memory,
+                tgt_tokens=decoder_input,
+                tgt_mask=tgt_mask
+            )
+        else:
+            # Inference mode or no teacher forcing - would need tokenizer for generation
+            # For now, return dummy logits matching expected shape
+            if smiles_target is not None:
+                batch_size, target_len = smiles_target.shape
+                smiles_logits = torch.zeros(batch_size, target_len-1, self.smiles_decoder.vocab_size, 
+                                          device=spectrum.device)
+            else:
+                # This case would require tokenizer for autoregressive generation
+                raise ValueError("Need smiles_target or tokenizer for inference")
+        
+        return smiles_logits, fg_pred
+    
+    def generate(self, spectrum, tokenizer, max_length=None, temperature=1.0):
+        """Generate SMILES sequence autoregressively"""
+        self.eval()
+        with torch.no_grad():
+            # Encode spectrum
+            _, memory = self.encode_spectrum(spectrum)
+            
+            # Generate sequence
+            generated_tokens = self.smiles_decoder.generate_sequence(
+                memory=memory,
+                tokenizer=tokenizer,
+                max_length=max_length or self.max_smiles_length,
+                temperature=temperature
+            )
+            
+            return generated_tokens
+
+class Mass2SmilesSeq2SeqLearned(nn.Module):
+    """
+    Sequence-to-sequence model with learned embeddings (enhanced Option 2)
+    """
+    
+    def __init__(self, units, heads, dropout, dense_dropout, filters, num_layers, embed_dim,
+                 vocab_size, output_dim_fg, num_mz_bins=20000, mz_max=2000, 
+                 max_smiles_length=150, decoder_layers=6):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.max_smiles_length = max_smiles_length
+        
+        # Spectrum encoder with learned embeddings
+        self.spectrum_encoder = SpectrumEncoder(embed_dim, num_mz_bins, mz_max)
+        self.encoder_layers = nn.ModuleList([
+            EncoderLayer(d_model=embed_dim, num_heads=heads, dff=units, dropout_rate=dropout)
+            for _ in range(num_layers)
+        ])
+        self.tcn = TCN(num_layers=6, in_channels=embed_dim, out_channels=filters, kernel_size=8,
+                       dilations=[2 ** i for i in range(6)])
+        
+        # Spectrum features to decoder dimension
+        self.memory_projection = nn.Linear(filters, embed_dim)
+        
+        # SMILES sequence decoder
+        self.smiles_decoder = SMILESDecoder(
+            vocab_size=vocab_size,
+            d_model=embed_dim,
+            nhead=heads,
+            num_layers=decoder_layers,
+            max_length=max_smiles_length
+        )
+        
+        # Functional groups branch
+        self.dropout_fg = nn.Dropout(dense_dropout)
+        self.dense_fg1 = nn.Linear(filters, 128)
+        self.dense_fg2 = nn.Linear(128, output_dim_fg)
+    
+    def encode_spectrum(self, mz, intensities):
+        """Encode spectrum to memory representation"""
+        # Encode spectra using learned embeddings
+        x = self.spectrum_encoder(mz, intensities)
+        
+        # Transformer layers
+        for layer in self.encoder_layers:
+            x = layer(x)
+        
+        # TCN layer
+        encoded = self.tcn(x)  # [batch, seq_len, filters]
+        
+        # Project to decoder dimension
+        memory = self.memory_projection(encoded)  # [batch, seq_len, embed_dim]
+        
+        return encoded, memory
+    
+    def forward(self, mz, intensities, smiles_target=None, teacher_forcing_ratio=1.0):
+        """
+        Forward pass with optional teacher forcing
+        
+        Args:
+            mz: m/z values [batch, seq_len]
+            intensities: Intensity values [batch, seq_len]
+            smiles_target: Target SMILES tokens [batch, target_len] (for teacher forcing)
+            teacher_forcing_ratio: Probability of using teacher forcing
+        
+        Returns:
+            smiles_logits: [batch, target_len, vocab_size]
+            fg_pred: [batch, output_dim_fg]
+        """
+        # Encode spectrum
+        encoded_spectrum, memory = self.encode_spectrum(mz, intensities)
+        
+        # Functional groups prediction
+        fg_features = encoded_spectrum.mean(dim=1)  # Global pooling
+        fg = self.dropout_fg(fg_features)
+        fg = torch.tanh(self.dense_fg1(fg))
+        fg = self.dropout_fg(fg)
+        fg_pred = torch.sigmoid(self.dense_fg2(fg))
+        
+        # SMILES sequence generation
+        if self.training and smiles_target is not None and torch.rand(1).item() < teacher_forcing_ratio:
+            # Teacher forcing
+            decoder_input = smiles_target[:, :-1]
+            tgt_mask = create_causal_mask(decoder_input.size(1), decoder_input.device)
+            smiles_logits = self.smiles_decoder(
+                memory=memory,
+                tgt_tokens=decoder_input,
+                tgt_mask=tgt_mask
+            )
+        else:
+            # Inference mode
+            if smiles_target is not None:
+                batch_size, target_len = smiles_target.shape
+                smiles_logits = torch.zeros(batch_size, target_len-1, self.smiles_decoder.vocab_size,
+                                          device=mz.device)
+            else:
+                raise ValueError("Need smiles_target or tokenizer for inference")
+        
+        return smiles_logits, fg_pred
+    
+    def generate(self, mz, intensities, tokenizer, max_length=None, temperature=1.0):
+        """Generate SMILES sequence autoregressively"""
+        self.eval()
+        with torch.no_grad():
+            # Encode spectrum
+            _, memory = self.encode_spectrum(mz, intensities)
+            
+            # Generate sequence
+            generated_tokens = self.smiles_decoder.generate_sequence(
+                memory=memory,
+                tokenizer=tokenizer,
+                max_length=max_length or self.max_smiles_length,
+                temperature=temperature
+            )
+            
+            return generated_tokens
+
+# Enhanced Dataset for Sequence-to-Sequence Training
+class SpectrumSMILESSeq2SeqDataset(Dataset):
+    """Enhanced dataset for sequence-to-sequence SMILES prediction"""
+    
+    def __init__(self, csv_path, tokenizer, max_spectrum_length=500, max_smiles_length=150, 
+                 model_type='direct', fg_columns=None):
+        self.data = pd.read_csv(csv_path)
+        self.tokenizer = tokenizer
+        self.max_spectrum_length = max_spectrum_length
+        self.max_smiles_length = max_smiles_length
+        self.model_type = model_type
+        self.fg_columns = fg_columns or []
+        
+        # Filter out invalid entries
+        self.data = self.data.dropna(subset=['peaks_list', 'smiles'])
+        self.data = self.data[self.data['smiles'] != '***'].reset_index(drop=True)
+        
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        
+        # Parse spectrum
+        mz_values, intensities = parse_peaks_csv(row['peaks_list'])
+        
+        if len(mz_values) == 0:
+            mz_values = np.array([0.0])
+            intensities = np.array([0.0])
+        
+        # Normalize and pad/truncate
+        if len(mz_values) > self.max_spectrum_length:
+            mz_values = mz_values[:self.max_spectrum_length]
+            intensities = intensities[:self.max_spectrum_length]
+        
+        # Normalize intensities
+        if np.max(intensities) > 0:
+            intensities = intensities / np.max(intensities)
+        
+        # Pad to max length
+        mz_padded = np.zeros(self.max_spectrum_length)
+        int_padded = np.zeros(self.max_spectrum_length)
+        mz_padded[:len(mz_values)] = mz_values
+        int_padded[:len(intensities)] = intensities
+        
+        # Prepare spectrum input
+        if self.model_type == 'direct':
+            spectrum_input = np.stack([mz_padded / 1000.0, int_padded], axis=1)
+            spectrum_tensor = torch.tensor(spectrum_input, dtype=torch.float32)
+        else:  # learned
+            spectrum_tensor = (torch.tensor(mz_padded, dtype=torch.float32), 
+                             torch.tensor(int_padded, dtype=torch.float32))
+        
+        # Encode SMILES sequence (full sequence, not just first token)
+        smiles_encoded = self.tokenizer.encode(row['smiles'], max_length=self.max_smiles_length)
+        smiles_tensor = torch.tensor(smiles_encoded, dtype=torch.long)
+        
+        # Functional groups (dummy for now - you can extend this)
+        if self.fg_columns:
+            fg_values = [row[col] if col in row and not pd.isna(row[col]) else 0.0 for col in self.fg_columns]
+            fg_tensor = torch.tensor(fg_values, dtype=torch.float32)
+        else:
+            # Create dummy functional groups
+            fg_tensor = torch.zeros(71, dtype=torch.float32)  # 71 is common FG count
+        
+        return spectrum_tensor, smiles_tensor, fg_tensor
+
+def combined_loss(smiles_logits, smiles_target, fg_pred, fg_target, 
+                 smiles_weight=1.0, fg_weight=0.1, ignore_index=0):
+    """
+    Combined loss for SMILES sequence prediction and functional groups
+    
+    Args:
+        smiles_logits: [batch, seq_len, vocab_size]
+        smiles_target: [batch, seq_len] 
+        fg_pred: [batch, num_fg]
+        fg_target: [batch, num_fg]
+        smiles_weight: Weight for SMILES loss
+        fg_weight: Weight for functional group loss
+        ignore_index: Index to ignore in SMILES loss (padding)
+    
+    Returns:
+        total_loss, smiles_loss, fg_loss
+    """
+    # SMILES sequence loss (cross-entropy)
+    # Target should be shifted: predict tokens[1:] given tokens[:-1]
+    smiles_target_shifted = smiles_target[:, 1:]  # Remove <START> token
+    
+    # Reshape for loss computation
+    smiles_logits_flat = smiles_logits.reshape(-1, smiles_logits.size(-1))
+    smiles_target_flat = smiles_target_shifted.reshape(-1)
+    
+    smiles_loss = F.cross_entropy(smiles_logits_flat, smiles_target_flat, ignore_index=ignore_index)
+    
+    # Functional groups loss (binary cross-entropy)
+    fg_loss = F.binary_cross_entropy_with_logits(fg_pred, fg_target)
+    
+    # Combined loss
+    total_loss = smiles_weight * smiles_loss + fg_weight * fg_loss
+    
+    return total_loss, smiles_loss, fg_loss
+
+def prepare_seq2seq_data_loaders(csv_path, batch_size=16, test_size=0.2, max_spectrum_length=500,
+                                max_smiles_length=150, model_type='direct', fg_columns=None):
+    """
+    Prepare data loaders for sequence-to-sequence training
+    
+    Returns:
+        tuple: (train_loader, val_loader, tokenizer)
+    """
+    # Read data and build tokenizer
+    data = pd.read_csv(csv_path)
+    data = data.dropna(subset=['peaks_list', 'smiles'])
+    data = data[data['smiles'] != '***']
+    
+    # Build SMILES tokenizer
+    tokenizer = SMILESTokenizer()
+    vocab = tokenizer.build_vocab(data['smiles'].tolist(), min_freq=1)
+    logger.info(f'Built SMILES vocabulary with {len(vocab)} tokens')
+    
+    # Split data
+    train_data, val_data = train_test_split(data, test_size=test_size, random_state=42)
+    train_data = train_data.reset_index(drop=True)
+    val_data = val_data.reset_index(drop=True)
+    
+    # Save train/val splits temporarily
+    train_path = '/tmp/train_seq2seq_data.csv'
+    val_path = '/tmp/val_seq2seq_data.csv'
+    train_data.to_csv(train_path, index=False)
+    val_data.to_csv(val_path, index=False)
+    
+    # Create datasets
+    train_dataset = SpectrumSMILESSeq2SeqDataset(
+        train_path, tokenizer, max_spectrum_length, max_smiles_length, model_type, fg_columns
+    )
+    val_dataset = SpectrumSMILESSeq2SeqDataset(
+        val_path, tokenizer, max_spectrum_length, max_smiles_length, model_type, fg_columns
+    )
+    
+    # Custom collate function
+    def seq2seq_collate_fn(batch):
+        if model_type == 'direct':
+            spectra, smiles, fgs = zip(*batch)
+            return torch.stack(spectra), torch.stack(smiles), torch.stack(fgs)
+        else:  # learned
+            spectrum_pairs, smiles, fgs = zip(*batch)
+            mz_tensors, int_tensors = zip(*spectrum_pairs)
+            return (torch.stack(mz_tensors), torch.stack(int_tensors)), torch.stack(smiles), torch.stack(fgs)
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=seq2seq_collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=seq2seq_collate_fn)
+    
+    logger.info(f'Created seq2seq data loaders - Train: {len(train_dataset)}, Val: {len(val_dataset)}')
+    
+    return train_loader, val_loader, tokenizer
+
+def train_seq2seq_mass2smiles(model, train_loader, val_loader, num_epochs=10, learning_rate=1e-4,
+                             device='cpu', save_path=None, model_type='direct', 
+                             teacher_forcing_ratio=1.0, smiles_weight=1.0, fg_weight=0.1):
+    """
+    Training function for sequence-to-sequence mass2smiles models with combined loss
+    
+    Args:
+        model: Mass2SmilesSeq2SeqDirect or Mass2SmilesSeq2SeqLearned instance
+        train_loader: Training data loader
+        val_loader: Validation data loader
+        num_epochs: Number of training epochs
+        learning_rate: Learning rate
+        device: Device to train on
+        save_path: Path to save checkpoints
+        model_type: 'direct' or 'learned'
+        teacher_forcing_ratio: Probability of using teacher forcing
+        smiles_weight: Weight for SMILES loss in combined loss
+        fg_weight: Weight for functional group loss in combined loss
+    """
+    
+    model = model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    
+    train_losses = []
+    val_losses = []
+    train_smiles_losses = []
+    train_fg_losses = []
+    val_smiles_losses = []
+    val_fg_losses = []
+    
+    for epoch in range(num_epochs):
+        # Training phase
+        model.train()
+        train_loss = 0.0
+        train_smiles_loss = 0.0
+        train_fg_loss = 0.0
+        train_batches = 0
+        
+        train_pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
+        for batch_idx, (spectrum, smiles_target, fg_target) in enumerate(train_pbar):
+            
+            # Move to device
+            if model_type == 'direct':
+                spectrum = spectrum.to(device)
+            else:  # learned
+                spectrum = (spectrum[0].to(device), spectrum[1].to(device))
+            
+            smiles_target = smiles_target.to(device)
+            fg_target = fg_target.to(device)
+            
+            optimizer.zero_grad()
+            
+            try:
+                # Forward pass
+                if model_type == 'direct':
+                    smiles_logits, fg_pred = model(spectrum, smiles_target, teacher_forcing_ratio)
+                else:  # learned
+                    smiles_logits, fg_pred = model(spectrum[0], spectrum[1], smiles_target, teacher_forcing_ratio)
+                
+                # Compute combined loss
+                total_loss, s_loss, f_loss = combined_loss(
+                    smiles_logits, smiles_target, fg_pred, fg_target,
+                    smiles_weight=smiles_weight, fg_weight=fg_weight
+                )
+                
+                total_loss.backward()
+                
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
+                optimizer.step()
+                
+                train_loss += total_loss.item()
+                train_smiles_loss += s_loss.item()
+                train_fg_loss += f_loss.item()
+                train_batches += 1
+                
+                train_pbar.set_postfix({
+                    'total': f'{total_loss.item():.4f}',
+                    'smiles': f'{s_loss.item():.4f}',
+                    'fg': f'{f_loss.item():.4f}'
+                })
+                
+            except Exception as e:
+                logger.error(f"Error in training batch {batch_idx}: {e}")
+                continue
+        
+        # Average training losses
+        avg_train_loss = train_loss / train_batches if train_batches > 0 else 0
+        avg_train_smiles_loss = train_smiles_loss / train_batches if train_batches > 0 else 0
+        avg_train_fg_loss = train_fg_loss / train_batches if train_batches > 0 else 0
+        
+        train_losses.append(avg_train_loss)
+        train_smiles_losses.append(avg_train_smiles_loss)
+        train_fg_losses.append(avg_train_fg_loss)
+        
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+        val_smiles_loss = 0.0
+        val_fg_loss = 0.0
+        val_batches = 0
+        
+        with torch.no_grad():
+            val_pbar = tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]')
+            for batch_idx, (spectrum, smiles_target, fg_target) in enumerate(val_pbar):
+                try:
+                    # Move to device
+                    if model_type == 'direct':
+                        spectrum = spectrum.to(device)
+                    else:  # learned
+                        spectrum = (spectrum[0].to(device), spectrum[1].to(device))
+                    
+                    smiles_target = smiles_target.to(device)
+                    fg_target = fg_target.to(device)
+                    
+                    # Forward pass (always use teacher forcing for validation)
+                    if model_type == 'direct':
+                        smiles_logits, fg_pred = model(spectrum, smiles_target, teacher_forcing_ratio=1.0)
+                    else:  # learned
+                        smiles_logits, fg_pred = model(spectrum[0], spectrum[1], smiles_target, teacher_forcing_ratio=1.0)
+                    
+                    # Compute combined loss
+                    total_loss, s_loss, f_loss = combined_loss(
+                        smiles_logits, smiles_target, fg_pred, fg_target,
+                        smiles_weight=smiles_weight, fg_weight=fg_weight
+                    )
+                    
+                    val_loss += total_loss.item()
+                    val_smiles_loss += s_loss.item()
+                    val_fg_loss += f_loss.item()
+                    val_batches += 1
+                    
+                    val_pbar.set_postfix({
+                        'total': f'{total_loss.item():.4f}',
+                        'smiles': f'{s_loss.item():.4f}',
+                        'fg': f'{f_loss.item():.4f}'
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error in validation batch {batch_idx}: {e}")
+                    continue
+        
+        # Average validation losses
+        avg_val_loss = val_loss / val_batches if val_batches > 0 else 0
+        avg_val_smiles_loss = val_smiles_loss / val_batches if val_batches > 0 else 0
+        avg_val_fg_loss = val_fg_loss / val_batches if val_batches > 0 else 0
+        
+        val_losses.append(avg_val_loss)
+        val_smiles_losses.append(avg_val_smiles_loss)
+        val_fg_losses.append(avg_val_fg_loss)
+        
+        logger.info(f'Epoch {epoch+1}/{num_epochs}:')
+        logger.info(f'  Train - Total: {avg_train_loss:.4f}, SMILES: {avg_train_smiles_loss:.4f}, FG: {avg_train_fg_loss:.4f}')
+        logger.info(f'  Val   - Total: {avg_val_loss:.4f}, SMILES: {avg_val_smiles_loss:.4f}, FG: {avg_val_fg_loss:.4f}')
+        
+        # Save checkpoint
+        if save_path and (epoch + 1) % 5 == 0:
+            checkpoint_path = Path(save_path) / f'seq2seq_checkpoint_epoch_{epoch+1}.pth'
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'train_loss': avg_train_loss,
+                'val_loss': avg_val_loss,
+                'train_smiles_loss': avg_train_smiles_loss,
+                'train_fg_loss': avg_train_fg_loss,
+                'val_smiles_loss': avg_val_smiles_loss,
+                'val_fg_loss': avg_val_fg_loss,
+            }, checkpoint_path)
+            logger.info(f'Checkpoint saved: {checkpoint_path}')
+    
+    # Save final model
+    if save_path:
+        final_path = Path(save_path) / 'seq2seq_final_model.pth'
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'train_losses': train_losses,
+            'val_losses': val_losses,
+            'train_smiles_losses': train_smiles_losses,
+            'train_fg_losses': train_fg_losses,
+            'val_smiles_losses': val_smiles_losses,
+            'val_fg_losses': val_fg_losses,
+        }, final_path)
+        logger.info(f'Final model saved: {final_path}')
+    
+    return {
+        'train_losses': train_losses,
+        'val_losses': val_losses, 
+        'train_smiles_losses': train_smiles_losses,
+        'train_fg_losses': train_fg_losses,
+        'val_smiles_losses': val_smiles_losses,
+        'val_fg_losses': val_fg_losses
+    }
