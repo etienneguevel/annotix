@@ -47,15 +47,15 @@ for spec in spectrums:
     loss_mzs.append(list(spec.losses.mz))
     loss_ints.append(list(spec.losses.intensities))
 
-metadata = pd.DataFrame(list(zip(IDs, precs,mzs,ints,loss_mzs,loss_ints)), columns=["feature_id", "precursor_mz","mzs","intensities","loss_mzs","loss_intensities" ])
+metadata = pd.DataFrame(list(zip(IDs, precs, mzs, ints, loss_mzs, loss_ints)), columns=["feature_id", "precursor_mz", "mzs", "intensities", "loss_mzs", "loss_intensities" ])
 # metadata.to_csv(Path(args.output) / "feature_ids_dataframe.tsv", sep='\t')
 
 logger.info('Building training data')
 train = prepro_specs_train(metadata) #OK HERE
-
-logger.info('Learned spectral encoding (Option 2)')
-mz_data, intensity_data = learned_spectral_encoding(train, max_length=501)
 logger.info(f"train.shape: {train.shape}")
+
+logger.info('Learned spectral encoding')
+mz_data, intensity_data = learned_spectral_encoding(train, max_length=501)
 logger.info(f"mz_data.shape: {mz_data.shape}")
 logger.info(f"intensity_data.shape: {intensity_data.shape}")
 

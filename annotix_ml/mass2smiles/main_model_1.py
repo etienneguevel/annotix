@@ -52,10 +52,10 @@ metadata = pd.DataFrame(list(zip(IDs, precs,mzs,ints,loss_mzs,loss_ints)), colum
 
 logger.info('Building training data')
 train = prepro_specs_train(metadata) #OK HERE
-
-logger.info('Direct spectral encoding (Option 1)')
-xtrain = direct_spectral_encoding(train, max_length=501)
 logger.info(f"train.shape: {train.shape}")
+
+logger.info('Direct spectral encoding')
+xtrain = direct_spectral_encoding(train, max_length=501)
 logger.info(f"xtrain.shape: {xtrain.shape}")
 
 # Set embedding dimension for the model

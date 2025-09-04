@@ -2,7 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import pandas as pd
 from loguru import logger
+from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import train_test_split
+from tqdm import tqdm
+import re
+import pickle
+from pathlib import Path
 
 def positional_encoding(max_position, d_model, min_freq=1e-6):
     position = np.arange(max_position)
@@ -345,3 +352,350 @@ class Mass2SmilesModelV2(nn.Module):
         smiles = self.dense_smiles2(smiles)
 
         return smiles, fg
+
+# SMILES Tokenization and Dataset Classes
+class SMILESTokenizer:
+    """Simple SMILES tokenizer"""
+    
+    def __init__(self):
+        # Common SMILES tokens - extend as needed
+        self.regex_pattern = r'(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])'
+        self.special_tokens = ['<PAD>', '<START>', '<END>', '<UNK>']
+        
+    def tokenize(self, smiles):
+        """Tokenize a SMILES string"""
+        if pd.isna(smiles) or smiles == '***':  # Handle missing or unknown SMILES
+            return ['<UNK>']
+        tokens = re.findall(self.regex_pattern, smiles)
+        return ['<START>'] + tokens + ['<END>']
+    
+    def build_vocab(self, smiles_list, min_freq=1):
+        """Build vocabulary from list of SMILES strings"""
+        token_counts = {}
+        
+        for smiles in smiles_list:
+            if pd.isna(smiles) or smiles == '***':
+                continue
+            tokens = self.tokenize(smiles)
+            for token in tokens:
+                token_counts[token] = token_counts.get(token, 0) + 1
+        
+        # Create vocab with special tokens first
+        vocab = {token: idx for idx, token in enumerate(self.special_tokens)}
+        
+        # Add frequent tokens
+        for token, count in token_counts.items():
+            if count >= min_freq and token not in vocab:
+                vocab[token] = len(vocab)
+        
+        self.vocab = vocab
+        self.vocab_size = len(vocab)
+        self.token_to_idx = vocab
+        self.idx_to_token = {idx: token for token, idx in vocab.items()}
+        
+        return vocab
+    
+    def encode(self, smiles, max_length=None):
+        """Convert SMILES to token indices"""
+        tokens = self.tokenize(smiles)
+        indices = [self.token_to_idx.get(token, self.token_to_idx['<UNK>']) for token in tokens]
+        
+        if max_length is not None:
+            if len(indices) > max_length:
+                indices = indices[:max_length]
+            else:
+                indices.extend([self.token_to_idx['<PAD>']] * (max_length - len(indices)))
+        
+        return indices
+    
+    def decode(self, indices):
+        """Convert token indices back to SMILES"""
+        tokens = [self.idx_to_token.get(idx, '<UNK>') for idx in indices]
+        # Remove special tokens and pad tokens
+        tokens = [t for t in tokens if t not in ['<PAD>', '<START>', '<END>']]
+        return ''.join(tokens)
+
+def parse_peaks_csv(peaks_str):
+    """Parse peaks_list from CSV format to arrays"""
+    if pd.isna(peaks_str) or not isinstance(peaks_str, str):
+        return np.array([]), np.array([])
+    
+    peaks = []
+    for line in peaks_str.split('\\n'):
+        if line.strip():
+            parts = line.strip().split(' ')
+            if len(parts) >= 2:
+                try:
+                    mz = float(parts[0])
+                    intensity = float(parts[1])
+                    peaks.append([mz, intensity])
+                except ValueError:
+                    continue
+    
+    if not peaks:
+        return np.array([]), np.array([])
+    
+    peaks = np.array(peaks)
+    return peaks[:, 0], peaks[:, 1]  # mz, intensity
+
+class SpectrumSMILESDataset(Dataset):
+    """Dataset for spectrum -> SMILES prediction"""
+    
+    def __init__(self, csv_path, tokenizer, max_spectrum_length=500, max_smiles_length=150, model_type='direct'):
+        self.data = pd.read_csv(csv_path)
+        self.tokenizer = tokenizer
+        self.max_spectrum_length = max_spectrum_length
+        self.max_smiles_length = max_smiles_length
+        self.model_type = model_type  # 'direct' or 'learned'
+        
+        # Filter out invalid entries
+        self.data = self.data.dropna(subset=['peaks_list', 'smiles'])
+        self.data = self.data[self.data['smiles'] != '***'].reset_index(drop=True)
+        
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        
+        # Parse spectrum
+        mz_values, intensities = parse_peaks_csv(row['peaks_list'])
+        
+        if len(mz_values) == 0:
+            # Handle empty spectra with dummy data
+            mz_values = np.array([0.0])
+            intensities = np.array([0.0])
+        
+        # Normalize and pad/truncate
+        if len(mz_values) > self.max_spectrum_length:
+            mz_values = mz_values[:self.max_spectrum_length]
+            intensities = intensities[:self.max_spectrum_length]
+        
+        # Normalize intensities
+        if np.max(intensities) > 0:
+            intensities = intensities / np.max(intensities)
+        
+        # Pad to max length
+        mz_padded = np.zeros(self.max_spectrum_length)
+        int_padded = np.zeros(self.max_spectrum_length)
+        mz_padded[:len(mz_values)] = mz_values
+        int_padded[:len(intensities)] = intensities
+        
+        # Prepare spectrum input based on model type
+        if self.model_type == 'direct':
+            # For direct encoding: [batch, seq_len, 2]
+            spectrum_input = np.stack([mz_padded / 1000.0, int_padded], axis=1)  # Scale m/z
+            spectrum_tensor = torch.tensor(spectrum_input, dtype=torch.float32)
+        else:  # learned
+            # For learned encoding: separate tensors
+            spectrum_tensor = (torch.tensor(mz_padded, dtype=torch.float32), 
+                             torch.tensor(int_padded, dtype=torch.float32))
+        
+        # Encode SMILES
+        smiles_encoded = self.tokenizer.encode(row['smiles'], max_length=self.max_smiles_length)
+        smiles_tensor = torch.tensor(smiles_encoded, dtype=torch.long)
+        
+        return spectrum_tensor, smiles_tensor
+
+def custom_collate_fn(batch):
+    """Custom collate function for learned embedding model"""
+    spectra_mz = []
+    spectra_int = []
+    smiles = []
+    
+    for spectrum_tensors, smiles_tensor in batch:
+        mz_tensor, int_tensor = spectrum_tensors
+        spectra_mz.append(mz_tensor)
+        spectra_int.append(int_tensor)
+        smiles.append(smiles_tensor)
+    
+    return (torch.stack(spectra_mz), torch.stack(spectra_int)), torch.stack(smiles)
+
+def prepare_data_loaders(csv_path, batch_size=16, test_size=0.2, max_spectrum_length=500, 
+                        max_smiles_length=150, model_type='direct'):
+    """
+    Prepare data loaders for training
+    
+    Args:
+        csv_path: Path to CSV file with spectrum and SMILES data
+        batch_size: Batch size for training
+        test_size: Fraction of data to use for validation
+        max_spectrum_length: Maximum number of peaks per spectrum
+        max_smiles_length: Maximum SMILES token length
+        model_type: 'direct' or 'learned'
+    
+    Returns:
+        tuple: (train_loader, val_loader, tokenizer)
+    """
+    
+    # Read data and build tokenizer
+    data = pd.read_csv(csv_path)
+    data = data.dropna(subset=['peaks_list', 'smiles'])
+    data = data[data['smiles'] != '***']
+    
+    # Build SMILES tokenizer
+    tokenizer = SMILESTokenizer()
+    vocab = tokenizer.build_vocab(data['smiles'].tolist(), min_freq=1)
+    logger.info(f'Built SMILES vocabulary with {len(vocab)} tokens')
+    
+    # Split data
+    train_data, val_data = train_test_split(data, test_size=test_size, random_state=42)
+    train_data = train_data.reset_index(drop=True)
+    val_data = val_data.reset_index(drop=True)
+    
+    # Save train/val splits temporarily
+    train_path = '/tmp/train_data.csv'
+    val_path = '/tmp/val_data.csv'
+    train_data.to_csv(train_path, index=False)
+    val_data.to_csv(val_path, index=False)
+    
+    # Create datasets
+    train_dataset = SpectrumSMILESDataset(train_path, tokenizer, max_spectrum_length, 
+                                         max_smiles_length, model_type)
+    val_dataset = SpectrumSMILESDataset(val_path, tokenizer, max_spectrum_length, 
+                                       max_smiles_length, model_type)
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, 
+                             collate_fn=None if model_type == 'direct' else custom_collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                           collate_fn=None if model_type == 'direct' else custom_collate_fn)
+    
+    logger.info(f'Created data loaders - Train: {len(train_dataset)}, Val: {len(val_dataset)}')
+    
+    return train_loader, val_loader, tokenizer
+
+def train_mass2smiles(model, train_loader, val_loader, num_epochs=10, learning_rate=1e-4, 
+                     device='cpu', save_path=None, model_type='direct'):
+    """
+    Universal training function for both Mass2SmilesModel and Mass2SmilesModelV2
+    
+    Args:
+        model: Either Mass2SmilesModel or Mass2SmilesModelV2 instance
+        train_loader: Training data loader
+        val_loader: Validation data loader
+        num_epochs: Number of training epochs
+        learning_rate: Learning rate for optimizer
+        device: Device to train on ('cpu' or 'cuda')
+        save_path: Path to save model checkpoints
+        model_type: 'direct' for Mass2SmilesModel, 'learned' for Mass2SmilesModelV2
+    """
+    
+    model = model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding tokens
+    
+    train_losses = []
+    val_losses = []
+    
+    for epoch in range(num_epochs):
+        # Training phase
+        model.train()
+        train_loss = 0.0
+        train_batches = 0
+        
+        train_pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
+        for batch_idx, (spectrum, smiles_target) in enumerate(train_pbar):
+            
+            if model_type == 'direct':
+                spectrum = spectrum.to(device)
+            else:  # learned
+                spectrum = (spectrum[0].to(device), spectrum[1].to(device))
+            
+            smiles_target = smiles_target.to(device)
+            
+            optimizer.zero_grad()
+            
+            # Forward pass
+            try:
+                if model_type == 'direct':
+                    smiles_pred, fg_pred = model(spectrum)
+                else:  # learned
+                    smiles_pred, fg_pred = model(spectrum[0], spectrum[1])
+                
+                # For sequence prediction, we need to handle the target properly
+                # Here we'll use a simplified approach focusing on the next token prediction
+                # In practice, you'd want more sophisticated sequence-to-sequence training
+                
+                # Simple approach: predict first token of SMILES (can be extended)
+                target_first_token = smiles_target[:, 1]  # Skip START token, predict first real token
+                loss = criterion(smiles_pred, target_first_token)
+                
+                loss.backward()
+                optimizer.step()
+                
+                train_loss += loss.item()
+                train_batches += 1
+                
+                train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+                
+            except Exception as e:
+                logger.error(f"Error in training batch {batch_idx}: {e}")
+                continue
+        
+        avg_train_loss = train_loss / train_batches if train_batches > 0 else 0
+        train_losses.append(avg_train_loss)
+        
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+        val_batches = 0
+        
+        with torch.no_grad():
+            val_pbar = tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]')
+            for batch_idx, (spectrum, smiles_target) in enumerate(val_pbar):
+                try:
+                    if model_type == 'direct':
+                        spectrum = spectrum.to(device)
+                    else:  # learned
+                        spectrum = (spectrum[0].to(device), spectrum[1].to(device))
+                    
+                    smiles_target = smiles_target.to(device)
+                    
+                    if model_type == 'direct':
+                        smiles_pred, fg_pred = model(spectrum)
+                    else:  # learned
+                        smiles_pred, fg_pred = model(spectrum[0], spectrum[1])
+                    
+                    target_first_token = smiles_target[:, 1]
+                    loss = criterion(smiles_pred, target_first_token)
+                    
+                    val_loss += loss.item()
+                    val_batches += 1
+                    
+                    val_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+                    
+                except Exception as e:
+                    logger.error(f"Error in validation batch {batch_idx}: {e}")
+                    continue
+        
+        avg_val_loss = val_loss / val_batches if val_batches > 0 else 0
+        val_losses.append(avg_val_loss)
+        
+        logger.info(f'Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}')
+        
+        # Save checkpoint
+        if save_path and (epoch + 1) % 5 == 0:
+            checkpoint_path = Path(save_path) / f'checkpoint_epoch_{epoch+1}.pth'
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'train_loss': avg_train_loss,
+                'val_loss': avg_val_loss,
+            }, checkpoint_path)
+            logger.info(f'Checkpoint saved: {checkpoint_path}')
+    
+    # Save final model
+    if save_path:
+        final_path = Path(save_path) / 'final_model.pth'
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'train_losses': train_losses,
+            'val_losses': val_losses,
+        }, final_path)
+        logger.info(f'Final model saved: {final_path}')
+    
+    return train_losses, val_losses
