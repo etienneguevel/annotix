@@ -607,6 +607,7 @@ def train_mass2smiles(model, train_loader, val_loader, num_epochs=10, learning_r
             optimizer.zero_grad()
             
             # Forward pass
+            #TODO fg not used in loss calculation here
             try:
                 if model_type == 'direct':
                     smiles_pred, fg_pred = model(spectrum)
@@ -614,8 +615,8 @@ def train_mass2smiles(model, train_loader, val_loader, num_epochs=10, learning_r
                     smiles_pred, fg_pred = model(spectrum[0], spectrum[1])
                 
                 # For sequence prediction, we need to handle the target properly
-                # Here we'll use a simplified approach focusing on the next token prediction
-                # In practice, you'd want more sophisticated sequence-to-sequence training
+                #TODO Here we'll use a simplified approach focusing on the next token prediction
+                #TODO In practice, you'd want more sophisticated sequence-to-sequence training
                 
                 # Simple approach: predict first token of SMILES (can be extended)
                 target_first_token = smiles_target[:, 1]  # Skip START token, predict first real token
@@ -642,8 +643,7 @@ def train_mass2smiles(model, train_loader, val_loader, num_epochs=10, learning_r
         val_batches = 0
         
         with torch.no_grad():
-            val_pbar = tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]')
-            for batch_idx, (spectrum, smiles_target) in enumerate(val_pbar):
+            for batch_idx, (spectrum, smiles_target) in enumerate(val_loader):
                 try:
                     if model_type == 'direct':
                         spectrum = spectrum.to(device)
@@ -662,8 +662,6 @@ def train_mass2smiles(model, train_loader, val_loader, num_epochs=10, learning_r
                     
                     val_loss += loss.item()
                     val_batches += 1
-                    
-                    val_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
                     
                 except Exception as e:
                     logger.error(f"Error in validation batch {batch_idx}: {e}")
