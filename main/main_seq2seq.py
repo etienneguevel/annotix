@@ -1,45 +1,23 @@
-#!/usr/bin/env python3
-
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import torch
 import pandas as pd
 import argparse
 
-# Add the annotix_ml directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'annotix_ml'))
-
-from mass2smiles.network import (
-    Mass2SmilesSeq2SeqDirect, 
-    Mass2SmilesSeq2SeqLearned,
-    train_seq2seq_mass2smiles,
-    SpectrumSMILESSeq2SeqDataset,
-    SMILESTokenizer
-)
 from torch.utils.data import DataLoader
+
+import annotix_ml.mass2smiles.network as m2s
 
 def main():
     parser = argparse.ArgumentParser(description='Train Mass2SMILES Seq2Seq Models')
-    parser.add_argument('--model', type=str, choices=['direct', 'learned'], default='direct',
-                        help='Model type: direct or learned')
-    parser.add_argument('--csv_path', type=str, default='main/test_data/test-data.csv',
-                        help='Path to CSV file with peaks_list and smiles columns')
-    parser.add_argument('--epochs', type=int, default=10,
-                        help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=8,
-                        help='Batch size for training')
-    parser.add_argument('--lr', type=float, default=1e-4,
-                        help='Learning rate')
-    parser.add_argument('--embed_dim', type=int, default=256,
-                        help='Embedding dimension')
-    parser.add_argument('--heads', type=int, default=8,
-                        help='Number of attention heads')
-    parser.add_argument('--max_length', type=int, default=150,
-                        help='Maximum SMILES sequence length')
-    parser.add_argument('--test_generation', action='store_true',
-                        help='Test sequence generation after training')
+    parser.add_argument('--model', type=str, choices=['direct', 'learned'], default='direct', help='Model type: direct or learned')
+    parser.add_argument('--csv_path', type=str, default='main/test_data/test-data.csv', help='Path to CSV file with peaks_list and smiles columns')
+    parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training')
+    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
+    parser.add_argument('--embed_dim', type=int, default=256, help='Embedding dimension')
+    parser.add_argument('--heads', type=int, default=8, help='Number of attention heads')
+    parser.add_argument('--max_length', type=int, default=150, help='Maximum SMILES sequence length')
+    parser.add_argument('--test_generation', action='store_true', help='Test sequence generation after training')
     
     args = parser.parse_args()
     
@@ -52,7 +30,7 @@ def main():
     print(f"Loaded {len(df)} samples from CSV")
     
     # Initialize tokenizer
-    tokenizer = SMILESTokenizer()
+    tokenizer = m2s.SMILESTokenizer()
     
     # Build vocabulary from all SMILES in dataset
     all_smiles = df['smiles'].tolist()
@@ -61,7 +39,7 @@ def main():
     print(f"Built vocabulary with {vocab_size} tokens")
     
     # Create dataset and dataloader
-    dataset = SpectrumSMILESSeq2SeqDataset(
+    dataset = m2s.SpectrumSMILESSeq2SeqDataset(
         csv_path=args.csv_path,
         tokenizer=tokenizer,
         max_smiles_length=args.max_length,
@@ -82,7 +60,7 @@ def main():
     
     # Initialize model
     if args.model == 'direct':
-        model = Mass2SmilesSeq2SeqDirect(
+        model = m2s.Mass2SmilesSeq2SeqDirect(
             units=128,
             heads=args.heads,
             dropout=0.1,
@@ -95,7 +73,7 @@ def main():
             max_smiles_length=args.max_length
         )
     else:  # learned
-        model = Mass2SmilesSeq2SeqLearned(
+        model = m2s.Mass2SmilesSeq2SeqLearned(
             units=128,
             heads=args.heads,
             dropout=0.1,
@@ -142,7 +120,7 @@ def main():
     # Train the model
     print(f"\nStarting training for {args.epochs} epochs...")
     
-    trained_model, train_losses, val_losses = train_seq2seq_mass2smiles(
+    trained_model, train_losses, val_losses = m2s.train_seq2seq_mass2smiles(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
