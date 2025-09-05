@@ -176,7 +176,6 @@ def main():
         
         logger.info(f"Target SMILES: {target_smiles}")
         logger.info(f"Generated SMILES: {generated_smiles}")
-        aaa
         
         # Test functional group prediction
         with torch.no_grad():
@@ -191,7 +190,7 @@ def main():
             logger.info(f"Target FG: {target_fg.sum().item():.0f} functional groups")
             logger.info(f"Predicted FG: {predicted_fg.sum().item():.0f} functional groups")
     
-    logger.success("\n✓ Seq2Seq Mass2SMILES test completed successfully!")
+    logger.success("✓ Seq2Seq Mass2SMILES test completed successfully!")
 
 if __name__ == '__main__':
     main()
