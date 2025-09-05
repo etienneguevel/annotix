@@ -711,11 +711,13 @@ class PositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        # Keep as [max_len, d_model] for batch_first format
         self.register_buffer('pe', pe)
     
     def forward(self, x):
-        x = x + self.pe[:x.size(0), :]
+        # x is [batch, seq_len, d_model] (batch_first format)
+        seq_len = x.size(1)
+        x = x + self.pe[:seq_len, :].unsqueeze(0)  # Add batch dimension
         return self.dropout(x)
 
 class SMILESDecoder(nn.Module):
@@ -771,15 +773,17 @@ class SMILESDecoder(nn.Module):
         
         # Embed target tokens
         tgt_embedded = self.token_embedding(tgt_tokens) * np.sqrt(self.d_model)
-        tgt_embedded = self.pos_encoding(tgt_embedded.transpose(0, 1)).transpose(0, 1)
+        # Apply positional encoding using the forward method
+        tgt_embedded = self.pos_encoding(tgt_embedded)
         
         # Apply transformer decoder
+        # Note: PyTorch transformer expects batch_first=True (set in constructor)
         decoder_output = self.transformer_decoder(
-            tgt=tgt_embedded.transpose(0, 1),
-            memory=memory.transpose(0, 1),
+            tgt=tgt_embedded,  # Keep batch_first format
+            memory=memory,     # Keep batch_first format  
             tgt_mask=tgt_mask,
             memory_key_padding_mask=memory_key_padding_mask
-        ).transpose(0, 1)
+        )
         
         # Project to vocabulary
         logits = self.output_projection(decoder_output)
@@ -850,7 +854,9 @@ class SMILESDecoder(nn.Module):
 
 def create_causal_mask(size, device):
     """Create causal mask for transformer decoder"""
-    return torch.triu(torch.ones(size, size, device=device), diagonal=1).bool()
+    mask = torch.triu(torch.ones(size, size, device=device), diagonal=1)
+    # Return mask where True means positions should be masked out (prevented from attending)
+    return mask.bool()
 
 def create_padding_mask(tokens, pad_token_id=0):
     """Create padding mask for sequences"""
@@ -1159,8 +1165,8 @@ class SpectrumSMILESSeq2SeqDataset(Dataset):
             fg_values = [row[col] if col in row and not pd.isna(row[col]) else 0.0 for col in self.fg_columns]
             fg_tensor = torch.tensor(fg_values, dtype=torch.float32)
         else:
-            # Create dummy functional groups
-            fg_tensor = torch.zeros(71, dtype=torch.float32)  # 71 is common FG count
+            # Create dummy functional groups - match model output dimension
+            fg_tensor = torch.zeros(200, dtype=torch.float32)  # Match model output_dim_fg
         
         return spectrum_tensor, smiles_tensor, fg_tensor
 
@@ -1442,11 +1448,4 @@ def train_seq2seq_mass2smiles(model, train_loader, val_loader, num_epochs=10, le
         }, final_path)
         logger.info(f'Final model saved: {final_path}')
     
-    return {
-        'train_losses': train_losses,
-        'val_losses': val_losses, 
-        'train_smiles_losses': train_smiles_losses,
-        'train_fg_losses': train_fg_losses,
-        'val_smiles_losses': val_smiles_losses,
-        'val_fg_losses': val_fg_losses
-    }
+    return model, train_losses, val_losses
