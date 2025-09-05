@@ -1,3 +1,4 @@
+import torch
 from annotix_ml.mass2smiles.network import SMILESTokenizer
 
 def test_tokenize():
@@ -18,9 +19,16 @@ def test_decode():
     tokenizer = SMILESTokenizer()
     smiles = "CCO"
     tokenizer.build_vocab([smiles])
+
+    # Case 1: Decode known sequence
     encoded = tokenizer.encode(smiles)
     decoded = tokenizer.decode(encoded)
     assert decoded == smiles, f"Decoding mismatch: {decoded}"
+
+    # Case 2: Decode sequence with type Tensor
+    encoded_tensor = torch.tensor(encoded)
+    decoded_tensor = tokenizer.decode(encoded_tensor.tolist())
+    assert decoded_tensor == smiles, f"Decoding mismatch with tensor: {decoded_tensor}"
 
 if __name__ == "__main__":
     test_tokenize()

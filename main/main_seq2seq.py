@@ -171,11 +171,12 @@ def main():
             )
         
         # Decode generated sequence
-        generated_smiles = tokenizer.decode(generated_tokens[0])
-        target_smiles = tokenizer.decode(target_tokens)
+        generated_smiles = tokenizer.decode(generated_tokens[0].tolist())
+        target_smiles = tokenizer.decode(target_tokens.tolist())
         
         logger.info(f"Target SMILES: {target_smiles}")
         logger.info(f"Generated SMILES: {generated_smiles}")
+        aaa
         
         # Test functional group prediction
         with torch.no_grad():
