@@ -1,6 +1,7 @@
 import argparse
 from loguru import logger
 import pandas as pd
+from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 from torchinfo import summary
@@ -18,6 +19,7 @@ def main():
     parser.add_argument('--heads', type=int, default=8, help='Number of attention heads')
     parser.add_argument('--max_length', type=int, default=150, help='Maximum SMILES sequence length')
     parser.add_argument('--test_generation', action='store_true', help='Test sequence generation after training')
+    parser.add_argument("--device", default='cpu', help="Device to use: 'cpu' or 'cuda' or 'mps'")
     args = parser.parse_args()
     
     logger.info(f"Training {args.model} Mass2SMILES Seq2Seq model...")
@@ -132,7 +134,7 @@ def main():
         val_loader=val_loader,
         num_epochs=args.epochs,
         learning_rate=args.lr,
-        device='cpu',  # Use CPU for testing
+        device=args.device,
         model_type=args.model
     )
     
@@ -140,6 +142,20 @@ def main():
     logger.info(f"Final train loss: {train_losses[-1]:.4f}")
     logger.info(f"Final val loss: {val_losses[-1]:.4f}")
     
+    logger.info("Saving the model in ./model.pt")
+    Path("models").mkdir(parents=True, exist_ok=True)
+    torch.save(trained_model, "models/model.pt")
+
+
+# fig = plt.figure(figsize=(10, 5))
+# plt.plot(losses)
+# plt.xlabel("Epoch")
+# plt.ylabel("Loss")
+# plt.title("Training Loss Over Epochs")
+# fig.savefig("losses.png")
+
+
+
     # Test sequence generation
     if args.test_generation:
         logger.info("\nTesting sequence generation...")
