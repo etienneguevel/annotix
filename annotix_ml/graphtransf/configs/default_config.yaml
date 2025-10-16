@@ -1,0 +1,13 @@
+dataset:
+  data_path: data/MassSpecGym.csv
+  smile_column: smiles
+  k: 5 # put this arg here or in the model args ?
+
+model:
+  d: 256
+  de: 64
+  n_heads: 8
+  n_layers: 5
+
+train:
+  batch_size: 64
