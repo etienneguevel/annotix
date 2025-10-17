@@ -26,11 +26,12 @@ def create_random_start(bs, n, nbonds, natoms):
 
     # Make a mask 
     mask = torch.randint(low=10, high=n, size=(bs,))
-    mask = torch.concatenate([
+    mask = torch.stack(
+        [
             torch.cat([torch.ones(m), torch.zeros(n-m)])
             for m in mask
         ]
-    ).view((bs, n)) # (bs, n)
+    ) # (bs, n)
 
     # Mask N and E
     N = N * mask.unsqueeze(-1) # (bs, n, natoms)
