@@ -16,7 +16,7 @@ def collateGraph(
         - pos_emb: torch.Tensor, contains pos_emb (n_mol, k)
     """
     # Unpack the nodes, edges and pos_emb
-    bs = len(batch)
+    # bs = len(batch)
     list_N, list_E, list_pos_emb = zip(*batch)
 
     # Look at the number of atoms in each graph
@@ -24,7 +24,7 @@ def collateGraph(
     n_batch = max(num_atoms)
 
     # Pad the nodes
-    N_padded = pad_sequence(list_N).transpose(0, 1) # (bs, n_batch, natoms)
+    N_padded = pad_sequence(list_N).transpose(0, 1).to(torch.float32) # (bs, n_batch, natoms)
 
     # Pad the embeddings
     pos_emb_padded = pad_sequence(list_pos_emb).transpose(0, 1) # (bs, n_batch, k)
@@ -36,13 +36,14 @@ def collateGraph(
             for n, E in zip(num_atoms, list_E)
         ],
         dim=0
-    ) # (bs, n_batch, n_batch, k)
+    ).to(torch.float32) # (bs, n_batch, n_batch, k)
 
     # Make the mask
-    mask = torch.concatenate([
+    mask = torch.stack(
+        [
             torch.cat([torch.ones(m), torch.zeros(n_batch-m)])
             for m in num_atoms
         ]
-    ).view((bs, n_batch)) # (bs, n_batch)
+    ) # (bs, n_batch)
 
     return N_padded, E_padded, pos_emb_padded, mask
