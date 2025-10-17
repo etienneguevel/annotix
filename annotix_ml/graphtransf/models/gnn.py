@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
-from annotix_ml.graphtransf.layers import AttentionLayer, EmbeddingLaplacian
+from annotix_ml.graphtransf.layers import (
+    AttentionLayer, EmbeddingLaplacian, Unembedding
+)
 
 class GnnNodeEdges(nn.Module):
     def __init__(
@@ -20,15 +22,21 @@ class GnnNodeEdges(nn.Module):
         self.de = de
         self.n_layers = n_layers
 
+        # Make the Embedding layer
         layers = [
             EmbeddingLaplacian(d, de, k, natoms, nbonds)
         ]
 
+        # Build the attention layers 
         for _ in range(n_layers):
             layers.append(AttentionLayer(d, de, n_heads))
-        
-        self.layers = nn.ModuleList(layers)
 
+        layers.append(
+            Unembedding(layers[0])
+        )
+        
+        # Build the unembedding layer
+        self.layers = nn.ModuleList(layers)
 
     def forward(
         self,

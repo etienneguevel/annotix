@@ -1,7 +1,9 @@
 import torch
 
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
-from annotix_ml.graphtransf.layers import EmbeddingLaplacian, FfnNodeEdge, MultiHeadEdgeNode
+from annotix_ml.graphtransf.layers import (
+    EmbeddingLaplacian, FfnNodeEdge, MultiHeadEdgeNode, Unembedding
+)
 from annotix_ml.graphtransf.math.positional_emb import laplacian_embedding
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges
 from annotix_ml.graphtransf.test_utils import create_random_start
@@ -19,13 +21,23 @@ def test_model_creation():
     model = GnnNodeEdges(
         d=d, de=de, n_heads=n_heads, k=k, n_layers=n_layers, natoms=natoms, nbonds=nbonds,
     )
+    embedding_layer = model.layers.pop(0)
+    unembedding_layer = model.layers.pop(-1)
 
-    for i, layer in enumerate(model.layers):
-        if i == 0:
-            assert type(layer) is EmbeddingLaplacian
-            assert (layer.d == d) & (layer.k == k)
-        
-        elif type(attn := layer.attnEdgeNode) is MultiHeadEdgeNode:
+    assert type(embedding_layer) is EmbeddingLaplacian
+    assert (embedding_layer.d == d) & (embedding_layer.k == k)
+
+    assert type(unembedding_layer) is Unembedding
+    assert (
+        (unembedding_layer.UnembedNodes.T == embedding_layer.EmbeddingNodes.weight).all()
+    )
+    assert (
+        (unembedding_layer.UnembedEdges.T == embedding_layer.EmbeddingEdges.weight).all()
+    )
+
+    assert len(model.layers) == n_layers
+    for layer in model.layers:
+        if type(attn := layer.attnEdgeNode) is MultiHeadEdgeNode:
             assert (attn.d == d) & (attn.de == de) & (attn.n_heads == n_heads)
         
         elif type(ffn := layer.ffnEdgeNode) is FfnNodeEdge: 
