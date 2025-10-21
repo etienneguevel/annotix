@@ -9,11 +9,18 @@ def collateGraph(
     """
     Data collate function to transform the outputs of the dataset into batches
     that will be fed to the DataLoader objects during the training.
+    This function is made to be used with the GraphDatasetFromSMILEs object and
+    plug it to a torch DataLoader.
+
     Args:
-    - batch made of size 3 tuples made of :
-        - N: torch.Tensor, contains node of size (n_mol, natoms)
-        - E: torch.Tensor, contains edge of size (n_mol, n_mol, nbonds)
-        - pos_emb: torch.Tensor, contains pos_emb (n_mol, k)
+    batch, which is a list of size 3 tuples made of :
+    - N: torch.Tensor, contains node of size (n_mol, natoms)
+    - E: torch.Tensor, contains edge of size (n_mol, n_mol, nbonds)
+    - pos_emb: torch.Tensor, contains pos_emb (n_mol, k)
+    
+    Returns:
+    The 3 padded stacking of the lists, as well as a mask indicating the padding
+    of each element of the batch.
     """
     # Unpack the nodes, edges and pos_emb
     # bs = len(batch)

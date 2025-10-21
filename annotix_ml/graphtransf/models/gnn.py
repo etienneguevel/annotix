@@ -7,6 +7,9 @@ from annotix_ml.graphtransf.layers import (
 )
 
 class GnnNodeEdges(nn.Module):
+    """
+    Implementation of the GNN model as described in https://arxiv.org/abs/2012.09699.
+    """
     def __init__(
         self,
         d: int,
@@ -55,6 +58,7 @@ class GnnNodeEdges(nn.Module):
 
         return h, e, mask
 
+# Make different size of the model
 def gnnNodeEdgesBase() -> GnnNodeEdges:
     model = GnnNodeEdges(
         d=256,

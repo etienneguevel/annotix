@@ -8,11 +8,6 @@ from annotix_ml.graphtransf.layers.ffn import FfnNodeEdge
 class MultiHeadEdgeNode(nn.Module):
     """
     Class implementing the attention classification of the Edge-Node model.
-
-    Args:
-    - d: int, hidden dimension of the model 
-    - de: int, hidden dimension of the edges
-    - n_heads: int, number of heads 
     """
     def __init__(
         self,
@@ -20,6 +15,12 @@ class MultiHeadEdgeNode(nn.Module):
         de:int,
         n_heads: int,
     ):
+        """
+        Args:
+        - d: int, hidden dimension of the model 
+        - de: int, hidden dimension of the edges
+        - n_heads: int, number of heads 
+        """
         super().__init__()
         if not (d % n_heads == 0):
             raise ValueError(
@@ -196,7 +197,8 @@ class MultiHeadEdgeNode(nn.Module):
         return h, e, mask
 
 class AttentionLayer(nn.Module):
-
+    """
+    """
     def __init__(
         self,
         d: int,

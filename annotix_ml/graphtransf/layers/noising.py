@@ -6,6 +6,27 @@ from annotix_ml.graphtransf.math.noising import (
 )
 
 class NoisingModel(nn.Module):
+    """
+    torch module implementing the noise addition of the model.
+    
+    Attributes
+    ----------
+    T: int, number of diffusion steps possible
+    natoms: int, the number of valid atoms used.
+    nbonds: int, the number of possible bonds.
+    n_m: list[float], the nodes distribution of the dataset used (natoms).
+    e_m: list[float], the edges distribution of the dataset used (nbonds).
+    alphas: torch.Tensor, the constants used to compute the step-wise diffusion matrices
+    aphas_bar: torch.Tensor, the constants used to compute the diffusion matrices from 0 to step.
+
+    Methods
+    -------
+    get_Q_t(t: int) -> tuple[torch.Tensor, torch.Tensor]
+    returns the nodes and edges matrices of diffusion from step t-1 to t
+
+    get_Q_bar_t(t: int) -> tuple[torch.Tensor, torch.Tensor]
+    returns the nodes and edges matrices of diffusion from step 0 to t
+    """
     def __init__(
         self,
         nodes_distribution: list[float],
@@ -30,7 +51,7 @@ class NoisingModel(nn.Module):
         self.alphas = alphas
         self.alphas_bar = alphas_bar
 
-    def get_Q_t(self, t):
+    def get_Q_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
         alpha = self.alphas[t]
         Q_nodes = (
             alpha * torch.eye(len(self.n_m)) + (1 - alpha) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)
@@ -42,7 +63,7 @@ class NoisingModel(nn.Module):
 
         return Q_nodes.T, Q_edges.T
     
-    def get_Q_bar_t(self, t):
+    def get_Q_bar_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
         alpha_bar = self.alphas_bar[t]
         Q_bar_nodes = (
             alpha_bar * torch.eye(len(self.n_m)) + (1 - alpha_bar) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)
@@ -55,8 +76,24 @@ class NoisingModel(nn.Module):
         return Q_bar_nodes.T, Q_bar_edges.T
     
     @torch.no_grad
-    def forward(self, N, E, node_mask):
+    def forward(
+        self,
+        N: torch.Tensor,
+        E: torch.Tensor,
+        node_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
+        Noise the nodes and edges matrices of a given batch. A random t is
+        sampled for each graph and the edges and nodes are noised with the
+        corresponding matrices.
+        
+        Args:
+        - N: torch.Tensor, the nodes one-hot encoded vector.
+        - E: torch.Tensor, the edges one-hot encoded vector.
+        - node_mask: torch.Tensor, the mask vector.
+
+        Returns:
+        Noised nodes and edges, as well as the unmodified mask.
         """
         # N (bs, n, natoms)
         # E (bs, n, n, nbonds)

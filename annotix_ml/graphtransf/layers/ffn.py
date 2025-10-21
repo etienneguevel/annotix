@@ -4,12 +4,20 @@ import torch
 import torch.nn as nn
 
 class FfnNodeEdge(nn.Module):
-
+    """
+    Feed forward network of the attention layers. Nodes and Edges each have
+    a MLP with one hidden layer.
+    """
     def __init__(
         self,
         d: int,
         de: int,
     ):
+        """
+        Args:
+        - d: int, the dimension of the nodes embeddings of the network.
+        - de: int, the dimension of the edges embeddings of the network.
+        """
         super().__init__()
         # Init the FFN for nodes
         self.d = d
@@ -45,7 +53,7 @@ class FfnNodeEdge(nn.Module):
         h: torch.Tensor,
         e: torch.Tensor,
         mask: torch.Tensor,
-    ):
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Prepare the masks
         node_mask = mask.unsqueeze(-1)
         edge_mask = node_mask.unsqueeze(-1)

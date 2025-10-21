@@ -1,11 +1,20 @@
 import torch
 import torch.nn.functional as F
 
-def cosine_beta_schedule_discrete(timesteps: int, s=0.008):
+def cosine_beta_schedule_discrete(
+        timesteps: int, s: float = 0.008
+    ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ.
     alpha_bar_t = f(t)/f(0), f(t) = cos(0.5*pi((t/steps)+s)/(1+s))
     beta_t = 1 - alpha_bar_t / alpha_bar_t-1
+
+    Args:
+    - t: int, number of timesteps to implement.
+    - s: float, variable for the computation of the alphas.
+
+    Returns:
+    torch tensors of the alphas and alphas_bar, each of size timesteps.
     """
     steps = timesteps + 2
     x = torch.arange(steps) # (timesteps + 2)
@@ -31,13 +40,18 @@ def sample_discrete_features(
     probX: torch.Tensor, 
     probE: torch.Tensor, 
     node_mask: torch.Tensor
-):
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Sample features from multinomial distribution with given probabilities.
+
     Args:
-        - probX: bs, n, natoms        node features
-        - probE: bs, n, n, nbonds     edge features
-        - node_mask: bs, n            binary mask for nodes
+    - probX: torch.Tensor, node features, (bs, n, natoms).
+    - probE: torch.Tensor, edge features, (bs, n, n, nbonds).
+    - node_mask: torch.Tensor, binary mask for nodes (bs, n).
+
+    Returns:
+    The sampled nodes and edges tensors, one-hot encoded after the sampling,
+    resp. of sizes (bs, n, natoms) and (bs, n, n, nbonds).
     """
     bs, n, natoms = probX.shape
     nbonds = probE.shape[-1]

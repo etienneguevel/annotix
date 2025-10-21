@@ -3,6 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class EmbeddingLaplacian(nn.Module):
+    """
+    Embedding layer for graph like data. It implements two Linear layer for
+    the nodes and the edges of the graph. Another layer is implemented for
+    the projection of the positional embeddings (Laplacian eigenvectors).
+    """
     def __init__(
         self,
         d: int,
@@ -11,6 +16,14 @@ class EmbeddingLaplacian(nn.Module):
         natoms: int,
         nbonds: int,
     ):
+        """
+        Args:
+        - d: int, embedding dimension of the nodes.
+        - de: int, embedding dimension of the edges.
+        - k: int, number of eigenvectors to select.
+        - natoms: int, size of the one-hot encoded nodes.
+        - nbonds: int, size of the one-hot encoded edges.
+        """
         super().__init__()
         self.d = d
         self.de = de
@@ -28,10 +41,14 @@ class EmbeddingLaplacian(nn.Module):
     ):
         """
         Args:
-            - N: torch.Tensor, node matrix (bs, n, natoms)
-            - E: torch.Tensor, adjacency matrix (bs, n, n, nbonds)
-            - pos_emb: torch.Tensor, Laplacian eigenvectors (bs, n, k)
-            - mask: torch.Tensor, boolean mask (bs, n)
+        - N: torch.Tensor, node matrix (bs, n, natoms)
+        - E: torch.Tensor, adjacency matrix (bs, n, n, nbonds)
+        - pos_emb: torch.Tensor, Laplacian eigenvectors (bs, n, k)
+        - mask: torch.Tensor, boolean mask (bs, n)
+        
+        Returns:
+        Embedded nodes and edges. The positional embedding is added to the nodes.
+        The mask is also returned unmodified.
         """
         # Prepare the masks
         node_mask = mask.unsqueeze(-1) # (bs, n, 1)
@@ -49,13 +66,23 @@ class EmbeddingLaplacian(nn.Module):
     
 
 class Unembedding(nn.Module):
+    """
+    Unembedding layer to map the embedding of the transformer layers back to
+    the one-hot encoded space of the nodes and edges.
+    """
     def __init__(
         self,
         embedding_layer: EmbeddingLaplacian,
     ):
+        """
+        Args:
+        - embedding_layer: EmbeddingLaplacian, the embedding layer of the model,
+        its weights are reused to make the ones of this layer.
+        """
         super().__init__()
-        self.UnembedNodes = embedding_layer.EmbeddingNodes.weight.T
-        self.UnembedEdges = embedding_layer.EmbeddingEdges.weight.T
+        # TODO : check if the gradient is well registered and if it is actually needed.
+        self.register_buffer("UnembedNodes", embedding_layer.EmbeddingNodes.weight.T)
+        self.register_buffer("UnembedEdges", embedding_layer.EmbeddingEdges.weight.T)
 
     def forward(
         self,
@@ -65,9 +92,9 @@ class Unembedding(nn.Module):
     ):
         """
         Args:
-            - N: torch.Tensor, node matrix (bs, n, d)
-            - E: torch.Tensor, adjacency matrix (bs, n, n, de)
-            - mask: torch.Tensor, boolean mask (bs, n)
+        - N: torch.Tensor, node matrix (bs, n, d)
+        - E: torch.Tensor, adjacency matrix (bs, n, n, de)
+        - mask: torch.Tensor, boolean mask (bs, n)
         """
         # Compute the logits
         N = F.linear(N, self.UnembedNodes) # (bs, n, natoms)

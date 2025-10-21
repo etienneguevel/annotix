@@ -10,12 +10,42 @@ from annotix_ml.graphtransf.math.positional_emb import laplacian_embedding
 
 
 class GraphDatasetFromSMILEs(Dataset):
+    """
+    Build a torch Dataset from a csv files having one column indicating the
+    SMILEs of molecules. The molecules are filtered to only include the ones
+    with the atoms within the VALID_ELEMENTS constant. 
+    The nodes and edges distributions of the data are also computed to later
+    be used for the noise model.
+    The dataset also computes the eigenvectors of the Normalized Laplacian
+    matrix of the graphs to use them as positional embeddings.
+    """
     def __init__(
         self,
         data: str | DataFrame,
         smile_column: str = "smiles",
         k: int | None = None,
+        split: str | None = None,
+        split_column: str | None = None,
     ):
+        """
+        Args:
+        - data: str | DataFrame, either the path to the csv or the csv opened as
+        a pd.DataFrame.
+        - smile_column: str = "smiles", the column in which the smiles are
+        contained.
+        - k: int | None = None, the number of eigenvectors to select for the
+        graphs.
+        - split: str | None = None, the name of the split to select to build the
+        dataset.
+        - split_column: str | None = None, the name of the column where to search
+        the split of the row.
+
+        Returns:
+        This describes here the __getitem__ method of this object. At index idx
+        we get the one-hot encoded nodes and edges vectors resp. of sizes (n, natoms) and
+        (n, n, nbonds) where n is the number of heavy atoms within the SMILEs,
+        natoms is the length of VALID_ATOMS and nbonds is the length of TYPE_EDGES.
+        """
         super().__init__()
         if isinstance(data, str):
             data = pd.read_csv(data)
@@ -28,10 +58,13 @@ class GraphDatasetFromSMILEs(Dataset):
                 f"{type(data)} is not accepted to instantiate GraphDataset."
             )
         
+        if split:
+            data = data[data[split_column] == split]
+        
         # Register the number of eigenvectors to take
         self.k = k
 
-        # Get the valid smiles, and compute node / edges dist -> for noise schedule
+        # Get the valid smiles, and compute node / edges distributions -> for noise schedule
         smiles_nodes_edges = [
             (sm, graph[0].sum(0).unsqueeze(0), graph[1].sum(0).sum(0).unsqueeze(0)) # graph[0]=nodes, graph[1]=edges
             for sm in data[smile_column].to_list()
@@ -51,7 +84,16 @@ class GraphDatasetFromSMILEs(Dataset):
         self.edge_distribution = edge_distribution
 
     @staticmethod
-    def smilesToGraph(smiles: str):
+    def smilesToGraph(smiles: str)->tuple[torch.Tensor, torch.Tensor]:
+        """
+        Convert a smiles into its node and edges representation as tensors.
+
+        Args:
+        - smiles: str, the smiles string to convert
+        
+        Returns:
+        The nodes and edges tensor resp. of sizes (n, natoms) and (n, n, nbonds).
+        """
         # Make a molecule
         mol = Chem.MolFromSmiles(smiles)
         
@@ -100,6 +142,15 @@ class GraphDatasetFromSMILEs(Dataset):
         return len(self.smiles)
 
     def __getitem__(self, idx):
+        """
+        Args:
+        - idx: int, the index of the dataset to fetch
+
+        Returns:
+        One-hot encoded nodes and edges vectors resp. of sizes (n, natoms) and
+        (n, n, nbonds) where n is the number of heavy atoms within the SMILEs,
+        natoms is the length of VALID_ATOMS and nbonds is the length of TYPE_EDGES.
+        """
         sm = self.smiles[idx]
         
         # Calculate the nodes and edges
