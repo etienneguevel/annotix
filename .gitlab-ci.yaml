@@ -1,0 +1,29 @@
+stages:
+  - setup
+  - lint
+  - test
+
+# Use a Python image (you can pick your version)
+default:
+  image: python:3.11
+  before_script:
+    - pip install -e .[dev]
+
+# --- Linting stage ---
+lint:
+  stage: lint
+  script:
+    - ruff check .
+  allow_failure: false
+
+# --- Testing stage ---
+test:
+  stage: test
+  script:
+    - pytest tests -v
+  artifacts:
+    when: always
+    paths:
+      - tests/.pytest_cache/
+      - .coverage
+    expire_in: 1 week
