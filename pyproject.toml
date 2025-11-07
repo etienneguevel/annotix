@@ -12,6 +12,7 @@ dependencies = [
     "pytest>=8.4.2",
     "rdkit>=2025.9.1",
     "scipy>=1.16.2",
+    "seaborn>=0.13.2",
     "spec2vec>=0.8.0",
     "torch>=2.8.0",
     "tqdm>=4.67.1",

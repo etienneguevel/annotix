@@ -198,6 +198,8 @@ class MultiHeadEdgeNode(nn.Module):
 
 class AttentionLayer(nn.Module):
     """
+    Class implementing the total attention layer of the model. It consists of a
+    EdgeNode attention layer followed by a ffnNodeEdge layer.
     """
     def __init__(
         self,

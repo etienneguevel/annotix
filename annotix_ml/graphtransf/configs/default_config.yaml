@@ -2,6 +2,7 @@ dataset:
   data_path: data/MassSpecGym.csv
   smile_column: smiles
   k: 5 # put this arg here or in the model args ?
+  split_column: "fold"
 
 model:
   d: 256
@@ -11,3 +12,12 @@ model:
 
 train:
   batch_size: 64
+  diffusion_steps: 500
+  ratio_losses: 1
+
+valid:
+  batch_size: 128
+  num_eval_steps: 1000
+
+test:
+  batch_size: 128

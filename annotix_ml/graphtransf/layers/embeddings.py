@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class EmbeddingLaplacian(nn.Module):
     """
@@ -28,8 +27,10 @@ class EmbeddingLaplacian(nn.Module):
         self.d = d
         self.de = de
         self.k = k
-        self.EmbeddingNodes = nn.Linear(natoms, d)
-        self.EmbeddingEdges = nn.Linear(nbonds, de)
+        self.natoms = natoms
+        self.nbonds = nbonds
+        self.EmbeddingNodes = nn.Linear(natoms, d, bias=False)
+        self.EmbeddingEdges = nn.Linear(nbonds, de, bias=False)
         self.LaplacianProjection = nn.Linear(k, d)
 
     def forward(
@@ -70,19 +71,19 @@ class Unembedding(nn.Module):
     Unembedding layer to map the embedding of the transformer layers back to
     the one-hot encoded space of the nodes and edges.
     """
-    def __init__(
-        self,
-        embedding_layer: EmbeddingLaplacian,
-    ):
+    """
+    Args:
+    - embedding_layer: EmbeddingLaplacian, the embedding layer of the model,
+    its weights are reused to make the ones of this layer.
+    """
+    def __init__(self, embedding_layer):
         """
         Args:
         - embedding_layer: EmbeddingLaplacian, the embedding layer of the model,
         its weights are reused to make the ones of this layer.
         """
         super().__init__()
-        # TODO : check if the gradient is well registered and if it is actually needed.
-        self.register_buffer("UnembedNodes", embedding_layer.EmbeddingNodes.weight.T)
-        self.register_buffer("UnembedEdges", embedding_layer.EmbeddingEdges.weight.T)
+        self.embedding_layer = embedding_layer  # keep reference
 
     def forward(
         self,
@@ -96,11 +97,10 @@ class Unembedding(nn.Module):
         - E: torch.Tensor, adjacency matrix (bs, n, n, de)
         - mask: torch.Tensor, boolean mask (bs, n)
         """
-        # Compute the logits
-        N = F.linear(N, self.UnembedNodes) # (bs, n, natoms)
-        E = F.linear(E, self.UnembedEdges) # (bs, n, n, nbonds)
 
-        # TODO : find a way to mask the atoms not related to the element of the 
-        # batch for the cross entropy
-        
+        Wn = self.embedding_layer.EmbeddingNodes.weight
+        We = self.embedding_layer.EmbeddingEdges.weight
+
+        N = N @ Wn  # equivalent to Linear(d→natoms) without bias
+        E = E @ We  # equivalent to Linear(de→nbonds)
         return N, E, mask

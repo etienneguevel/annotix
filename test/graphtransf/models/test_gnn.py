@@ -28,12 +28,7 @@ def test_model_creation():
     assert (embedding_layer.d == d) & (embedding_layer.k == k)
 
     assert type(unembedding_layer) is Unembedding
-    assert (
-        (unembedding_layer.UnembedNodes.T == embedding_layer.EmbeddingNodes.weight).all()
-    )
-    assert (
-        (unembedding_layer.UnembedEdges.T == embedding_layer.EmbeddingEdges.weight).all()
-    )
+    assert (unembedding_layer.embedding_layer is embedding_layer)
 
     assert len(model.layers) == n_layers
     for layer in model.layers:

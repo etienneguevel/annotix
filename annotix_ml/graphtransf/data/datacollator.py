@@ -2,7 +2,6 @@ import torch
 from torch.nn.functional import pad
 from torch.nn.utils.rnn import pad_sequence
 
-# TODO : implement tests
 def collateGraph(
         batch: list[tuple[torch.Tensor]],
     ):

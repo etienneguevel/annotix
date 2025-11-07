@@ -48,7 +48,7 @@ class GnnNodeEdges(nn.Module):
         pos_emb: torch.Tensor,
         mask: torch.Tensor,
     ):
-        # Do the forward pass
+
         for i, layer in enumerate(self.layers):
             if i == 0:
                 h, e, mask = layer(N, E, pos_emb, mask)
