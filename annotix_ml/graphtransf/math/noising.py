@@ -1,9 +1,10 @@
 import torch
 import torch.nn.functional as F
 
+
 def cosine_beta_schedule_discrete(
-        timesteps: int, s: float = 0.008
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    timesteps: int, s: float = 0.008
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ.
     alpha_bar_t = f(t)/f(0), f(t) = cos(0.5*pi((t/steps)+s)/(1+s))
@@ -17,16 +18,20 @@ def cosine_beta_schedule_discrete(
     torch tensors of the alphas and alphas_bar, each of size timesteps.
     """
     steps = timesteps + 2
-    x = torch.arange(steps) # (timesteps + 2)
+    x = torch.arange(steps)  # (timesteps + 2)
 
     # Compute raw alphas according to f
-    alphas_cumprod = torch.cos(0.5 * torch.pi * ((x / steps) + s) / (1 + s)) ** 2 # (timesteps + 2)
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0] # (timesteps + 2)
-    alphas = alphas_cumprod[1:] / alphas_cumprod[:-1] # (timesteps + 1)
+    alphas_cumprod = (
+        torch.cos(0.5 * torch.pi * ((x / steps) + s) / (1 + s)) ** 2
+    )  # (timesteps + 2)
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]  # (timesteps + 2)
+    alphas = alphas_cumprod[1:] / alphas_cumprod[:-1]  # (timesteps + 1)
 
     # Compute betas and limit their max values
     betas = 1 - alphas
-    betas = 1 - torch.clamp(betas, min=0, max=0.999) # limit the max value of betas to prevent irregularities
+    betas = 1 - torch.clamp(
+        betas, min=0, max=0.999
+    )  # limit the max value of betas to prevent irregularities
 
     # Recompute the alphas with the new betas values
     alphas = 1 - betas
@@ -36,10 +41,9 @@ def cosine_beta_schedule_discrete(
 
     return alphas, alphas_bar
 
+
 def sample_discrete_features(
-    probX: torch.Tensor, 
-    probE: torch.Tensor, 
-    node_mask: torch.Tensor
+    probX: torch.Tensor, probE: torch.Tensor, node_mask: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Sample features from multinomial distribution with given probabilities.
@@ -57,7 +61,7 @@ def sample_discrete_features(
     nbonds = probE.shape[-1]
     # Noise X
     # The masked rows should define probability distributions as well
-    node_mask = (node_mask == 1) # convert mask to bool type
+    node_mask = node_mask == 1  # convert mask to bool type
     probX[~node_mask] = 1 / probX.shape[-1]
 
     # Flatten the probability tensor to sample with multinomial
@@ -70,7 +74,7 @@ def sample_discrete_features(
     # Noise E
     # The masked rows should define probability distributions as well
     inverse_edge_mask = ~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2))
-    diag_mask = torch.eye(n).unsqueeze(0).expand(bs, -1, -1) # (bs, n, n)
+    diag_mask = torch.eye(n).unsqueeze(0).expand(bs, -1, -1)  # (bs, n, n)
 
     probE[inverse_edge_mask] = 1 / probE.shape[-1]
     probE[diag_mask.bool()] = 1 / probE.shape[-1]
@@ -79,8 +83,8 @@ def sample_discrete_features(
 
     # Sample E
     E_t = probE.multinomial(1).reshape(bs, n, n)  # (bs, n, n)
-    E_t = torch.triu(E_t, diagonal=1) # (bs, n, n)
-    E_t = E_t + torch.transpose(E_t, 1, 2) # (bs, n, n)
+    E_t = torch.triu(E_t, diagonal=1)  # (bs, n, n)
+    E_t = E_t + torch.transpose(E_t, 1, 2)  # (bs, n, n)
 
     # One-hot encode the noised X and E
     X_t = F.one_hot(X_t, natoms)

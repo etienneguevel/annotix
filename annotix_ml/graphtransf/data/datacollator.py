@@ -2,9 +2,10 @@ import torch
 from torch.nn.functional import pad
 from torch.nn.utils.rnn import pad_sequence
 
+
 def collateGraph(
-        batch: list[tuple[torch.Tensor]],
-    ):
+    batch: list[tuple[torch.Tensor]],
+):
     """
     Data collate function to transform the outputs of the dataset into batches
     that will be fed to the DataLoader objects during the training.
@@ -16,7 +17,7 @@ def collateGraph(
     - N: torch.Tensor, contains node of size (n_mol, natoms)
     - E: torch.Tensor, contains edge of size (n_mol, n_mol, nbonds)
     - pos_emb: torch.Tensor, contains pos_emb (n_mol, k)
-    
+
     Returns:
     The 3 padded stacking of the lists, as well as a mask indicating the padding
     of each element of the batch.
@@ -30,10 +31,12 @@ def collateGraph(
     n_batch = max(num_atoms)
 
     # Pad the nodes
-    N_padded = pad_sequence(list_N).transpose(0, 1).to(torch.float32) # (bs, n_batch, natoms)
+    N_padded = (
+        pad_sequence(list_N).transpose(0, 1).to(torch.float32)
+    )  # (bs, n_batch, natoms)
 
     # Pad the embeddings
-    pos_emb_padded = pad_sequence(list_pos_emb).transpose(0, 1) # (bs, n_batch, k)
+    pos_emb_padded = pad_sequence(list_pos_emb).transpose(0, 1)  # (bs, n_batch, k)
 
     # Pad the edges
     E_padded = torch.cat(
@@ -41,15 +44,12 @@ def collateGraph(
             pad(E, (0, 0, 0, n_batch - n, 0, n_batch - n)).unsqueeze(0)
             for n, E in zip(num_atoms, list_E)
         ],
-        dim=0
-    ).to(torch.float32) # (bs, n_batch, n_batch, k)
+        dim=0,
+    ).to(torch.float32)  # (bs, n_batch, n_batch, k)
 
     # Make the mask
     mask = torch.stack(
-        [
-            torch.cat([torch.ones(m), torch.zeros(n_batch-m)])
-            for m in num_atoms
-        ]
-    ) # (bs, n_batch)
+        [torch.cat([torch.ones(m), torch.zeros(n_batch - m)]) for m in num_atoms]
+    )  # (bs, n_batch)
 
     return N_padded, E_padded, pos_emb_padded, mask

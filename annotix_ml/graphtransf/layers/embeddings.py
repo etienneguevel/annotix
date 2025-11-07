@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
 
+
 class EmbeddingLaplacian(nn.Module):
     """
     Embedding layer for graph like data. It implements two Linear layer for
     the nodes and the edges of the graph. Another layer is implemented for
     the projection of the positional embeddings (Laplacian eigenvectors).
     """
+
     def __init__(
         self,
         d: int,
@@ -46,36 +48,38 @@ class EmbeddingLaplacian(nn.Module):
         - E: torch.Tensor, adjacency matrix (bs, n, n, nbonds)
         - pos_emb: torch.Tensor, Laplacian eigenvectors (bs, n, k)
         - mask: torch.Tensor, boolean mask (bs, n)
-        
+
         Returns:
         Embedded nodes and edges. The positional embedding is added to the nodes.
         The mask is also returned unmodified.
         """
         # Prepare the masks
-        node_mask = mask.unsqueeze(-1) # (bs, n, 1)
-        edge_mask = node_mask.unsqueeze(-1) # (bs, n, 1, 1)
+        node_mask = mask.unsqueeze(-1)  # (bs, n, 1)
+        edge_mask = node_mask.unsqueeze(-1)  # (bs, n, 1, 1)
 
         # Calculate the node embedding and add the positional emb
-        h = self.EmbeddingNodes(N) + self.LaplacianProjection(pos_emb) # (bs, n, d)
+        h = self.EmbeddingNodes(N) + self.LaplacianProjection(pos_emb)  # (bs, n, d)
         h = h * node_mask
 
         # Compute the edge embedding
-        e = self.EmbeddingEdges(E) # (bs, n, n, de)
+        e = self.EmbeddingEdges(E)  # (bs, n, n, de)
         e = e * edge_mask
 
         return h, e, mask
-    
+
 
 class Unembedding(nn.Module):
     """
     Unembedding layer to map the embedding of the transformer layers back to
     the one-hot encoded space of the nodes and edges.
     """
+
     """
     Args:
     - embedding_layer: EmbeddingLaplacian, the embedding layer of the model,
     its weights are reused to make the ones of this layer.
     """
+
     def __init__(self, embedding_layer):
         """
         Args:

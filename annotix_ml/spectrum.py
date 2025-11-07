@@ -12,7 +12,6 @@ import matchms.filtering as msfilters
 import matplotlib.pyplot as plt
 import numpy as np
 from spec2vec import SpectrumDocument
-from tqdm import tqdm
 
 
 class Spectrum(matchms.Spectrum):
@@ -36,14 +35,14 @@ class Spectrum(matchms.Spectrum):
 
     def __repr__(self):
         string = f"""
-Spectrum(id={self.metadata.get('id')}, mz=[{self.mz[0]}, ..., {self.mz[-1]}], intensities=[{self.intensities[0]}, ..., {self.intensities[-1]}])
+Spectrum(id={self.metadata.get("id")}, mz=[{self.mz[0]}, ..., {self.mz[-1]}], intensities=[{self.intensities[0]}, ..., {self.intensities[-1]}])
 
 Metadata:
-Spectrum ID:     {self.metadata.get('id')}
-Smiles:          {self.metadata.get('smiles')}
-Compound name:   {self.metadata.get('compound_name')}
-Pepmass:         {self.metadata.get('pepmass')}
-Charge:          {self.metadata.get('charge')}
+Spectrum ID:     {self.metadata.get("id")}
+Smiles:          {self.metadata.get("smiles")}
+Compound name:   {self.metadata.get("compound_name")}
+Pepmass:         {self.metadata.get("pepmass")}
+Charge:          {self.metadata.get("charge")}
 Number of peaks: {len(self.peaks)}
 """
         return string.strip()
@@ -57,12 +56,14 @@ Number of peaks: {len(self.peaks)}
         Return the compound name from the metadata.
         """
         return self.metadata.get("compound_name", "Unknown Compound")
+
     @property
     def smiles(self):
         """
         Return the SMILES representation from the metadata.
         """
         return self.metadata.get("smiles", "Unknown SMILES")
+
 
 def spectrum_processing(s):
     """
@@ -111,6 +112,7 @@ def get_peaks(peaks_list):
     sorted_indexes = np.argsort(peaks[:, 0])
     return peaks[sorted_indexes]
 
+
 def get_spectrum(series):
     """
     Convert a pandas Series to a Spectrum object.
@@ -131,10 +133,11 @@ def get_spectrum(series):
         smiles=series["smiles"],
         compound_name=series["compound_name"],
         charge=series["charge"],
-        id=series["spectral_data_id"]
+        id=series["spectral_data_id"],
     )
 
     return peaks[:, 0], peaks[:, 1], metadata
+
 
 def plot_spectrum(spectrum, other_spectrum=None):
     """
@@ -144,9 +147,9 @@ def plot_spectrum(spectrum, other_spectrum=None):
         spectrum (Spectrum): First spectrum to plot.
         other_spectrum (Spectrum, optional): Second spectrum to plot against.
     """
-    
+
     if not other_spectrum:
-        spectrum.plot() #Plot one spectrum
+        spectrum.plot()  # Plot one spectrum
     else:
         spectrum.plot_against(other_spectrum)
     plt.show()

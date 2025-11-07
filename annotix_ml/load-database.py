@@ -23,12 +23,9 @@ def connect(database, user, password, host, port):
         connection: psycopg2 connection object.
     """
     return psycopg2.connect(
-        database=database,
-        user=user,
-        password=password,
-        host=host,
-        port=port
+        database=database, user=user, password=password, host=host, port=port
     )
+
 
 def query(database, schema, origin_db="Bacterial_metabolites_database"):
     """
@@ -57,6 +54,7 @@ def query(database, schema, origin_db="Bacterial_metabolites_database"):
                 join "{database}"."{schema}".analytics_data A on T.analytics_data_id = A.analytics_data_id
                 join "{database}"."{schema}".charge CH on S.charge_id = CH.charge_id
                 where D.database_name='{origin_db}' and S.pepmass!=999.9999;"""
+
 
 def fetch_source(source_db, database, schema, cursor):
     """

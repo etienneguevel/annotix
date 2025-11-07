@@ -3,13 +3,17 @@ import torch.nn as nn
 
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.layers import (
-    AttentionLayer, EmbeddingLaplacian, Unembedding
+    AttentionLayer,
+    EmbeddingLaplacian,
+    Unembedding,
 )
+
 
 class GnnNodeEdges(nn.Module):
     """
     Implementation of the GNN model as described in https://arxiv.org/abs/2012.09699.
     """
+
     def __init__(
         self,
         d: int,
@@ -26,18 +30,14 @@ class GnnNodeEdges(nn.Module):
         self.n_layers = n_layers
 
         # Make the Embedding layer
-        layers = [
-            EmbeddingLaplacian(d, de, k, natoms, nbonds)
-        ]
+        layers = [EmbeddingLaplacian(d, de, k, natoms, nbonds)]
 
-        # Build the attention layers 
+        # Build the attention layers
         for _ in range(n_layers):
             layers.append(AttentionLayer(d, de, n_heads))
 
-        layers.append(
-            Unembedding(layers[0])
-        )
-        
+        layers.append(Unembedding(layers[0]))
+
         # Build the unembedding layer
         self.layers = nn.ModuleList(layers)
 
@@ -48,15 +48,15 @@ class GnnNodeEdges(nn.Module):
         pos_emb: torch.Tensor,
         mask: torch.Tensor,
     ):
-
         for i, layer in enumerate(self.layers):
             if i == 0:
                 h, e, mask = layer(N, E, pos_emb, mask)
-            
+
             else:
                 h, e, mask = layer(h, e, mask)
 
         return h, e, mask
+
 
 # Make different size of the model
 def gnnNodeEdgesBase() -> GnnNodeEdges:

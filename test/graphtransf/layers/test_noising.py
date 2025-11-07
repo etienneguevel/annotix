@@ -4,6 +4,7 @@ from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.layers import NoisingModel
 from annotix_ml.graphtransf.test_utils import create_random_start
 
+
 def test_Q_shape():
     # Create random dist vectors
     natoms = len(VALID_ELEMENTS)
@@ -18,7 +19,7 @@ def test_Q_shape():
     model = NoisingModel(
         nodes_distribution=nodes_distribution,
         edges_distribution=edges_distribution,
-        diffusion_steps=500
+        diffusion_steps=500,
     )
 
     # Get matrices
@@ -30,6 +31,7 @@ def test_Q_shape():
     Q_nodes_bar_t, Q_edges_bar_t = model.get_Q_bar_t(200)
     assert Q_nodes_bar_t.shape == (natoms, natoms)
     assert Q_edges_bar_t.shape == (nbonds, nbonds)
+
 
 def test_noise_forward():
     # Create random inputs
@@ -50,7 +52,7 @@ def test_noise_forward():
     model = NoisingModel(
         nodes_distribution=nodes_distribution,
         edges_distribution=edges_distribution,
-        diffusion_steps=500
+        diffusion_steps=500,
     )
 
     # Test the forward of the model
@@ -58,6 +60,7 @@ def test_noise_forward():
     assert N.size() == N_noised.size()
     assert E.size() == E_noised.size()
     assert mask_out is mask
+
 
 if __name__ == "__main__":
     test_Q_shape()

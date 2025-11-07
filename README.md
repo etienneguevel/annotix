@@ -3,7 +3,7 @@
 ## Installation
 
 Le package est manage par `uv` pour la gestion des dependances entre librairies,
-et est installable par `pip`.  
+et est installable par `pip`.
 Pour installer le package installer une version de python < 3.13, et run :
 `pip install .`.
 

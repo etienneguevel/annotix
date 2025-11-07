@@ -1,5 +1,5 @@
-
 import matchms.filtering as filt
+
 
 def spectrum_processing(s):
     """This is how one would typically design a desired pre- and post-
@@ -13,6 +13,7 @@ def spectrum_processing(s):
     s = filt.add_losses(s, loss_mz_from=15.0, loss_mz_to=350.0)
     s = filt.require_minimum_number_of_peaks(s, n_required=5)
     return s
+
 
 def metadata_processing(spectrum):
     spectrum = filt.default_filters(spectrum)

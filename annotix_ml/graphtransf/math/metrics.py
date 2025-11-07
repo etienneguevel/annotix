@@ -12,7 +12,7 @@ def MCES_distance(smile1: str, smile2: str) -> int:
     mces = rdRascalMCES.FindMCES(mol1, mol2)
     if len(mces) == 0:
         Ec = 0
-    
+
     else:
         Ec = len(mces[0].bondMatches())
 
@@ -24,6 +24,7 @@ def MCES_distance(smile1: str, smile2: str) -> int:
 
     return mces_distance
 
+
 def mol_to_fingerprint(m: Chem.Mol, radius: int = 3, nbits: int = 2048):
     morgan_gen = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=nbits)
     curr_fp = morgan_gen.GetFingerprint(m)
@@ -31,6 +32,7 @@ def mol_to_fingerprint(m: Chem.Mol, radius: int = 3, nbits: int = 2048):
     DataStructs.ConvertToNumpyArray(curr_fp, fingerprint)
 
     return fingerprint
+
 
 def tanimoto_sim(smile1: str, smile2: str) -> float:
     # Create the mol associated to the smiles

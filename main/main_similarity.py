@@ -15,18 +15,23 @@ from annotix_ml.word2vec import word_similarity, spectrum_similarity
 def arguments():
     """
     Parse command line arguments.
-    
+
     Returns:
         Namespace: Parsed arguments.
     """
     parser = ArgumentParser(description="Compute similarity between spectra.")
-    parser.add_argument("--model_path", type=str, default="./model.pt", help="Path to the trained model.")
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="./model.pt",
+        help="Path to the trained model.",
+    )
     return parser.parse_args()
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     args = arguments()
-    
+
     logger.info("Loading model from {}", args.model_path)
     model = torch.load(args.model_path, map_location=torch.device("cpu"))
 
@@ -49,7 +54,11 @@ if __name__ == "__main__":
 
     logger.info("Similarity between two spectra (already processed as documents)")
     sim1 = spectrum_similarity(model, spec_1, spec_2)
-    logger.success(f"Similarity between {spec_1.name} and {spec_2.name}: {round(sim1, 2)}")
+    logger.success(
+        f"Similarity between {spec_1.name} and {spec_2.name}: {round(sim1, 2)}"
+    )
 
     sim2 = spectrum_similarity(model, spec_1, spec_1)
-    logger.success(f"Similarity between {spec_1.name} and {spec_1.name}: {round(sim2, 2)}")
+    logger.success(
+        f"Similarity between {spec_1.name} and {spec_1.name}: {round(sim2, 2)}"
+    )

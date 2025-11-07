@@ -8,6 +8,7 @@ from loguru import logger
 import pandas as pd
 from rdkit import Chem
 
+
 def test_molecular_network():
     """
     Test the MolecularNetwork class with a simple example.
@@ -17,7 +18,9 @@ def test_molecular_network():
     classes = ["alcohol", "amine", "alkane", "fluoride"]
 
     # Create MolecularNetwork instance
-    network = MolecularNetwork(descriptor="morgan2", sim_metric="tanimoto", sim_threshold=0.25)
+    network = MolecularNetwork(
+        descriptor="morgan2", sim_metric="tanimoto", sim_threshold=0.25
+    )
 
     # Create graph from SMILES strings and classes
     graph = network.create_graph(smiles_list, classes)
@@ -26,8 +29,9 @@ def test_molecular_network():
     assert len(graph.nodes) == len(smiles_list)
     assert all(node["smiles"] in smiles_list for node in graph.nodes.values())
     assert all(node["categorical_label"] in classes for node in graph.nodes.values())
-    
+
     logger.info("Test passed successfully!")
+
 
 def print_graph_info(graph, node_names=None):
     """
@@ -49,7 +53,12 @@ def print_graph_info(graph, node_names=None):
         sim_list.append((node1, node2, round(similarity, 2)))
 
     sim_df = pd.DataFrame(sim_list, columns=["Node1", "Node2", "Similarity"])
-    print(pd.pivot_table(sim_df, index="Node1", columns="Node2", values="Similarity", fill_value=0))
+    print(
+        pd.pivot_table(
+            sim_df, index="Node1", columns="Node2", values="Similarity", fill_value=0
+        )
+    )
+
 
 def plot_graph(graph, labels=None):
     """
@@ -59,8 +68,18 @@ def plot_graph(graph, labels=None):
     import networkx as nx
 
     pos = nx.spring_layout(graph)
-    nx.draw(graph, pos, with_labels=True, labels=labels, node_size=700, node_color="lightblue", font_size=10, font_color="black")
+    nx.draw(
+        graph,
+        pos,
+        with_labels=True,
+        labels=labels,
+        node_size=700,
+        node_color="lightblue",
+        font_size=10,
+        font_color="black",
+    )
     plt.show()
+
 
 def plot_graph_plotly(graph, labels=None, properties=[]):
     """
@@ -92,18 +111,33 @@ def plot_graph_plotly(graph, labels=None, properties=[]):
     node_labels = labels
     if labels is not None and isinstance(labels, dict):
         node_labels = [
-f"""
+            f"""
 Smiles: {labels[node]}
 
-Compound name: {properties.get("compound_name", [''])[node] if properties else ""}
-""" for node in graph.nodes()]
+Compound name: {properties.get("compound_name", [""])[node] if properties else ""}
+"""
+            for node in graph.nodes()
+        ]
 
-    fig = go.Figure(data=[go.Scatter(x=edge_x, y=edge_y, mode="lines", line=dict(width=1, color="black")),
-                          go.Scatter(x=node_x, y=node_y, mode="markers", text=node_labels,
-                                     marker=dict(size=20, color="lightblue"), textposition="top center")])
-    
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=edge_x, y=edge_y, mode="lines", line=dict(width=1, color="black")
+            ),
+            go.Scatter(
+                x=node_x,
+                y=node_y,
+                mode="markers",
+                text=node_labels,
+                marker=dict(size=20, color="lightblue"),
+                textposition="top center",
+            ),
+        ]
+    )
+
     fig.update_layout(showlegend=False)
     fig.show()
+
 
 def check_smiles(smile_string):
     """
@@ -117,13 +151,14 @@ def check_smiles(smile_string):
         valid = False
     return valid
 
+
 def arguments():
     parser = argparse.ArgumentParser(description="Molecular networking modelling")
     parser.add_argument("--test", type=str, default="unit", help="Which test to run")
     return parser.parse_args()
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     args = arguments()
 
     if args.test == "unit":
@@ -134,14 +169,23 @@ if __name__ == "__main__":
         logger.info("Toy example: running example with predefined SMILES and classes")
 
         smiles_list = ["CCO", "CCN", "CCC", "CCF", "NC(C)Cc1ccccc1", "CCC(C)CC(C)N"]
-        classes = ["alcohol", "amine", "alkane", "fluoride", "Amphetamine", "Methylhexanamine"]
+        classes = [
+            "alcohol",
+            "amine",
+            "alkane",
+            "fluoride",
+            "Amphetamine",
+            "Methylhexanamine",
+        ]
 
     if args.test == "real":
         logger.info("Real life example")
 
         dataset = pd.read_csv("main/test_data/test-data.csv", nrows=100)
         valid_smiles = dataset["smiles"].apply(check_smiles)
-        logger.info(f"Number of valid SMILES: {valid_smiles.sum()} out of {len(dataset)}")
+        logger.info(
+            f"Number of valid SMILES: {valid_smiles.sum()} out of {len(dataset)}"
+        )
 
         if sum(valid_smiles) != len(dataset):
             dataset = dataset.loc[valid_smiles]
@@ -150,21 +194,25 @@ if __name__ == "__main__":
         smiles_list = dataset["smiles"].tolist()
         classes = dataset["compound_name"].tolist()
 
-    network = MolecularNetwork(descriptor="morgan2", sim_metric="tanimoto", sim_threshold=0.85)
-    #TODO how to add the MS/MS spectra to the network computation? Via another similarity metric, possibly a spec2vec model?
+    network = MolecularNetwork(
+        descriptor="morgan2", sim_metric="tanimoto", sim_threshold=0.85
+    )
+    # TODO how to add the MS/MS spectra to the network computation? Via another similarity metric, possibly a spec2vec model?
     # network.similarity_calculator = SimilarityWord2Vec(model, allowed_missing_percentage=5.0) need to be implemented
     # network.fingerprint_calculator = like FingerprintCalculator but from the peaks instead of smiles need to be implemented
     graph = network.create_graph(smiles_list, classes)
     print_graph_info(graph, node_names=smiles_list)
-
 
     # Plot using matplotlib
     # plot_graph(graph, labels={i: node["smiles"] for i, node in graph.nodes(data=True)})
 
     # Plot using plotly
     nx_graph = network.graph
-    plot_graph_plotly(nx_graph, labels={i: node["smiles"] for i, node in graph.nodes(data=True)},
-                      properties={"compound_name": [classes[node] for node in graph.nodes()]})
+    plot_graph_plotly(
+        nx_graph,
+        labels={i: node["smiles"] for i, node in graph.nodes(data=True)},
+        properties={"compound_name": [classes[node] for node in graph.nodes()]},
+    )
 
     # Communities in the graph
     communities = nx.community.louvain_communities(graph)

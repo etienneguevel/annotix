@@ -5,30 +5,40 @@ import pandas as pd
 import numpy as np
 import torch
 from tqdm import tqdm
-import seaborn as sns
-import matplotlib.pyplot as plt
 
 from annotix_ml.spectrum import Spectrum
 from annotix_ml.word2vec import spectrum_similarity
 import networkx as nx
 import plotly.graph_objects as go
 
+
 def arguments():
     """
     Parse command line arguments.
-    
+
     Returns:
         Namespace: Parsed arguments.
     """
     parser = ArgumentParser(description="Compute similarity between spectra.")
-    parser.add_argument("--model_path", type=str, default="./model.pt", help="Path to the trained model.")
-    parser.add_argument("--threshold", type=float, default=.7, help="Similarity threshold to create edges in the graph.")
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="./model.pt",
+        help="Path to the trained model.",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.7,
+        help="Similarity threshold to create edges in the graph.",
+    )
     return parser.parse_args()
 
 
 def compute_similarity(model, spec_1, spec_2, threshold):
     sim = spectrum_similarity(model, spec_1, spec_2)
     return int(sim > threshold)
+
 
 def plot_graph_plotly(graph, labels=None, properties=[]):
     """
@@ -60,18 +70,33 @@ def plot_graph_plotly(graph, labels=None, properties=[]):
     node_labels = labels
     if labels is not None and isinstance(labels, dict):
         node_labels = [
-f"""
+            f"""
 Smiles: {labels[node]}
 
-Compound name: {properties.get("compound_name", [''])[node] if properties else ""}
-""" for node in graph.nodes()]
+Compound name: {properties.get("compound_name", [""])[node] if properties else ""}
+"""
+            for node in graph.nodes()
+        ]
 
-    fig = go.Figure(data=[go.Scatter(x=edge_x, y=edge_y, mode="lines", line=dict(width=1, color="black")),
-                          go.Scatter(x=node_x, y=node_y, mode="markers", text=node_labels,
-                                     marker=dict(size=20, color="lightblue"), textposition="top center")])
-    
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=edge_x, y=edge_y, mode="lines", line=dict(width=1, color="black")
+            ),
+            go.Scatter(
+                x=node_x,
+                y=node_y,
+                mode="markers",
+                text=node_labels,
+                marker=dict(size=20, color="lightblue"),
+                textposition="top center",
+            ),
+        ]
+    )
+
     fig.update_layout(showlegend=False)
     fig.show()
+
 
 def similarity_to_graph(spectra, similarities):
     G = nx.Graph()
@@ -88,17 +113,20 @@ def similarity_to_graph(spectra, similarities):
                 G.add_edge(i, j, weight=sim)
     return G
 
+
 def load_data():
     test = pd.read_csv("main/test_data/test-data.csv")
-    
+
     # Check for NaN in peaks_list and remove those rows
     test = test[~test["peaks_list"].isna()]
 
     spectra = [Spectrum(row) for _, row in test.iterrows()]
-    spectra = [s for s in spectra if len(s.mz) > 10] #TODO a hardcoded value for preprocessing the spectra in the training step, should be a parameter somewhere
-    
+    spectra = [
+        s for s in spectra if len(s.mz) > 10
+    ]  # TODO a hardcoded value for preprocessing the spectra in the training step, should be a parameter somewhere
+
     references = pd.read_csv("main/test_data/references.csv")
-    
+
     # Check for NaN in peaks_list and remove those rows
     references = references[references.charge == "1+"]
     references = references[~references["peaks_list"].isna()]
@@ -106,7 +134,9 @@ def load_data():
     references = references.sample(100, random_state=42)
 
     ref_spectra = [Spectrum(row) for _, row in references.iterrows()]
-    ref_spectra = [s for s in ref_spectra if len(s.mz) > 10] #TODO a hardcoded value for preprocessing the spectra in the training step, should be a parameter somewhere
+    ref_spectra = [
+        s for s in ref_spectra if len(s.mz) > 10
+    ]  # TODO a hardcoded value for preprocessing the spectra in the training step, should be a parameter somewhere
 
     for pos, s in enumerate(ref_spectra):
         try:
@@ -117,10 +147,10 @@ def load_data():
 
     return spectra, ref_spectra
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     args = arguments()
-    
+
     logger.info("Loading model from {}", args.model_path)
     model = torch.load(args.model_path, map_location=torch.device("cpu"))
 
@@ -150,7 +180,7 @@ if __name__ == "__main__":
         logger.success(f"Found {len(communities)} communities")
         print(communities)
         for i, community in enumerate(communities):
-            logger.info(f"Community {i+1}:")
+            logger.info(f"Community {i + 1}:")
             for node in community:
                 spectrum = ref_spectra[node]
                 logger.info(f" - {spectrum.name} (Smiles: {spectrum.smiles})")

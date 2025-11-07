@@ -23,3 +23,11 @@ where = ["."]
 include = ["annotix_ml"]
 exclude = []
 namespaces = false
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pre-commit>=4.3.0",
+    "pylint==2.15.0",
+    "pytest>=8.4.2",
+]

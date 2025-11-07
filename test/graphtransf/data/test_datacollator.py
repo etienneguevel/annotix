@@ -18,11 +18,7 @@ def test_collate_MSG():
     bs = 16
     dataset = GraphDatasetFromSMILEs(df, k=k)
 
-    loader = DataLoader(
-        dataset,
-        batch_size=bs,
-        collate_fn=collateGraph
-    )
+    loader = DataLoader(dataset, batch_size=bs, collate_fn=collateGraph)
 
     for batch in loader:
         break

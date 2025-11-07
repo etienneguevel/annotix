@@ -21,7 +21,7 @@ VALID_ELEMENTS = [
 ]
 
 TYPE_EDGES = [
-    "NoBond", # TODO : find a more elegant way ?
+    "NoBond",  # TODO : find a more elegant way ?
     Chem.BondType.SINGLE,
     Chem.BondType.DOUBLE,
     Chem.BondType.TRIPLE,

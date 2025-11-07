@@ -2,13 +2,15 @@ import torch
 import torch.nn as nn
 
 from annotix_ml.graphtransf.math.noising import (
-    cosine_beta_schedule_discrete, sample_discrete_features
+    cosine_beta_schedule_discrete,
+    sample_discrete_features,
 )
+
 
 class NoisingModel(nn.Module):
     """
     torch module implementing the noise addition of the model.
-    
+
     Attributes
     ----------
     T: int, number of diffusion steps possible
@@ -27,6 +29,7 @@ class NoisingModel(nn.Module):
     get_Q_bar_t(t: int) -> tuple[torch.Tensor, torch.Tensor]
     returns the nodes and edges matrices of diffusion from step 0 to t
     """
+
     def __init__(
         self,
         nodes_distribution: list[float],
@@ -44,49 +47,46 @@ class NoisingModel(nn.Module):
         match noise_schedule_type:
             case "cosine":
                 alphas, alphas_bar = cosine_beta_schedule_discrete(diffusion_steps)
-            
+
             case _:
                 raise ValueError(f"{noise_schedule_type} not comprehensible.")
-        
+
         self.alphas = alphas
         self.alphas_bar = alphas_bar
 
     def get_Q_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
         alpha = self.alphas[t]
-        Q_nodes = (
-            alpha * torch.eye(len(self.n_m)) + (1 - alpha) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)
-        ) # (natoms, natoms)
+        Q_nodes = alpha * torch.eye(len(self.n_m)) + (1 - alpha) * self.n_m.unsqueeze(
+            -1
+        ).expand(-1, self.natoms)  # (natoms, natoms)
 
-        Q_edges = (
-            alpha * torch.eye(len(self.e_m)) + (1 - alpha) * self.e_m.unsqueeze(-1).expand(-1, self.nbonds)
-        ) # (nbonds, nbonds)
+        Q_edges = alpha * torch.eye(len(self.e_m)) + (1 - alpha) * self.e_m.unsqueeze(
+            -1
+        ).expand(-1, self.nbonds)  # (nbonds, nbonds)
 
         return Q_nodes.T, Q_edges.T
-    
+
     def get_Q_bar_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
         alpha_bar = self.alphas_bar[t]
-        Q_bar_nodes = (
-            alpha_bar * torch.eye(len(self.n_m)) + (1 - alpha_bar) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)
-        ) # (natoms, natoms)
+        Q_bar_nodes = alpha_bar * torch.eye(len(self.n_m)) + (
+            1 - alpha_bar
+        ) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)  # (natoms, natoms)
 
-        Q_bar_edges = (
-            alpha_bar * torch.eye(len(self.e_m)) + (1 - alpha_bar) * self.e_m.unsqueeze(-1).expand(-1, self.nbonds)
-        ) # (nbonds, nbonds)
+        Q_bar_edges = alpha_bar * torch.eye(len(self.e_m)) + (
+            1 - alpha_bar
+        ) * self.e_m.unsqueeze(-1).expand(-1, self.nbonds)  # (nbonds, nbonds)
 
         return Q_bar_nodes.T, Q_bar_edges.T
-    
+
     @torch.no_grad
     def forward(
-        self,
-        N: torch.Tensor,
-        E: torch.Tensor,
-        node_mask: torch.Tensor
+        self, N: torch.Tensor, E: torch.Tensor, node_mask: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Noise the nodes and edges matrices of a given batch. A random t is
         sampled for each graph and the edges and nodes are noised with the
         corresponding matrices.
-        
+
         Args:
         - N: torch.Tensor, the nodes one-hot encoded vector.
         - E: torch.Tensor, the edges one-hot encoded vector.
@@ -103,17 +103,21 @@ class NoisingModel(nn.Module):
 
         # Make the matrices & stack them
         Q_matrices = [self.get_Q_bar_t(t) for t in sampled_t]
-        Q_bar_nodes, Q_bar_edges = zip(*Q_matrices) # (natoms, natoms), (nbonds, nbonds)
+        Q_bar_nodes, Q_bar_edges = zip(
+            *Q_matrices
+        )  # (natoms, natoms), (nbonds, nbonds)
 
-        Q_nodes = torch.stack(Q_bar_nodes).to(device) # (bs, natoms, natoms)
-        Q_edges = torch.stack(Q_bar_edges).unsqueeze(1).to(device) # (bs, 1, nbonds, nbonds)
+        Q_nodes = torch.stack(Q_bar_nodes).to(device)  # (bs, natoms, natoms)
+        Q_edges = (
+            torch.stack(Q_bar_edges).unsqueeze(1).to(device)
+        )  # (bs, 1, nbonds, nbonds)
 
         # Do the noising
-        N = N @ Q_nodes # (bs, n, natoms)
-        E = E @ Q_edges # (bs, n, n, nbonds)
+        N = N @ Q_nodes  # (bs, n, natoms)
+        E = E @ Q_edges  # (bs, n, n, nbonds)
 
         # TODO : should I noise somewhere ?
         # Doesn't seem necessary for N, what about E ?
-        N, E = sample_discrete_features(N, E, node_mask)  
+        N, E = sample_discrete_features(N, E, node_mask)
 
         return N, E, node_mask

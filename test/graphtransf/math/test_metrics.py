@@ -1,5 +1,3 @@
-from annotix_ml.graphtransf.math.metrics import MCES_distance
-
 # example_smiles = [
 #     ("CC1CC(C(CC1O)O)O", "CC1=CC(C(CC1=O)O)O", 2),
 #     ("C1CC2C(=O)NC(C(=O)N2C1)CC3=CC=CC=C3", "C1CC2(C(=O)NC(C(=O)N2C1)CC3=CC=CC=C3)O", 1),
@@ -23,4 +21,3 @@ from annotix_ml.graphtransf.math.metrics import MCES_distance
 
 # if __name__ == "__main__":
 #     test_MCES_distance()
-

@@ -12,8 +12,6 @@ import torch.optim as optim
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from annotix_ml.spectrum import Spectrum
-
 
 class NGramLanguageModeler(nn.Module):
     """
@@ -30,7 +28,7 @@ class NGramLanguageModeler(nn.Module):
 
     def __init__(self, vocab_size, embedding_dim, context_size, word_to_ix):
         super(NGramLanguageModeler, self).__init__()
-        
+
         # Attributes
         self.vocab_size = vocab_size
         self.context_size = context_size  # Number of context words
@@ -57,6 +55,7 @@ class NGramLanguageModeler(nn.Module):
         out = self.linear2(out)
         log_probs = F.log_softmax(out, dim=1)
         return log_probs
+
 
 class CBOW(nn.Module):
     """
@@ -102,6 +101,7 @@ class CBOW(nn.Module):
         log_probs = F.log_softmax(out, dim=1)
         return log_probs
 
+
 def process_text(text, context_size, type="ngram"):
     """
     Processes raw text into n-grams or CBOW data and builds vocabulary.
@@ -124,6 +124,7 @@ def process_text(text, context_size, type="ngram"):
     else:
         raise ValueError("Unknown type. Use 'ngram' or 'cbow'.")
 
+
 def process_text_ngram(text, context_size):
     """
     Generates n-gram (context, target) pairs from text.
@@ -138,7 +139,10 @@ def process_text_ngram(text, context_size):
             vocab (set): Set of unique words.
             word_to_ix (dict): Mapping from word to index.
     """
-    ngrams = [([text[i - j - 1] for j in range(context_size)], text[i]) for i in range(context_size, len(text))]
+    ngrams = [
+        ([text[i - j - 1] for j in range(context_size)], text[i])
+        for i in range(context_size, len(text))
+    ]
     # Print the first 3, just so you can see what they look like.
 
     vocab = set(text)
@@ -146,7 +150,8 @@ def process_text_ngram(text, context_size):
 
     return ngrams, vocab, word_to_ix
 
-def process_text_ngram_2d(sentences, context_size): #TODO to reviews and fix
+
+def process_text_ngram_2d(sentences, context_size):  # TODO to reviews and fix
     """
     Generates n-gram (context, target) pairs from a list of sentences.
 
@@ -171,6 +176,7 @@ def process_text_ngram_2d(sentences, context_size): #TODO to reviews and fix
     word_to_ix = {word: i for i, word in enumerate(vocab)}
     return ngrams, vocab, word_to_ix
 
+
 def process_text_cbow(text, context_size):
     """
     Generates CBOW (context, target) pairs from text.
@@ -187,7 +193,9 @@ def process_text_cbow(text, context_size):
     """
     data = []
     for i in range(context_size, len(text) - context_size):
-        context = [text[i - j - 1] for j in range(context_size)] + [text[i + j + 1] for j in range(context_size)]
+        context = [text[i - j - 1] for j in range(context_size)] + [
+            text[i + j + 1] for j in range(context_size)
+        ]
         target = text[i]
         data.append((context, target))
 
@@ -196,7 +204,8 @@ def process_text_cbow(text, context_size):
 
     return data, vocab, word_to_ix
 
-def process_text_cbow_2d(sentences, context_size): #TODO to reviews and fix
+
+def process_text_cbow_2d(sentences, context_size):  # TODO to reviews and fix
     """
     Generates CBOW (context, target) pairs from a list of sentences.
 
@@ -215,11 +224,14 @@ def process_text_cbow_2d(sentences, context_size): #TODO to reviews and fix
     for text in sentences:
         vocab.update(text)
         for i in range(context_size, len(text)):
-            context = [text[i - j - 1] for j in range(context_size)] + [text[i + j + 1] for j in range(context_size)]
+            context = [text[i - j - 1] for j in range(context_size)] + [
+                text[i + j + 1] for j in range(context_size)
+            ]
             target = text[i]
             ngrams.append((context, target))
     word_to_ix = {word: i for i, word in enumerate(vocab)}
     return ngrams, vocab, word_to_ix
+
 
 def make_context_vector(context, word_to_ix):
     """
@@ -235,6 +247,7 @@ def make_context_vector(context, word_to_ix):
     idxs = [word_to_ix[w] for w in context]
     return torch.tensor(idxs, dtype=torch.long)
 
+
 def batchify(ngrams, batch_size):
     """
     Splits n-grams or CBOW data into batches.
@@ -247,10 +260,11 @@ def batchify(ngrams, batch_size):
         tuple: (contexts, targets) for each batch.
     """
     for i in range(0, len(ngrams), batch_size):
-        batch = ngrams[i:i+batch_size]
+        batch = ngrams[i : i + batch_size]
         contexts = [context for context, _ in batch]
         targets = [target for _, target in batch]
         yield contexts, targets
+
 
 def cosine_similarity(vec1, vec2):
     """
@@ -269,6 +283,7 @@ def cosine_similarity(vec1, vec2):
         vec2 = torch.tensor(vec2, dtype=torch.float32)
     cos = nn.CosineSimilarity(dim=0)
     return cos(vec1, vec2).item()
+
 
 def word_similarity(model, word1, word2):
     """
@@ -298,6 +313,7 @@ def word_similarity(model, word1, word2):
 
     return cosine_similarity(torch.tensor(vec1), torch.tensor(vec2))
 
+
 def embedding(model, word):
     """
     Retrieves the embedding vector for a given word from the specified model.
@@ -314,6 +330,7 @@ def embedding(model, word):
     """
     indexes = model.word_to_ix[word]
     return model.embeddings.weight[indexes].detach().numpy()
+
 
 def spectrum_similarity(model, spec_1, spec_2):
     """
@@ -337,7 +354,18 @@ def spectrum_similarity(model, spec_1, spec_2):
 
     return cosine_similarity(vec_spec1, vec_spec2)
 
-def train(ngrams, vocab, word_to_ix, embedding_dim, context_size, epochs=10, device="cpu", batch_size=32, algo="ngram"):
+
+def train(
+    ngrams,
+    vocab,
+    word_to_ix,
+    embedding_dim,
+    context_size,
+    epochs=10,
+    device="cpu",
+    batch_size=32,
+    algo="ngram",
+):
     """
     Trains the n-gram or CBOW language model.
 
@@ -361,19 +389,38 @@ def train(ngrams, vocab, word_to_ix, embedding_dim, context_size, epochs=10, dev
     loss_function = nn.NLLLoss()
 
     if algo == "cbow":
-        model = CBOW(vocab_size=len(vocab), embedding_dim=embedding_dim, word_to_ix=word_to_ix)
+        model = CBOW(
+            vocab_size=len(vocab), embedding_dim=embedding_dim, word_to_ix=word_to_ix
+        )
     else:
-        model = NGramLanguageModeler(vocab_size=len(vocab), embedding_dim=embedding_dim, word_to_ix=word_to_ix, context_size=context_size)
+        model = NGramLanguageModeler(
+            vocab_size=len(vocab),
+            embedding_dim=embedding_dim,
+            word_to_ix=word_to_ix,
+            context_size=context_size,
+        )
 
     model.to(torch.device(device))
     optimizer = optim.SGD(model.parameters(), lr=0.001)
 
     for epoch in range(epochs):
         total_loss = 0
-        for contexts, targets in tqdm(batchify(ngrams, batch_size), desc=f"Epoch {epoch + 1}/{epochs}", total=len(ngrams) // batch_size + 1):
+        for contexts, targets in tqdm(
+            batchify(ngrams, batch_size),
+            desc=f"Epoch {epoch + 1}/{epochs}",
+            total=len(ngrams) // batch_size + 1,
+        ):
             # Prepare batch tensors
-            context_idxs = torch.tensor([[word_to_ix[w] for w in context] for context in contexts], dtype=torch.long, device=torch.device(device))
-            target_idxs = torch.tensor([word_to_ix[target] for target in targets], dtype=torch.long, device=torch.device(device))
+            context_idxs = torch.tensor(
+                [[word_to_ix[w] for w in context] for context in contexts],
+                dtype=torch.long,
+                device=torch.device(device),
+            )
+            target_idxs = torch.tensor(
+                [word_to_ix[target] for target in targets],
+                dtype=torch.long,
+                device=torch.device(device),
+            )
 
             model.zero_grad()
             log_probs = model(context_idxs)

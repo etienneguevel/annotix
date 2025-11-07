@@ -3,11 +3,13 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
+
 class FfnNodeEdge(nn.Module):
     """
     Feed forward network of the attention layers. Nodes and Edges each have
     a MLP with one hidden layer.
     """
+
     def __init__(
         self,
         d: int,
@@ -47,7 +49,6 @@ class FfnNodeEdge(nn.Module):
         self.norm_N = nn.LayerNorm(d)
         self.norm_E = nn.LayerNorm(de)
 
-    
     def forward(
         self,
         h: torch.Tensor,
@@ -59,11 +60,11 @@ class FfnNodeEdge(nn.Module):
         edge_mask = node_mask.unsqueeze(-1)
 
         # Compute the nodes outputs
-        inter_nodes = self.feedforward_N(h) + h # (bs, n, d)
-        normed_nodes = self.norm_N(inter_nodes * node_mask) # (bs, n, d)
+        inter_nodes = self.feedforward_N(h) + h  # (bs, n, d)
+        normed_nodes = self.norm_N(inter_nodes * node_mask)  # (bs, n, d)
 
         # Compute the edges outputs
-        inter_edges = self.feedforward_E(e) + e # (bs, n, n, de)
-        normed_edges = self.norm_E(inter_edges * edge_mask) # (bs, n, n, de)
+        inter_edges = self.feedforward_E(e) + e  # (bs, n, n, de)
+        normed_edges = self.norm_E(inter_edges * edge_mask)  # (bs, n, n, de)
 
         return normed_nodes, normed_edges, mask
