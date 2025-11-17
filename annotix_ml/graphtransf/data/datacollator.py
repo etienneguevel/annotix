@@ -24,7 +24,7 @@ def collateGraph(
     """
     # Unpack the nodes, edges and pos_emb
     # bs = len(batch)
-    list_N, list_E, list_pos_emb = zip(*batch)
+    list_N, list_E = zip(*batch)
 
     # Look at the number of atoms in each graph
     num_atoms = [N.shape[0] for N in list_N]
@@ -34,9 +34,6 @@ def collateGraph(
     N_padded = (
         pad_sequence(list_N).transpose(0, 1).to(torch.float32)
     )  # (bs, n_batch, natoms)
-
-    # Pad the embeddings
-    pos_emb_padded = pad_sequence(list_pos_emb).transpose(0, 1)  # (bs, n_batch, k)
 
     # Pad the edges
     E_padded = torch.cat(
@@ -52,4 +49,4 @@ def collateGraph(
         [torch.cat([torch.ones(m), torch.zeros(n_batch - m)]) for m in num_atoms]
     )  # (bs, n_batch)
 
-    return N_padded, E_padded, pos_emb_padded, mask
+    return N_padded, E_padded, mask

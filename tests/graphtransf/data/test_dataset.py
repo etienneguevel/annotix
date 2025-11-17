@@ -33,34 +33,13 @@ def test_dataset_msg():
     assert (edges.sum(-1) == 1).all()
 
 
-def test_dataset_compute_emb():
-    # Open the MSG dataset
-    df = pd.read_csv(BASE_DIR / "data" / "MassSpecGym.csv")
-
-    # Select a part of the dataset
-    df = df[df.fold == "train"].sample(100)
-
-    # Create the dataset
-    k = 8
-    dataset = GraphDatasetFromSMILEs(df, k=k)
-
-    # Test the elements in the dataset
-    nodes, _, pos_emb = dataset[0]
-    n, _ = nodes.shape
-
-    assert pos_emb.shape == (n, k)
-
-
 def test_dataset_distribution():
     # Open the MSG dataset
     df = pd.read_csv(BASE_DIR / "data" / "MassSpecGym.csv")
 
     # Select a part of the dataset
     df = df[df.fold == "train"].sample(100)
-
-    # Create the dataset
-    k = 8
-    dataset = GraphDatasetFromSMILEs(df, k=k)
+    dataset = GraphDatasetFromSMILEs(df)
 
     # Check the distribution sizes
     node_distribution = dataset.node_distribution
@@ -72,9 +51,3 @@ def test_dataset_distribution():
     # Check sums are approximately 1 (use a small tolerance)
     assert torch.allclose(node_distribution.sum(), torch.tensor(1.0), atol=1e-4)
     assert torch.allclose(edge_distribution.sum(), torch.tensor(1.0), atol=1e-4)
-
-
-if __name__ == "__main__":
-    test_dataset_msg()
-    test_dataset_compute_emb()
-    test_dataset_distribution()

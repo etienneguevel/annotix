@@ -14,23 +14,18 @@ def test_collate_MSG():
     df = df[df.fold == "train"].sample(100)
 
     # Create the dataset & dataloader
-    k = 8
     bs = 16
-    dataset = GraphDatasetFromSMILEs(df, k=k)
+    dataset = GraphDatasetFromSMILEs(df)
 
     loader = DataLoader(dataset, batch_size=bs, collate_fn=collateGraph)
 
     for batch in loader:
         break
 
-    N, E, _, node_mask = batch
+    N, E, node_mask = batch
 
     assert N.shape[0] == bs
     assert E.shape[0] == bs
     assert node_mask.shape[0] == bs
     assert len(N.shape) == 3
     assert len(E.shape) == 4
-
-
-if __name__ == "__main__":
-    test_collate_MSG()

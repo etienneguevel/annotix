@@ -1,12 +1,12 @@
-import rdkit.Chem as Chem
-import torch
-from torch.utils.data import Dataset
+from pathlib import PosixPath
 
 import pandas as pd
+import rdkit.Chem as Chem
+import torch
 from pandas.core.frame import DataFrame
+from torch.utils.data import Dataset
 
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
-from annotix_ml.graphtransf.math.positional_emb import laplacian_embedding
 
 
 class GraphDatasetFromSMILEs(Dataset):
@@ -16,15 +16,12 @@ class GraphDatasetFromSMILEs(Dataset):
     with the atoms within the VALID_ELEMENTS constant.
     The nodes and edges distributions of the data are also computed to later
     be used for the noise model.
-    The dataset also computes the eigenvectors of the Normalized Laplacian
-    matrix of the graphs to use them as positional embeddings.
     """
 
     def __init__(
         self,
         data: str | DataFrame,
         smile_column: str = "smiles",
-        k: int | None = None,
         split: str | None = None,
         split_column: str | None = None,
     ):
@@ -34,8 +31,6 @@ class GraphDatasetFromSMILEs(Dataset):
         a pd.DataFrame.
         - smile_column: str = "smiles", the column in which the smiles are
         contained.
-        - k: int | None = None, the number of eigenvectors to select for the
-        graphs.
         - split: str | None = None, the name of the split to select to build the
         dataset.
         - split_column: str | None = None, the name of the column where to search
@@ -48,7 +43,7 @@ class GraphDatasetFromSMILEs(Dataset):
         natoms is the length of VALID_ATOMS and nbonds is the length of TYPE_EDGES.
         """
         super().__init__()
-        if isinstance(data, str):
+        if isinstance(data, (str, PosixPath)):
             data = pd.read_csv(data)
 
         elif isinstance(data, DataFrame):
@@ -61,9 +56,6 @@ class GraphDatasetFromSMILEs(Dataset):
 
         if split:
             data = data[data[split_column] == split]
-
-        # Register the number of eigenvectors to take
-        self.k = k
 
         # Get the valid smiles, and compute node / edges distributions -> for noise schedule
         smiles_nodes_edges = [
@@ -161,15 +153,4 @@ class GraphDatasetFromSMILEs(Dataset):
         # Calculate the nodes and edges
         nodes, edges = self.smilesToGraph(sm)  # (n, natoms), (n, n, nbonds)
 
-        # Compute the laplacian
-        if self.k:
-            if isinstance(self.k, int):
-                pos_emb = laplacian_embedding(edges, self.k)  # (n, k)
-
-            else:
-                raise TypeError(f"Gave k value but with wrong type: {type(self.k)}")
-
-            return nodes, edges, pos_emb
-
-        else:
-            return nodes, edges
+        return nodes, edges
