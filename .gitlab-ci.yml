@@ -12,6 +12,7 @@ default:
 # --- Linting stage ---
 lint:
   stage: lint
+  tags: [lint]
   script:
     - ruff check .
   allow_failure: false
@@ -19,6 +20,7 @@ lint:
 # --- Testing stage ---
 test:
   stage: test
+  tags: [test]
   script:
     - pytest tests -v
   artifacts:
