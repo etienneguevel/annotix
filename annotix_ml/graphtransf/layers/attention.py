@@ -3,6 +3,7 @@ from math import sqrt
 import torch
 import torch.nn as nn
 
+from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.layers.ffn import FfnNodeEdge
 
 
@@ -60,7 +61,6 @@ class MultiHeadEdgeNode(nn.Module):
         # Compute the classic attention map
         # h : (bs, *n, d)
         # e : (bs, *n, *n, de)
-        # node_mask : (bs, n)
 
         bs, _, d = h.size()
         bse, *_, de = e.size()
@@ -133,15 +133,11 @@ class MultiHeadEdgeNode(nn.Module):
             f"Wrong dimension for the edges embeddings, got {de} expected {self.de}."
         )
 
-        # Prepare the node mask
-        node_mask = mask.unsqueeze(-1)  # (bs, n, 1)
-        edge_mask = node_mask.unsqueeze(-1).expand(-1, -1, n, -1)  # (bs, n, n, 1)
-
         # Calculate the Query, Key and Values vectors
         qkv = self.qkv(h).unflatten(
             -1, (3 * self.dk, self.n_heads)
         )  # (bs, n, 3 * dk, nh)
-        qkv = qkv * node_mask.unsqueeze(-1)  # Mask the qkv matrix
+        qkv = mask_any_tensor(qkv, mask)  # Mask the qkv matrix
 
         qkv = qkv.permute((0, 3, 1, 2))  # (bs, nh, n, 3 * dk)
         Q, K, V = qkv.chunk(3, -1)  # (bs, nh, n, dk), (bs, nh, n, dk), (bs, nh, n, dk)
@@ -154,7 +150,7 @@ class MultiHeadEdgeNode(nn.Module):
         E = self.FiLM_E(e).unflatten(
             -1, (2 * self.dk, self.n_heads)
         )  # (bs, n, n, 2 * dk, nh)
-        E = E * edge_mask.unsqueeze(-1)  # (bs, n, n, 2 * dk, nh)
+        E = mask_any_tensor(E, mask)  # (bs, n, n, 2 * dk, nh)
         E1, E2 = E.permute((0, 4, 1, 2, 3)).chunk(
             2, -1
         )  # (bs, nh, n, n, dk), (bs, nh, n, n, dk)
@@ -185,8 +181,8 @@ class MultiHeadEdgeNode(nn.Module):
         e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
 
         # Ensure that the masking is still correct
-        h = h * node_mask  # (bs, n, d)
-        e = e * edge_mask  # (bs, n, n, de)
+        h = mask_any_tensor(h, mask)  # (bs, n, d)
+        e = mask_any_tensor(e, mask)  # (bs, n, n, de)
 
         return h, e
 

@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
+
 
 class EmbeddingLaplacian(nn.Module):
     """
@@ -53,17 +55,13 @@ class EmbeddingLaplacian(nn.Module):
         Embedded nodes and edges. The positional embedding is added to the nodes.
         The mask is also returned unmodified.
         """
-        # Prepare the masks
-        node_mask = mask.unsqueeze(-1)  # (bs, n, 1)
-        edge_mask = node_mask.unsqueeze(-1)  # (bs, n, 1, 1)
-
         # Calculate the node embedding and add the positional emb
         h = self.EmbeddingNodes(N) + self.LaplacianProjection(pos_emb)  # (bs, n, d)
-        h = h * node_mask
+        h = mask_any_tensor(h, mask)
 
         # Compute the edge embedding
         e = self.EmbeddingEdges(E)  # (bs, n, n, de)
-        e = e * edge_mask
+        e = mask_any_tensor(e, mask)
 
         return h, e, mask
 

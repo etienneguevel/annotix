@@ -3,6 +3,8 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
+from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
+
 
 class FfnNodeEdge(nn.Module):
     """
@@ -55,16 +57,18 @@ class FfnNodeEdge(nn.Module):
         e: torch.Tensor,
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # Prepare the masks
-        node_mask = mask.unsqueeze(-1)
-        edge_mask = node_mask.unsqueeze(-1)
-
         # Compute the nodes outputs
         inter_nodes = self.feedforward_N(h) + h  # (bs, n, d)
-        normed_nodes = self.norm_N(inter_nodes * node_mask)  # (bs, n, d)
+
+        # Mask the nodes outputs
+        inter_nodes = mask_any_tensor(inter_nodes, mask)  # (bs, n, d)
+        normed_nodes = self.norm_N(inter_nodes)  # (bs, n, d)
 
         # Compute the edges outputs
         inter_edges = self.feedforward_E(e) + e  # (bs, n, n, de)
-        normed_edges = self.norm_E(inter_edges * edge_mask)  # (bs, n, n, de)
+
+        # Mak the edges outputs
+        inter_edges = mask_any_tensor(inter_edges, mask)  # (bs, n, n, de)
+        normed_edges = self.norm_E(inter_edges)  # (bs, n, n, de)
 
         return normed_nodes, normed_edges, mask
