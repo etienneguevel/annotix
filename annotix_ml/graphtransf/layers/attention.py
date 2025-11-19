@@ -16,6 +16,7 @@ class MultiHeadEdgeNode(nn.Module):
         self,
         d: int,
         de: int,
+        dy: int,
         n_heads: int,
     ):
         """
@@ -37,8 +38,10 @@ class MultiHeadEdgeNode(nn.Module):
         # Put the 3 matrices together to optimize computing
         self.qkv = nn.Linear(d, 3 * d)
 
-        # Initialize the 2 matrices for FiLM
+        # Initialize the matrices for FiLM
         self.FiLM_E = nn.Linear(de, 2 * d)
+        self.FilM_yN = nn.Linear(dy, 2 * d)
+        self.FilM_yE = nn.Linear(dy, 2 * d)
 
         # Initialize the matrices for output projection
         self.Out_N = nn.Linear(d, d)
@@ -109,6 +112,7 @@ class MultiHeadEdgeNode(nn.Module):
         self,
         h: torch.Tensor,
         e: torch.Tensor,
+        y: torch.Tensor,
         mask: torch.Tensor,
         attn_map_mode: bool = False,
     ):
@@ -123,6 +127,7 @@ class MultiHeadEdgeNode(nn.Module):
         # Compute the classic attention map
         # h : (bs, n, d)
         # e : (bs, n, n, de)
+        # y: (bs, dy)
         # mask : (bs, n)
 
         bs, n, d = h.size()
@@ -176,6 +181,22 @@ class MultiHeadEdgeNode(nn.Module):
         # Stack the edges attn
         edge_attn = attn.permute((0, 2, 3, 1, 4)).flatten(start_dim=3)  # (bs, n, n, d)
 
+        # FilM the nodes with y
+        yN = self.FilM_yN(y)  # (bs, 2*d)
+        yN1, yN2 = yN.unsqueeze(1).chunk(2, -1)  # (bs, 1, d), (bs, 1, d)
+
+        node_attn = yN1 + yN2 * node_attn + node_attn  # (bs, n, d)
+        node_attn = mask_any_tensor(node_attn, mask)
+
+        # FilM the edges with y
+        yE = self.FilM_yE(y)  # (bs, 2*d)
+        yE1, yE2 = (
+            yE.unsqueeze(1).unsqueeze(1).chunk(2, -1)
+        )  # (bs, 1, 1, d), (bs, 1, 1, d)
+
+        edge_attn = yE1 + yE2 * edge_attn + edge_attn  # (bs, n, n, d)
+        edge_attn = mask_any_tensor(edge_attn, mask)
+
         # Do the output transformation
         h = self.norm_n(h + self.Out_N(node_attn))  # (bs, n, d)
         e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
@@ -184,12 +205,15 @@ class MultiHeadEdgeNode(nn.Module):
         h = mask_any_tensor(h, mask)  # (bs, n, d)
         e = mask_any_tensor(e, mask)  # (bs, n, n, de)
 
+        # TODO : modify the computation of y
+
         return h, e
 
     def forward(
         self,
         h: torch.Tensor,
         e: torch.Tensor,
+        y: torch.Tensor,
         mask: torch.Tensor,
     ):
         if h.is_nested & e.is_nested:
@@ -202,7 +226,7 @@ class MultiHeadEdgeNode(nn.Module):
             )
 
         else:
-            h, e = self.forward_normal(h, e, mask)
+            h, e = self.forward_normal(h, e, y, mask)
 
         return h, e, mask
 
@@ -217,21 +241,23 @@ class AttentionLayer(nn.Module):
         self,
         d: int,
         de: int,
+        dy: int,
         n_heads: int,
     ):
         super().__init__()
         self.d = d
         self.de = de
         self.n_heads = n_heads
-        self.attnEdgeNode = MultiHeadEdgeNode(d, de, n_heads)
+        self.attnEdgeNode = MultiHeadEdgeNode(d, de, dy, n_heads)
         self.ffn = FfnNodeEdge(d, de)
 
     def forward(
         self,
         h: torch.Tensor,
         e: torch.Tensor,
+        y: torch.Tensor,
         mask: torch.Tensor,
     ):
-        h_attn, e_attn, mask_attn = self.attnEdgeNode(h, e, mask)
+        h_attn, e_attn, mask_attn = self.attnEdgeNode(h, e, y, mask)
         h, e, mask = self.ffn(h_attn, e_attn, mask_attn)
-        return h, e, mask
+        return h, e, y, mask

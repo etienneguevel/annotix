@@ -18,8 +18,10 @@ class GnnNodeEdges(nn.Module):
         self,
         d: int,
         de: int,
+        dy: int,
         n_heads: int,
-        k: int,
+        node_features: int,
+        global_features: int,
         n_layers: int,
         natoms: int,
         nbonds: int,
@@ -27,14 +29,19 @@ class GnnNodeEdges(nn.Module):
         super().__init__()
         self.d = d
         self.de = de
+        self.dy = dy
         self.n_layers = n_layers
 
         # Make the Embedding layer
-        layers = [EmbeddingLaplacian(d, de, k, natoms, nbonds)]
+        layers = [
+            EmbeddingLaplacian(
+                d, de, dy, node_features, global_features, natoms, nbonds
+            )
+        ]
 
         # Build the attention layers
         for _ in range(n_layers):
-            layers.append(AttentionLayer(d, de, n_heads))
+            layers.append(AttentionLayer(d, de, dy, n_heads))
 
         layers.append(Unembedding(layers[0]))
 
@@ -46,14 +53,15 @@ class GnnNodeEdges(nn.Module):
         N: torch.Tensor,
         E: torch.Tensor,
         pos_emb: torch.Tensor,
+        y: torch.Tensor,
         mask: torch.Tensor,
     ):
         for i, layer in enumerate(self.layers):
             if i == 0:
-                h, e, mask = layer(N, E, pos_emb, mask)
+                h, e, y, mask = layer(N, E, y, pos_emb, mask)
 
             else:
-                h, e, mask = layer(h, e, mask)
+                h, e, y, mask = layer(h, e, y, mask)
 
         return h, e, mask
 
@@ -63,8 +71,10 @@ def gnnNodeEdgesBase() -> GnnNodeEdges:
     model = GnnNodeEdges(
         d=256,
         de=64,
+        dy=256,
         n_heads=8,
-        k=5,
+        node_features=13,
+        global_features=14,
         n_layers=5,
         natoms=len(VALID_ELEMENTS),
         nbonds=len(TYPE_EDGES),

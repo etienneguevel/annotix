@@ -15,7 +15,9 @@ class EmbeddingLaplacian(nn.Module):
         self,
         d: int,
         de: int,
-        k: int,
+        dy: int,
+        node_features: int,
+        global_features: int,
         natoms: int,
         nbonds: int,
     ):
@@ -30,17 +32,21 @@ class EmbeddingLaplacian(nn.Module):
         super().__init__()
         self.d = d
         self.de = de
-        self.k = k
+        self.dy = dy
+        self.node_features = node_features
+        self.global_features = global_features
         self.natoms = natoms
         self.nbonds = nbonds
         self.EmbeddingNodes = nn.Linear(natoms, d, bias=False)
         self.EmbeddingEdges = nn.Linear(nbonds, de, bias=False)
-        self.LaplacianProjection = nn.Linear(k, d)
+        self.EmbeddingY = nn.Linear(global_features, dy, bias=False)
+        self.LaplacianProjection = nn.Linear(node_features, d)
 
     def forward(
         self,
         N: torch.Tensor,
         E: torch.Tensor,
+        y: torch.Tensor,
         pos_emb: torch.Tensor,
         mask: torch.Tensor,
     ):
@@ -63,16 +69,17 @@ class EmbeddingLaplacian(nn.Module):
         e = self.EmbeddingEdges(E)  # (bs, n, n, de)
         e = mask_any_tensor(e, mask)
 
-        return h, e, mask
+        # Compute the y embedding
+        y = self.EmbeddingY(y)  # (bs, dy)
+
+        return h, e, y, mask
 
 
 class Unembedding(nn.Module):
     """
     Unembedding layer to map the embedding of the transformer layers back to
     the one-hot encoded space of the nodes and edges.
-    """
 
-    """
     Args:
     - embedding_layer: EmbeddingLaplacian, the embedding layer of the model,
     its weights are reused to make the ones of this layer.
@@ -91,6 +98,7 @@ class Unembedding(nn.Module):
         self,
         N: torch.Tensor,
         E: torch.Tensor,
+        y: torch.Tensor,
         mask: torch.Tensor,
     ):
         """
@@ -105,4 +113,4 @@ class Unembedding(nn.Module):
 
         N = N @ Wn  # equivalent to Linear(d→natoms) without bias
         E = E @ We  # equivalent to Linear(de→nbonds)
-        return N, E, mask
+        return N, E, y, mask
