@@ -1,19 +1,23 @@
 dataset:
   data_path: data/MassSpecGym.csv
   smile_column: smiles
-  k: 5 # put this arg here or in the model args ?
   split_column: "fold"
 
 model:
   d: 256
   de: 64
+  dy: 64
   n_heads: 8
   n_layers: 5
+  diffusion_steps: 500
+  num_ev: 10
+  extra_features:
+    - laplacian_embedding
+    - node_cycle
 
 train:
   batch_size: 64
-  diffusion_steps: 500
-  ratio_losses: 1
+  loss_ratio: 1
 
 valid:
   batch_size: 128

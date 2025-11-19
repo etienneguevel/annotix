@@ -48,7 +48,9 @@ def mask_any_tensor(
     mask_dim = mask.shape
     tensor_dim = t.shape
     assert mask_dim == tensor_dim[: len(mask_dim)], (
-        "mask dimension doesn't match tensor"
+        "mask dimension doesn't match tensor",
+        mask_dim,
+        tensor_dim,
     )
 
     # Expand the mask tensor

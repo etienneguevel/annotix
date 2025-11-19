@@ -99,6 +99,7 @@ class NoisingModel(nn.Module):
         # E (bs, n, n, nbonds)
         bs = N.shape[0]
         device = N.device
+        type_tensor = N.dtype
         sampled_t = torch.randint(1, self.T, (bs,))
 
         # Make the matrices & stack them
@@ -119,5 +120,9 @@ class NoisingModel(nn.Module):
         # TODO : should I noise somewhere ?
         # Doesn't seem necessary for N, what about E ?
         N, E = sample_discrete_features(N, E, node_mask)
+
+        # Cast back to the original type
+        N = N.to(type_tensor)
+        E = E.to(type_tensor)
 
         return N, E, node_mask

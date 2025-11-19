@@ -45,15 +45,12 @@ def laplacian_embedding(
     L = eye - D_inv_sqrt @ A @ D_inv_sqrt  # (bs, n, n)
 
     # Deal with the fact that linalg doesn't comply with mps
-    if str(device) == "mps":
+    if "mps" in str(device):
         L = L.to("cpu")
+        mask = mask.to("cpu")
 
     # Get the eigenvectors
     eigvals, eigvectors = torch.linalg.eigh(L)  # (bs, n), (bs, n, n)
-
-    # In case of device transfer, reput them on the origin device
-    eigvals = eigvals.to(device)
-    eigvectors = eigvectors.to(device)
 
     # Compute the number of connected components of the graph for each batch
     n_connected_components = (eigvals < 1e-5).sum(dim=-1)  # (bs,)
@@ -104,7 +101,7 @@ def laplacian_embedding(
     if not is_batched:
         return eigvals_[0], eigvectors_[0], n_connected_components[0], not_in_ev1[0]
 
-    return eigvals_, eigvectors_, n_connected_components, not_in_ev1
+    return eigvectors_.to(device), eigvals_.to(device)
 
 
 def batch_trace(X):
@@ -296,4 +293,4 @@ def node_cycle(edges: torch.Tensor, mask: torch.Tensor = None):
     if not is_batched:
         return kcyclesx[0], kcyclesy[0]
 
-    return kcyclesx, kcyclesy
+    return kcyclesx, kcyclesy  # (bs, n, 3), (bs, 4)

@@ -1,7 +1,7 @@
 import torch
 
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
-from annotix_ml.graphtransf.models import NoisingModel
+from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.test_utils import create_random_start
 
 

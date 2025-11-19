@@ -73,12 +73,12 @@ class GraphDatasetFromSMILEs(Dataset):
         # Compute the distribution of nodes
         node_number = torch.cat(nodes).sum(0)  # (natoms)
         node_distribution = node_number / (node_number.sum(0).item())
-        self.node_distribution = node_distribution
+        self.nodes_distribution = node_distribution
 
         # Compute the distribution of the edges
         edge_number = torch.cat(edges).sum(0)  # (nbonds)
         edge_distribution = edge_number / (edge_number.sum(0).item())
-        self.edge_distribution = edge_distribution
+        self.edges_distribution = edge_distribution
 
     @staticmethod
     def smilesToGraph(smiles: str) -> tuple[torch.Tensor, torch.Tensor]:
