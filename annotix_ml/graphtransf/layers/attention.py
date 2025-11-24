@@ -55,7 +55,8 @@ class MultiHeadEdgeNode(nn.Module):
         e: torch.Tensor,
     ):
         """
-        Function to get the attention map. attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
+        Function to get the attention map.
+        attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
         Args:
         - h: torch.tensor, nested tensor of the nodes representation (bs, *n, d)
         - e: torch.tensor, nested tensor of the edges representation (bs, *n, *n, d)
@@ -106,7 +107,7 @@ class MultiHeadEdgeNode(nn.Module):
         # Add to the values
         node_attn = node_attn.unsqueeze(-1) * V
 
-        ...
+        return None
 
     def forward_normal(
         self,
