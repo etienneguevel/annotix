@@ -1,4 +1,6 @@
 import torch
+import rdkit.Chem as Chem
+from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 
 
 def mask_any_tensor(
@@ -31,11 +33,14 @@ def mask_any_tensor(
         replaced by ``fill``.
 
     Example:
-        >>> t = torch.ones(2, 3, 4)
-        >>> mask = torch.tensor([[1, 0, 1], [0, 1, 1]])  # shape (2, 3)
-        >>> out = mask_any_tensor(t, mask, fill=0.0)
-        >>> out.shape
-        torch.Size([2, 3, 4])
+        >>> t = torch.tensor([[[1., 2.], [3., 4.]], [[5., 6.], [7., 8.]]])
+        >>> mask = torch.tensor([[1, 0], [0, 1]])
+        >>> mask_any_tensor(t, mask, fill=0.0)
+        tensor([[[1., 2.],
+                 [0., 0.]],
+
+                [[0., 0.],
+                 [7., 8.]]])
 
     Notes and edge cases:
     - The function asserts that ``mask.shape`` equals the leading dimensions of
@@ -62,3 +67,67 @@ def mask_any_tensor(
     t = t.masked_fill(mask == 0, fill)
 
     return t
+
+
+def batch_graph_to_smiles(
+    nodes: torch.Tensor, edges: torch.Tensor, mask: torch.Tensor
+) -> list[str | None]:
+    """
+    Convert a batch of graphs into a list of SMILES strings.
+
+    Args:
+    - nodes: torch.Tensor, one-hot encoded nodes (bs, n, natoms)
+    - edges: torch.Tensor, one-hot encoded edges (bs, n, n, nbonds)
+    - mask: torch.Tensor, binary mask indicating valid nodes (bs, n)
+
+    Returns:
+    - smiles_list: list[str | None], list of reconstructed SMILES strings. None if invalid.
+    """
+    smiles_list = []
+    bs = nodes.shape[0]
+
+    for i in range(bs):
+        # Determine the number of atoms for this graph
+        n_atoms = int(mask[i].sum().item())
+
+        # Slice the nodes and edges
+        # nodes: (n, natoms) -> (n_atoms, natoms)
+        current_nodes = nodes[i, :n_atoms]
+
+        # edges: (n, n, nbonds) -> (n_atoms, n_atoms, nbonds)
+        current_edges = edges[i, :n_atoms, :n_atoms]
+
+        # Create a writable molecule
+        mol = Chem.RWMol()
+
+        # Add atoms
+        atom_indices = []
+        for j in range(n_atoms):
+            atom_idx = torch.argmax(current_nodes[j]).item()
+            atom_symbol = VALID_ELEMENTS[atom_idx]
+            atom = Chem.Atom(atom_symbol)
+            idx = mol.AddAtom(atom)
+            atom_indices.append(idx)
+
+        # Add bonds
+        # Iterate over the upper triangle to avoid duplicates
+        for j in range(n_atoms):
+            for k in range(j + 1, n_atoms):
+                bond_type_idx = torch.argmax(current_edges[j, k]).item()
+                bond_type = TYPE_EDGES[bond_type_idx]
+
+                if bond_type != "NoBond":
+                    mol.AddBond(atom_indices[j], atom_indices[k], bond_type)
+
+        # Sanitize the molecule
+        try:
+            Chem.SanitizeMol(mol)
+        except ValueError:
+            smiles_list.append(None)
+            continue
+
+        # Convert to SMILES
+        smiles = Chem.MolToSmiles(mol)
+        smiles_list.append(smiles)
+
+    return smiles_list

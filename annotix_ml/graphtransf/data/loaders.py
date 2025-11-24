@@ -16,7 +16,7 @@ def make_datasets(
     valid_dataset = GraphDatasetFromSMILEs(
         data=data_path,
         smile_column=smile_column,
-        split="valid",
+        split="val",
         split_column=split_column,
     )
     test_dataset = GraphDatasetFromSMILEs(

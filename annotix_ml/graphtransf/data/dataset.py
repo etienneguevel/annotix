@@ -135,6 +135,54 @@ class GraphDatasetFromSMILEs(Dataset):
 
         return nodes, edges
 
+    @staticmethod
+    def graphToSmiles(nodes: torch.Tensor, edges: torch.Tensor) -> str:
+        """
+        Convert a graph representation (nodes and edges) back to a SMILES string.
+
+        Args:
+        - nodes: torch.Tensor, one-hot encoded nodes (n, natoms)
+        - edges: torch.Tensor, one-hot encoded edges (n, n, nbonds)
+
+        Returns:
+        - smiles: str, the reconstructed SMILES string
+        """
+        # Create a writable molecule
+        mol = Chem.RWMol()
+
+        # Add atoms
+        atom_indices = []
+        for i in range(nodes.shape[0]):
+            atom_idx = torch.argmax(nodes[i]).item()
+            atom_symbol = VALID_ELEMENTS[atom_idx]
+            atom = Chem.Atom(atom_symbol)
+            idx = mol.AddAtom(atom)
+            atom_indices.append(idx)
+
+        # Add bonds
+        # edges is (n, n, nbonds)
+        # We iterate over the upper triangle to avoid duplicates
+        n = nodes.shape[0]
+        for i in range(n):
+            for j in range(i + 1, n):
+                bond_type_idx = torch.argmax(edges[i, j]).item()
+                bond_type = TYPE_EDGES[bond_type_idx]
+
+                if bond_type != "NoBond":
+                    mol.AddBond(atom_indices[i], atom_indices[j], bond_type)
+
+        # Sanitize the molecule to handle aromaticity etc.
+        try:
+            Chem.SanitizeMol(mol)
+        except ValueError:
+            # If sanitization fails, we might return a raw SMILES or None
+            # For now let's try to return what we have, but it might be invalid
+            pass
+
+        # Convert to SMILES
+        smiles = Chem.MolToSmiles(mol)
+        return smiles
+
     def __len__(self):
         return len(self.smiles)
 
