@@ -32,8 +32,8 @@ class NoisingModel(nn.Module):
 
     def __init__(
         self,
-        nodes_distribution: list[float],
-        edges_distribution: list[float],
+        nodes_distribution: torch.Tensor,
+        edges_distribution: torch.Tensor,
         diffusion_steps: int,
         noise_schedule_type: str = "cosine",
     ):
@@ -97,13 +97,59 @@ class NoisingModel(nn.Module):
         """
         # N (bs, n, natoms)
         # E (bs, n, n, nbonds)
+
+        bs = N.shape[0]
+        device = N.device
+        sampled_t = torch.randint(1, self.T, (bs,), device=device)
+
+        return self.compute_noised_graph(N, E, sampled_t, node_mask)
+
+    def compute_noised_graph(
+        self,
+        N: torch.Tensor,
+        E: torch.Tensor,
+        t: int | torch.Tensor,
+        node_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute the noised graph at a given step t.
+
+        Args:
+        - N: torch.Tensor, the nodes one-hot encoded vector.
+        - E: torch.Tensor, the edges one-hot encoded vector.
+        - node_mask: torch.Tensor | None, the mask vector.
+        - t: int | torch.Tensor, the time step(s) to noise to.
+
+        Returns:
+        Noised nodes and edges, as well as the unmodified mask.
+        """
+        # Handle unbatched input
+        is_unbatched = N.dim() == 2
+        if is_unbatched:
+            N = N.unsqueeze(0)
+            E = E.unsqueeze(0)
+            if node_mask is None:
+                node_mask = torch.ones(N.shape[0], N.shape[1], device=N.device)
+            else:
+                node_mask = node_mask.unsqueeze(0)
+
+        if node_mask is None:
+            raise ValueError("node_mask must be provided.")
+
+        # Now N is (bs, n, natoms), E is (bs, n, n, nbonds)
         bs = N.shape[0]
         device = N.device
         type_tensor = N.dtype
-        sampled_t = torch.randint(1, self.T, (bs,))
+
+        if isinstance(t, int):
+            t_tensor = torch.full((bs,), t, dtype=torch.long, device=device)
+        else:
+            t_tensor = t.to(device)
+            if t_tensor.dim() == 0:
+                t_tensor = t_tensor.unsqueeze(0)
 
         # Make the matrices & stack them
-        Q_matrices = [self.get_Q_bar_t(t) for t in sampled_t]
+        Q_matrices = [self.get_Q_bar_t(t_val.item()) for t_val in t_tensor]
         Q_bar_nodes, Q_bar_edges = zip(
             *Q_matrices
         )  # (natoms, natoms), (nbonds, nbonds)
@@ -117,12 +163,14 @@ class NoisingModel(nn.Module):
         N = N @ Q_nodes  # (bs, n, natoms)
         E = E @ Q_edges  # (bs, n, n, nbonds)
 
-        # TODO : should I noise somewhere ?
-        # Doesn't seem necessary for N, what about E ?
+        # Sample discrete features
         N, E = sample_discrete_features(N, E, node_mask)
 
         # Cast back to the original type
         N = N.to(type_tensor)
         E = E.to(type_tensor)
+
+        if is_unbatched:
+            return N.squeeze(0), E.squeeze(0), node_mask.squeeze(0)
 
         return N, E, node_mask

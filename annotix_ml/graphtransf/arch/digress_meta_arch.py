@@ -1,14 +1,16 @@
 from functools import partial
-from typing import Callable, Optional
+from typing import Literal
 
 import torch
 import torch.nn as nn
 
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
+from annotix_ml.graphtransf.data.dataset import GraphDatasetFromSMILEs
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.math.extra_features import laplacian_embedding, node_cycle
+from annotix_ml.graphtransf.math.metrics import compute_accuracy
 
 
 class DigressMetaArch:
@@ -19,13 +21,13 @@ class DigressMetaArch:
         dy: int,
         n_heads: int,
         n_layers: int,
-        nodes_distribution: list[float],
-        edges_distribution: list[float],
+        train_dataset: GraphDatasetFromSMILEs,
+        noise_strategy: Literal["uniform", "distribution"],
         diffusion_steps: int,
         loss_ratio: float,
         device: torch.device,
-        k: Optional[int] = None,
-        extra_features: list[Callable] = [],
+        k: int | None = None,
+        extra_features: list[str] | None = None,
     ):
         # Store information
         self.loss_ratio = loss_ratio
@@ -36,8 +38,14 @@ class DigressMetaArch:
         node_features = 0
         global_features = 0
 
+        if extra_features is None:
+            extra_features = []
+
         for name in extra_features:
             if name == "laplacian_embedding":
+                if k is None:
+                    raise ValueError("k must be specified for laplacian_embedding.")
+
                 f = partial(laplacian_embedding, k=k)
                 extra_features_functions.append(f)
                 node_features += k
@@ -53,7 +61,7 @@ class DigressMetaArch:
 
         self.extra_features = extra_features_functions
 
-        # Instanciate the models
+        # Instanciate the diffusion model
         self.diffuser = GnnNodeEdges(
             d=d,
             de=de,
@@ -67,10 +75,22 @@ class DigressMetaArch:
         )
         self.diffuser = self.diffuser.to(device)
 
+        # Instanciate the noising model
+        if noise_strategy == "uniform":
+            nodes_distribution = torch.ones(len(VALID_ELEMENTS)) / len(VALID_ELEMENTS)
+            edges_distribution = torch.ones(len(TYPE_EDGES)) / len(TYPE_EDGES)
+
+        elif noise_strategy == "distribution":
+            nodes_distribution = train_dataset.nodes_distribution
+            edges_distribution = train_dataset.edges_distribution
+
+        else:
+            raise ValueError(f"{noise_strategy} is not a recognized noise strategy.")
+
         self.noiser = NoisingModel(
-            nodes_distribution,
-            edges_distribution,
-            diffusion_steps,
+            diffusion_steps=diffusion_steps,
+            nodes_distribution=nodes_distribution,
+            edges_distribution=edges_distribution,
         )
 
         # Make the loss
@@ -149,7 +169,16 @@ class DigressMetaArch:
         # Add the losses
         total_loss = Nloss + (self.loss_ratio * Eloss)
 
-        return total_loss
+        # Compute the accuracy
+        accuracy = compute_accuracy(
+            pN.transpose(1, 2), pE.permute((0, 2, 3, 1)), N, E, mask
+        )
+        accuracy = {
+            "node_accuracy": torch.tensor(accuracy["node_accuracy"]).mean().item(),
+            "edge_accuracy": torch.tensor(accuracy["edge_accuracy"]).mean().item(),
+        }
+
+        return total_loss, accuracy
 
     def predict(self, batch):
         # unpack the elements of the batch

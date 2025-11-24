@@ -29,8 +29,8 @@ def cosine_beta_schedule_discrete(
 
     # Compute betas and limit their max values
     betas = 1 - alphas
-    betas = 1 - torch.clamp(
-        betas, min=0, max=0.999
+    betas = torch.clamp(
+        betas, min=0, max=0.9999
     )  # limit the max value of betas to prevent irregularities
 
     # Recompute the alphas with the new betas values
@@ -87,7 +87,7 @@ def sample_discrete_features(
     E_t = E_t + torch.transpose(E_t, 1, 2)  # (bs, n, n)
 
     # One-hot encode the noised X and E
-    X_t = F.one_hot(X_t, natoms)
-    E_t = F.one_hot(E_t, nbonds)
+    X_t = F.one_hot(X_t, natoms)  # (bs, n, natoms)
+    E_t = F.one_hot(E_t, nbonds)  # (bs, n, n, nbonds)
 
     return X_t, E_t

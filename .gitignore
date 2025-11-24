@@ -3,6 +3,7 @@
 *.csv
 outputs/
 resources/
+logs
 .env
 .DS_Store
 test_data/

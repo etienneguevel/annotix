@@ -3,6 +3,7 @@ name = "annotix_ml"
 version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
+    "huggingface-hub>=1.1.5",
     "ipykernel>=6.30.1",
     "loguru>=0.7.3",
     "matchms>=0.27.0",
