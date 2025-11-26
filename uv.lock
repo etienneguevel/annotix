@@ -10,6 +10,7 @@ dependencies = [
     { name = "omegaconf" },
     { name = "pandas" },
     { name = "rdkit" },
+    { name = "requests" },
     { name = "torch" },
     { name = "tqdm" },
 ]
@@ -50,6 +51,7 @@ requires-dist = [
     { name = "psycopg2-binary", marker = "extra == 'rest'", specifier = ">=2.9.11" },
     { name = "pytest", marker = "extra == 'notebook'", specifier = ">=8.4.2" },
     { name = "rdkit", specifier = ">=2025.9.1" },
+    { name = "requests", specifier = ">=2.32.5" },
     { name = "scipy", marker = "extra == 'notebook'", specifier = ">=1.16.2" },
     { name = "seaborn", marker = "extra == 'notebook'", specifier = ">=0.13.2" },
     { name = "spec2vec", marker = "extra == 'rest'", specifier = ">=0.8.0" },

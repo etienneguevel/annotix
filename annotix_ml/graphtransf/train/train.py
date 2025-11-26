@@ -85,7 +85,7 @@ def train(cfg):
         else torch.device("cpu")
     )
 
-    train_dataset, valid_dataset, _ = make_datasets(
+    train_dataset, valid_dataset = make_datasets(
         cfg.dataset.data_path,
         cfg.dataset.smile_column,
         cfg.dataset.split_column,
@@ -136,6 +136,10 @@ def train(cfg):
 
     # Define the metrics
     metrics = defaultdict(list)
+
+    # Prepare the save path
+    save_path = cfg.train.save_path
+    os.makedirs(save_path, exist_ok=True)
 
     # Make the losses and the optimizer
     optimizer = torch.optim.AdamW(digress.diffuser.parameters())

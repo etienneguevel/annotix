@@ -1,7 +1,7 @@
 dataset:
-  data_path: data/MassSpecGym.csv
+  data_path: data/qm9.csv
   smile_column: smiles
-  split_column: "fold"
+  split_column: split
 
 model:
   d: 256
@@ -21,7 +21,7 @@ train:
   num_train_steps: 10000
   loss_ratio: 1
   learning_rate: 0.0001
-  save_path: logs/experiment_test
+  save_path: logs/qm9_experiment
   save_steps: 1000
   num_workers: 4
   seed: 24
@@ -29,6 +29,3 @@ train:
 valid:
   batch_size: 256
   num_eval_steps: 1000
-
-test:
-  batch_size: 256

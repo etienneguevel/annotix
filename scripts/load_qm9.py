@@ -17,8 +17,9 @@ def process_qm9():
     data_dir = os.path.join(ROOT.parent, "data")
     os.makedirs(data_dir, exist_ok=True)
     zip_filepath = os.path.join(data_dir, "QM9.zip")
+    extracted_dir = os.path.join(data_dir, "QM9")
 
-    if not os.path.exists(zip_filepath):
+    if not os.path.exists(extracted_dir):
         print(f"Starting download of QM9 dataset from {URL_DATASET}...")
         response = requests.get(URL_DATASET, stream=True)
         response.raise_for_status()
@@ -30,7 +31,6 @@ def process_qm9():
         print(f"QM9 dataset already exists at {zip_filepath}. Skipping download.")
 
     # Unzip the dataset
-    extracted_dir = os.path.join(data_dir, "QM9")
     if not os.path.exists(extracted_dir):
         print(f"Unzipping {zip_filepath}...")
         try:
@@ -39,7 +39,7 @@ def process_qm9():
         except zipfile.BadZipFile:
             with tarfile.open(zip_filepath, "r") as tar_ref:
                 tar_ref.extractall(data_dir)
-        os.remove(zip_filepath)
+
         print(f"Unzipping complete. Files extracted to {data_dir}")
     else:
         print(f"QM9 dataset already unzipped at {extracted_dir}. Skipping unzipping.")
@@ -50,9 +50,9 @@ def process_qm9():
     df = df.sample(frac=1, random_state=24)
 
     # Split into train and test
-    train_ratio = 0.8
+    train_ratio = 0.9
     labels = ["train" for i in range(int(len(df) * train_ratio))] + [
-        "test" for i in range(len(df) - int(len(df) * train_ratio))
+        "val" for i in range(len(df) - int(len(df) * train_ratio))
     ]
     df["split"] = labels
 
