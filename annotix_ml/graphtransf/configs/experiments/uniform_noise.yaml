@@ -1,0 +1,5 @@
+model:
+  noise_strategy: uniform
+
+train:
+  save_path: logs/qm9_uniform_noise

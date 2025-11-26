@@ -1,0 +1,5 @@
+model:
+  extra_features: []
+
+train:
+  save_path: logs/qm9_no_extra

@@ -1,9 +1,10 @@
+import json
 import os
 from argparse import ArgumentParser
 from collections import defaultdict
 
 import torch
-from rdkit import RDLogger
+from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -14,6 +15,7 @@ from annotix_ml.graphtransf.data.data_utils import batch_graph_to_smiles
 from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import compute_metrics
+from annotix_ml import ROOT
 
 
 def get_args():
@@ -23,7 +25,7 @@ def get_args():
 
 
 def do_eval(model, eval_loader, device):
-    RDLogger.DisableLog("rdApp.*")
+    DisableLog("rdApp.*")
     metrics = defaultdict(list)
     for batch in tqdm(eval_loader, desc="evaluation"):
         # Move the elements to the device of interest
@@ -132,17 +134,31 @@ def train(cfg):
         device=device,
         k=cfg.model.num_ev,
         extra_features=cfg.model.extra_features,
+        last_layer=cfg.model.last_layer,
     )
 
     # Define the metrics
     metrics = defaultdict(list)
+    train_metrics = defaultdict(list)
 
     # Prepare the save path
     save_path = cfg.train.save_path
     os.makedirs(save_path, exist_ok=True)
 
     # Make the losses and the optimizer
-    optimizer = torch.optim.AdamW(digress.diffuser.parameters())
+    optimizer = torch.optim.AdamW(
+        digress.diffuser.parameters(), lr=cfg.train.starting_learning_rate
+    )
+
+    # Define the scheduler
+    if cfg.train.learning_rate_schedule == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=cfg.train.num_train_steps,
+            eta_min=cfg.train.final_learning_rate,
+        )
+    else:
+        scheduler = None
 
     # Start the training loop
     pbar = tqdm(enumerate(train_loader), desc="Training")
@@ -152,14 +168,20 @@ def train(cfg):
 
         # Do the forward backward loop
         loss, acc = digress.forward_backward(batch)
+        for k, v in acc.items():
+            train_metrics[k].append(v)
 
         # Update the parameters
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
+        if scheduler is not None:
+            scheduler.step()
+
         # Update the progress bar
-        pbar.set_postfix(loss=loss.item(), **acc)
+        lr = optimizer.param_groups[0]["lr"]
+        pbar.set_postfix(loss=loss.item(), lr=lr, **acc)  # pyright: ignore[reportArgumentType]
 
         # Remove the batch from memory
         del batch
@@ -183,10 +205,27 @@ def train(cfg):
         digress.diffuser.state_dict(), os.path.join(cfg.train.save_path, "final.pt")
     )
 
+    # Save the metrics
+    with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
+        json.dump(metrics, f)
+
+    with open(os.path.join(cfg.train.save_path, "train_metrics.json"), "w") as f:
+        json.dump(train_metrics, f)
+
 
 def main():
     args = get_args()
-    cfg = OmegaConf.load(args.config)
+
+    # Load default config
+    default_cfg_path = ROOT / "graphtransf" / "configs" / "default_config.yaml"
+    default_cfg = OmegaConf.load(default_cfg_path)
+
+    # Load user config
+    user_cfg = OmegaConf.load(args.config)
+
+    # Merge configs
+    cfg = OmegaConf.merge(default_cfg, user_cfg)
+
     train(cfg)
 
 

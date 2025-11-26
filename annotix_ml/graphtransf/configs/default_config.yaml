@@ -10,17 +10,20 @@ model:
   n_heads: 8
   n_layers: 6
   diffusion_steps: 500
-  noise_strategy: uniform
+  noise_strategy: distribution
+  last_layer: mlp
   num_ev: 10
   extra_features:
     - laplacian_embedding
     - node_cycle
 
 train:
-  batch_size: 256
+  batch_size: 512
   num_train_steps: 10000
   loss_ratio: 1
-  learning_rate: 0.0001
+  starting_learning_rate: 0.0001
+  final_learning_rate: 0.000001
+  learning_rate_schedule: cosine
   save_path: logs/qm9_experiment
   save_steps: 1000
   num_workers: 4

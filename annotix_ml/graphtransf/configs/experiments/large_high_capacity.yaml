@@ -1,0 +1,9 @@
+model:
+  d: 512
+  de: 128
+  dy: 128
+  n_heads: 16
+  n_layers: 10
+
+train:
+  save_path: logs/qm9_large
