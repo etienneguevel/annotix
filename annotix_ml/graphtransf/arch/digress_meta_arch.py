@@ -28,6 +28,7 @@ class DigressMetaArch:
         device: torch.device,
         k: int | None = None,
         extra_features: list[str] | None = None,
+        last_layer: Literal["mlp", "unembedding"] = "mlp",
     ):
         # Store information
         self.loss_ratio = loss_ratio
@@ -73,7 +74,6 @@ class DigressMetaArch:
             natoms=len(VALID_ELEMENTS),
             nbonds=len(TYPE_EDGES),
         )
-        self.diffuser = self.diffuser.to(device)
 
         # Instanciate the noising model
         if noise_strategy == "uniform":

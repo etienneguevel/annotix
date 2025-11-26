@@ -8,6 +8,7 @@ from annotix_ml.graphtransf.layers import (
     FfnNodeEdge,
     MultiHeadEdgeNode,
     Unembedding,
+    MLPNodeEdge,
 )
 from annotix_ml.graphtransf.math.extra_features import laplacian_embedding, node_cycle
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges
@@ -24,7 +25,7 @@ def test_model_creation():
     natoms = len(VALID_ELEMENTS)
     nbonds = len(TYPE_EDGES)
 
-    # Init the model
+    # Init the model with Unembedding
     model = GnnNodeEdges(
         d=d,
         de=de,
@@ -35,6 +36,7 @@ def test_model_creation():
         n_layers=n_layers,
         natoms=natoms,
         nbonds=nbonds,
+        last_layer="unembedding",
     )
     embedding_layer = model.layers.pop(0)
     unembedding_layer = model.layers.pop(-1)
@@ -55,6 +57,21 @@ def test_model_creation():
 
         else:
             raise TypeError(f"{type(layer)} is not comprehended yet.")
+
+    # Init the model with MLP
+    model = GnnNodeEdges(
+        d=d,
+        de=de,
+        dy=dy,
+        n_heads=n_heads,
+        node_features=k,
+        global_features=k + 1,
+        n_layers=n_layers,
+        natoms=natoms,
+        nbonds=nbonds,
+        last_layer="mlp",
+    )
+    assert isinstance(model.layers[-1], MLPNodeEdge)
 
 
 def test_model_forward():

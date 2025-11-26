@@ -5,6 +5,7 @@ from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.layers import (
     AttentionLayer,
     EmbeddingLaplacian,
+    MLPNodeEdge,
     Unembedding,
 )
 
@@ -25,6 +26,7 @@ class GnnNodeEdges(nn.Module):
         n_layers: int,
         natoms: int,
         nbonds: int,
+        last_layer: str = "mlp",
     ):
         super().__init__()
         self.d = d
@@ -43,7 +45,15 @@ class GnnNodeEdges(nn.Module):
         for _ in range(n_layers):
             layers.append(AttentionLayer(d, de, dy, n_heads))
 
-        layers.append(Unembedding(layers[0]))
+        # Build the last layer
+        if last_layer == "mlp":
+            layers.append(MLPNodeEdge(d, de, natoms, nbonds))
+
+        elif last_layer == "unembedding":
+            layers.append(Unembedding(layers[0]))
+
+        else:
+            raise ValueError(f"Unknown last layer: {last_layer}")
 
         # Build the unembedding layer
         self.layers = nn.ModuleList(layers)
