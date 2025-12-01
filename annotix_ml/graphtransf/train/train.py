@@ -163,6 +163,9 @@ def train(cfg):
     # Start the training loop
     pbar = tqdm(enumerate(train_loader), desc="Training")
     for i, batch in pbar:
+        # Make the model in train mode
+        digress.diffuser.train()
+
         # Move the batch to the correct device
         batch = tuple(el.to(device) for el in batch)
 
@@ -187,9 +190,14 @@ def train(cfg):
         del batch
 
         if i % cfg.valid.num_eval_steps == 0:
-            eval_metrics = do_eval(digress, valid_loader, device)
-            for k, v in eval_metrics.items():
-                metrics[k].append(v)
+            # Make the model in eval mode
+            digress.diffuser.eval()
+
+            # Do the evaluation
+            with torch.no_grad():
+                eval_metrics = do_eval(digress, valid_loader, device)
+                for k, v in eval_metrics.items():
+                    metrics[k].append(v)
 
         if i % cfg.train.save_steps == 0:
             torch.save(
