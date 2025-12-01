@@ -5,7 +5,7 @@ from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 
 def laplacian_embedding(
     edges: torch.Tensor, k: int, mask: torch.Tensor = None
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Fonction to compute the eigenvectors of the normalized Laplacian matrix of
     the edges of a graph.
@@ -99,7 +99,7 @@ def laplacian_embedding(
     eigvectors_ = torch.stack(eigvectors_list, dim=0)  # (bs, n, k)
 
     if not is_batched:
-        return eigvals_[0], eigvectors_[0], n_connected_components[0], not_in_ev1[0]
+        return eigvectors_[0], eigvals_[0]
 
     return eigvectors_.to(device), eigvals_.to(device)
 
