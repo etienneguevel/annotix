@@ -11,6 +11,7 @@ from annotix_ml.graphtransf.models.gnn import GnnNodeEdges
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.math.extra_features import laplacian_embedding, node_cycle
 from annotix_ml.graphtransf.math.metrics import compute_accuracy
+from annotix_ml.graphtransf.math.noising import sample_discrete_features
 
 
 class DigressMetaArch:
@@ -63,6 +64,9 @@ class DigressMetaArch:
         self.extra_features = extra_features_functions
 
         # Instanciate the diffusion model
+        self.natoms = len(VALID_ELEMENTS)
+        self.nbonds = len(TYPE_EDGES)
+
         self.diffuser = GnnNodeEdges(
             d=d,
             de=de,
@@ -71,8 +75,8 @@ class DigressMetaArch:
             node_features=node_features,
             global_features=global_features,
             n_layers=n_layers,
-            natoms=len(VALID_ELEMENTS),
-            nbonds=len(TYPE_EDGES),
+            natoms=self.natoms,
+            nbonds=self.nbonds,
         )
 
         # Instanciate the noising model
@@ -180,19 +184,69 @@ class DigressMetaArch:
 
         return total_loss, accuracy
 
-    def predict(self, batch):
-        # unpack the elements of the batch
-        N, E, mask = batch  # (bs, n, n_atoms), (bs, n, n, n_edges), (bs,)
+    @torch.no_grad()
+    def generate(self, batch_size, max_nodes, min_nodes=1):
+        # sample random n
+        n = torch.randint(min_nodes, max_nodes, (batch_size,))
+        max_nodes = n.max().item()
 
-        # compute the extra features
-        pos_emb, y = self.compute_extra_features(
-            E, mask
-        )  # (bs, node_features), (bs, n)
+        # Make the mask
+        mask = torch.stack(
+            [torch.cat([torch.ones(m), torch.zeros(max_nodes - m)]) for m in n]
+        )  # (bs, max_nodes)
 
-        # Compute the prediction of the diffuser
-        with torch.no_grad():
-            pN, pE, _ = self.diffuser(
-                N, E, pos_emb, y, mask
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        # Make the distributions based on the noiser
+        N_dist = (
+            self.noiser.n_m.unsqueeze(0).unsqueeze(0).expand(batch_size, max_nodes, -1)
+        )  # (bs, n, n_atoms)
+        E_dist = (
+            self.noiser.e_m.unsqueeze(0)
+            .unsqueeze(0)
+            .unsqueeze(0)
+            .expand(batch_size, max_nodes, max_nodes, -1)
+        )  # (bs, n, n, n_edges)
 
-        return pN, pE
+        # sample a random graph
+        N, E = sample_discrete_features(
+            N_dist, E_dist, mask
+        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+
+        # Denoise the graph
+        for t in reversed(range(0, self.noiser.T)):
+            # Convert to float for compatibility with noising model
+            N = N.float().to(self.device)
+            E = E.float().to(self.device)
+
+            # Mask the graph
+            N = mask_any_tensor(N, mask, fill=0)  # (bs, n, n_atoms)
+            E = mask_any_tensor(E, mask, fill=0)  # (bs, n, n, n_edges)
+
+            # Compute the probabilities computed by the model
+            pN, pE = self.forward(
+                (N, E, mask)
+            )  #  (bs, n, n_atoms), (bs, n, n, n_edges)
+
+            pN = pN.softmax(-1)  #  (bs, n, n_atoms)
+            pE = pE.softmax(-1)  #  (bs, n, n, n_atoms)
+
+            # Compute the posterior distribution
+            post_N, post_E = self.noiser.get_posterior(
+                N, E, t
+            )  # (bs, n, n_atoms, n_atoms), (bs, n, n, n_edges, n_edges)
+
+            # Compute the combined distribution -> element-wise multiplication
+            # Then sum over all the possible starting values (dim -2)
+            probN = (post_N * pN.unsqueeze(-1)).sum(dim=-2)  # (bs, n, n_atoms)
+            probE = (post_E * pE.unsqueeze(-1)).sum(dim=-2)  # (bs, n, n, n_edges)
+
+            # Normalize with epsilon to prevent division by zero
+            eps = 1e-6
+            probN = probN / (probN.sum(dim=-1, keepdim=True) + eps)  # (bs, n, n_atoms)
+            probE = probE / (
+                probE.sum(dim=-1, keepdim=True) + eps
+            )  # (bs, n, n, n_edges)
+
+            # Sample from the combined distribution
+            N, E = sample_discrete_features(probN, probE, mask)
+
+        return N, E

@@ -78,6 +78,62 @@ class NoisingModel(nn.Module):
 
         return Q_bar_nodes.T, Q_bar_edges.T
 
+    def get_posterior(
+        self, N: torch.Tensor, E: torch.Tensor, t: int, eps: float = 1e-6
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute the posterior distribution of nodes and edges at step t-1 given step t.
+        According to the formula of Vignac it is :
+        Z^t @ (Q^t)' * Z^0 @ Q_bar^(t-1) / Z^0 @ Q_bar^t @ (Z^t)'
+
+        Args:
+        - N: torch.Tensor, the nodes one-hot encoded vector at step t.
+        - E: torch.Tensor, the edges one-hot encoded vector at step t.
+        - t: int, the current time step.
+        - eps: float = 1e-6, the value to add to the sum and avoid zero div.
+
+        Returns:
+        The posterior probabilities for nodes and edges at step t-1. The proba
+        are computed for each possible values of N^0 and E^0 making them resp
+        (bs, n, natoms, natoms) and (bs, n, n, nbonds, nbonds) tensors.
+        """
+        Q_n, Q_e = self.get_Q_t(t)  #  (natoms, natoms), (nbonds, nbonds)
+        Q_bar_n, Q_bar_e = self.get_Q_bar_t(t)  #  (natoms, natoms), (nbonds, nbonds)
+        Q_bar_nb, Q_bar_eb = self.get_Q_bar_t(
+            t - 1
+        )  #  (natoms, natoms), (nbonds, nbonds)
+
+        # Compute the posterior distribution of Nodes
+        # Start with the numerator of the equation
+        # N @ Q_n.T: (bs, n, natoms)
+        pN_numerator = (N @ Q_n.T).unsqueeze(2)  # (bs, n, 1, natoms)
+        pN_numerator = pN_numerator * Q_bar_nb.unsqueeze(0).unsqueeze(
+            0
+        )  # (bs, n, natoms, natoms)
+
+        # Continue with the denominator
+        pN_denominator = (N @ Q_bar_n.T).unsqueeze(-1)  # (bs, n, natoms, 1)
+
+        # Compute the posterior
+        pN_posterior = pN_numerator / (pN_denominator + eps)
+
+        # Compute the posterior distribution of Edges
+        pE_numerator = (E @ Q_e.T).unsqueeze(3)  # (bs, n, n, 1, nbonds)
+        pE_numerator = pE_numerator * Q_bar_eb.unsqueeze(0).unsqueeze(0).unsqueeze(
+            0
+        )  # (bs, n, n, nbonds, nbonds)
+
+        # Compute the denominator
+        pE_denominator = (E @ Q_bar_e.T).unsqueeze(-1)  # (bs, n, n, nbonds, 1)
+
+        # Compute the posterior
+        pE_posterior = pE_numerator / (pE_denominator + eps)
+
+        return (
+            pN_posterior,
+            pE_posterior,
+        )  # (bs, n, natoms, natoms) and (bs, n, n, nbonds, nbonds)
+
     @torch.no_grad
     def forward(
         self, N: torch.Tensor, E: torch.Tensor, node_mask: torch.Tensor

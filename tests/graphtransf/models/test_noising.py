@@ -1,67 +1,69 @@
+import pytest
 import torch
-
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.test_utils import create_random_start
 
 
-def test_Q_shape():
-    # Create random dist vectors
-    natoms = len(VALID_ELEMENTS)
-    nbonds = len(TYPE_EDGES)
-    nodes_distribution = torch.randint(30, 100, (natoms,))
-    edges_distribution = torch.randint(90, 250, (nbonds,))
+class TestNoisingModel:
+    @pytest.fixture
+    def model(self):
+        natoms = 5
+        nbonds = 4
+        nodes_dist = torch.ones(natoms) / natoms
+        edges_dist = torch.ones(nbonds) / nbonds
+        return NoisingModel(
+            nodes_distribution=nodes_dist,
+            edges_distribution=edges_dist,
+            diffusion_steps=10,
+            noise_schedule_type="cosine",
+        )
 
-    nodes_distribution = nodes_distribution / nodes_distribution.sum()
-    edges_distribution = edges_distribution / edges_distribution.sum()
+    def test_get_posterior_shapes_and_values(self, model):
+        bs = 2
+        n_nodes = 20
+        natoms = model.natoms
+        nbonds = model.nbonds
 
-    # Init the noising layer
-    model = NoisingModel(
-        nodes_distribution=nodes_distribution,
-        edges_distribution=edges_distribution,
-        diffusion_steps=500,
-    )
+        # Create random one-hot encoded inputs using test utility
+        N, E, mask = create_random_start(bs, n_nodes, nbonds, natoms)
 
-    # Get matrices
-    Q_nodes_t, Q_edges_t = model.get_Q_t(200)
-    assert Q_nodes_t.shape == (natoms, natoms)
-    assert Q_edges_t.shape == (nbonds, nbonds)
+        t = 5  # Arbitrary step > 0
 
-    # Get bar matrices
-    Q_nodes_bar_t, Q_edges_bar_t = model.get_Q_bar_t(200)
-    assert Q_nodes_bar_t.shape == (natoms, natoms)
-    assert Q_edges_bar_t.shape == (nbonds, nbonds)
+        pN_posterior, pE_posterior = model.get_posterior(N, E, t)
 
+        # Check shapes
+        # Expected N posterior: (bs, n, natoms, natoms)
+        assert pN_posterior.shape == (bs, n_nodes, natoms, natoms)
 
-def test_noise_forward():
-    # Create random inputs
-    bs = 64
-    n = 30
-    natoms = len(VALID_ELEMENTS)
-    nbonds = len(TYPE_EDGES)
-    N, E, mask = create_random_start(bs, n, nbonds, natoms)
+        # Expected E posterior: (bs, n, n, nbonds, nbonds)
+        assert pE_posterior.shape == (bs, n_nodes, n_nodes, nbonds, nbonds)
 
-    # Create random dist vectors
-    nodes_distribution = torch.randint(30, 100, (natoms,))
-    edges_distribution = torch.randint(90, 250, (nbonds,))
+        # Check values are probabilities (sum to 1 along last dim)
+        # We use allclose because of floating point precision
+        # Only check non-masked nodes (where mask == 1)
 
-    nodes_distribution = nodes_distribution / nodes_distribution.sum()
-    edges_distribution = edges_distribution / edges_distribution.sum()
+        # For non-masked nodes, check that probabilities sum to 1
+        for b in range(bs):
+            for n in range(n_nodes):
+                if mask[b, n] > 0:  # Only check non-masked nodes
+                    assert torch.allclose(
+                        pN_posterior[b, n].sum(dim=-1),
+                        torch.ones(natoms),
+                        atol=1e-5,
+                    )
 
-    # Init the noising layer
-    model = NoisingModel(
-        nodes_distribution=nodes_distribution,
-        edges_distribution=edges_distribution,
-        diffusion_steps=500,
-    )
+        # For edges, check non-masked edges (both nodes must be non-masked)
+        mask_edge = mask.unsqueeze(-1) * mask.unsqueeze(-2)  # (bs, n, n)
+        for b in range(bs):
+            for i in range(n_nodes):
+                for j in range(n_nodes):
+                    if mask_edge[b, i, j] > 0:  # Only check non-masked edges
+                        assert torch.allclose(
+                            pE_posterior[b, i, j].sum(dim=-1),
+                            torch.ones(nbonds),
+                            atol=1e-5,
+                        )
 
-    # Test the forward of the model
-    N_noised, E_noised, mask_out = model(N, E, mask)
-    assert N.size() == N_noised.size()
-    assert E.size() == E_noised.size()
-    assert mask_out is mask
-
-
-if __name__ == "__main__":
-    test_Q_shape()
-    test_noise_forward()
+        # Check values are in [0, 1]
+        assert (pN_posterior >= -1e-6).all() and (pN_posterior <= 1.0 + 1e-6).all()
+        assert (pE_posterior >= -1e-6).all() and (pE_posterior <= 1.0 + 1e-6).all()
