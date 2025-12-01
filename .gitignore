@@ -7,6 +7,7 @@ logs
 .env
 .DS_Store
 test_data/
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
