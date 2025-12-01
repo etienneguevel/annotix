@@ -1,8 +1,11 @@
+import os
 from functools import partial
 from typing import Literal
+from uu import Error
 
 import torch
 import torch.nn as nn
+from omegaconf import DictConfig
 
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -22,11 +25,11 @@ class DigressMetaArch:
         dy: int,
         n_heads: int,
         n_layers: int,
-        train_dataset: GraphDatasetFromSMILEs,
         noise_strategy: Literal["uniform", "distribution"],
         diffusion_steps: int,
         loss_ratio: float,
         device: torch.device,
+        train_dataset: GraphDatasetFromSMILEs,
         k: int | None = None,
         extra_features: list[str] | None = None,
         last_layer: Literal["mlp", "unembedding"] = "mlp",
@@ -99,6 +102,51 @@ class DigressMetaArch:
 
         # Make the loss
         self.loss = nn.CrossEntropyLoss()
+
+    @classmethod
+    def init_from_cfg(
+        cls,
+        cfg: DictConfig,
+        device: torch.device,
+        train_dataset: GraphDatasetFromSMILEs,
+    ):
+        return cls(
+            d=cfg.model.d,
+            de=cfg.model.de,
+            dy=cfg.model.dy,
+            n_heads=cfg.model.n_heads,
+            n_layers=cfg.model.n_layers,
+            train_dataset=train_dataset,
+            noise_strategy=cfg.model.noise_strategy,
+            diffusion_steps=cfg.model.diffusion_steps,
+            loss_ratio=cfg.train.loss_ratio,
+            device=device,
+            k=cfg.model.num_ev,
+            extra_features=cfg.model.extra_features,
+            last_layer=cfg.model.last_layer,
+        )
+
+    @classmethod
+    def load_pretrained(
+        cls,
+        cfg: DictConfig,
+        device: torch.device,
+        train_dataset: GraphDatasetFromSMILEs,
+        model_path: str,
+    ):
+        if not os.path.exists(model_path):
+            raise ValueError(f"{model_path} is not an existing path.")
+
+        model = cls.init_from_cfg(cfg, device, train_dataset)
+
+        try:
+            saved_model = torch.load(model_path, weights_only=True)
+            model.diffuser.load_state_dict(saved_model["model_state_dict"])
+
+        except Error as e:
+            raise e
+
+        return model
 
     def compute_extra_features(
         self,

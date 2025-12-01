@@ -121,21 +121,7 @@ def train(cfg):
     )
 
     # Define the models
-    digress = DigressMetaArch(
-        d=cfg.model.d,
-        de=cfg.model.de,
-        dy=cfg.model.dy,
-        n_heads=cfg.model.n_heads,
-        n_layers=cfg.model.n_layers,
-        train_dataset=train_dataset,
-        noise_strategy=cfg.model.noise_strategy,
-        diffusion_steps=cfg.model.diffusion_steps,
-        loss_ratio=cfg.train.loss_ratio,
-        device=device,
-        k=cfg.model.num_ev,
-        extra_features=cfg.model.extra_features,
-        last_layer=cfg.model.last_layer,
-    )
+    digress = DigressMetaArch.init_from_cfg(cfg, device, train_dataset)
 
     # Define the metrics
     metrics = defaultdict(list)
