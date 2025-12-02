@@ -56,23 +56,25 @@ class NoisingModel(nn.Module):
 
     def get_Q_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
         alpha = self.alphas[t]
-        Q_nodes = alpha * torch.eye(len(self.n_m)) + (1 - alpha) * self.n_m.unsqueeze(
-            -1
-        ).expand(-1, self.natoms)  # (natoms, natoms)
+        device = self.alphas.device
+        Q_nodes = alpha * torch.eye(len(self.n_m), device=device) + (
+            1 - alpha
+        ) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)  # (natoms, natoms)
 
-        Q_edges = alpha * torch.eye(len(self.e_m)) + (1 - alpha) * self.e_m.unsqueeze(
-            -1
-        ).expand(-1, self.nbonds)  # (nbonds, nbonds)
+        Q_edges = alpha * torch.eye(len(self.e_m), device=device) + (
+            1 - alpha
+        ) * self.e_m.unsqueeze(-1).expand(-1, self.nbonds)  # (nbonds, nbonds)
 
         return Q_nodes.T, Q_edges.T
 
     def get_Q_bar_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
         alpha_bar = self.alphas_bar[t]
-        Q_bar_nodes = alpha_bar * torch.eye(len(self.n_m)) + (
+        device = self.alphas_bar.device
+        Q_bar_nodes = alpha_bar * torch.eye(len(self.n_m), device=device) + (
             1 - alpha_bar
         ) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)  # (natoms, natoms)
 
-        Q_bar_edges = alpha_bar * torch.eye(len(self.e_m)) + (
+        Q_bar_edges = alpha_bar * torch.eye(len(self.e_m), device=device) + (
             1 - alpha_bar
         ) * self.e_m.unsqueeze(-1).expand(-1, self.nbonds)  # (nbonds, nbonds)
 
@@ -176,7 +178,10 @@ class NoisingModel(nn.Module):
         - node_mask: torch.Tensor | None, the mask vector.
         - t: int | torch.Tensor, the time step(s) to noise to.
 
-        Returns:
+        Returns:self.Q_bar_nodes = self.Q_bar_nodes.to(device)
+        self.Q_bar_edges = self.Q_bar_edges.to(device)
+        self.Q_bar_nodes_bar = self.Q_bar_nodes_bar.to(device)
+        self.Q_bar_edges_bar = self.Q_bar_edges_bar.to(device)
         Noised nodes and edges, as well as the unmodified mask.
         """
         # Handle unbatched input
@@ -230,3 +235,15 @@ class NoisingModel(nn.Module):
             return N.squeeze(0), E.squeeze(0), node_mask.squeeze(0)
 
         return N, E, node_mask
+
+    def move_to(self, device: torch.device) -> None:
+        """
+        Move the noiser to the specified device.
+
+        Args:
+        - device: torch.device, the device to move the noiser to.
+        """
+        self.alphas = self.alphas.to(device)
+        self.alphas_bar = self.alphas_bar.to(device)
+        self.n_m = self.n_m.to(device)
+        self.e_m = self.e_m.to(device)

@@ -141,7 +141,7 @@ class DigressMetaArch:
 
         try:
             saved_model = torch.load(model_path, weights_only=True)
-            model.diffuser.load_state_dict(saved_model["model_state_dict"])
+            model.diffuser.load_state_dict(saved_model)
 
         except Error as e:
             raise e
@@ -242,6 +242,7 @@ class DigressMetaArch:
         mask = torch.stack(
             [torch.cat([torch.ones(m), torch.zeros(max_nodes - m)]) for m in n]
         )  # (bs, max_nodes)
+        mask = mask.to(self.device)
 
         # Make the distributions based on the noiser
         N_dist = (
@@ -297,4 +298,4 @@ class DigressMetaArch:
             # Sample from the combined distribution
             N, E = sample_discrete_features(probN, probE, mask)
 
-        return N, E
+        return N, E, mask
