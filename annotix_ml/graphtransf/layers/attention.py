@@ -46,6 +46,7 @@ class MultiHeadEdgeNode(nn.Module):
         # Initialize the matrices for output projection
         self.Out_N = nn.Linear(d, d)
         self.norm_n = nn.LayerNorm(d)
+
         self.Out_E = nn.Linear(d, de)
         self.norm_e = nn.LayerNorm(de)
 
@@ -162,18 +163,24 @@ class MultiHeadEdgeNode(nn.Module):
         )  # (bs, nh, n, n, dk), (bs, nh, n, n, dk)
 
         # Do the outer product of Q and K
+        # attn[..., i, j, :] = Q[..., i, :] * K[..., j, :]
         attn = Q * K  # (bs, nh, n, n, dk)
         attn /= sqrt(self.dk)  # (bs, nh, n, n, dk)
 
-        # Add the edges to the attn product
-        node_attn = E1 + (E2 * attn) + attn  # (bs, nh, n, n, dk)
+        # Add the edges to the attn product -> FiLM
+        attn = E1 + (E2 * attn) + attn  # (bs, nh, n, n, dk)
 
         # Do the summed softmax of the edges
-        node_attn = node_attn.sum(-1)  # (bs, nh, n, n)
+        node_attn = attn.sum(-1)  # (bs, nh, n, n)
+
+        # Mask the attention scores before softmax
+        mask_attn = mask.unsqueeze(1).unsqueeze(2)  # (bs, 1, 1, n)
+        node_attn = node_attn.masked_fill(mask_attn == 0, -1e9)
+
         node_attn = node_attn.softmax(-1)  # (bs, nh, n, n)
 
         if attn_map_mode:
-            return node_attn, node_attn
+            return attn, node_attn
 
         # Add to the values
         node_attn = node_attn @ V  # (bs, nh, n, dk)
@@ -206,7 +213,7 @@ class MultiHeadEdgeNode(nn.Module):
         h = mask_any_tensor(h, mask)  # (bs, n, d)
         e = mask_any_tensor(e, mask)  # (bs, n, n, de)
 
-        # TODO : modify the computation of y
+        # TODO : modify the update of y
 
         return h, e
 
@@ -259,6 +266,10 @@ class AttentionLayer(nn.Module):
         y: torch.Tensor,
         mask: torch.Tensor,
     ):
-        h_attn, e_attn, mask_attn = self.attnEdgeNode(h, e, y, mask)
-        h, e, mask = self.ffn(h_attn, e_attn, mask_attn)
+        # Compute the attention, make the residual connection
+        h_attn, e_attn, _ = self.attnEdgeNode(h, e, y, mask)
+
+        # Compute the output of the feedforward network, make residual connections
+        h, e, _ = self.ffn(h_attn, e_attn, mask)
+
         return h, e, y, mask

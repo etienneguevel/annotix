@@ -193,7 +193,7 @@ def test_generate():
     max_nodes = 15
 
     # Generate graphs
-    N, E = meta_arch.generate(batch_size, max_nodes)
+    N, E, _ = meta_arch.generate(batch_size, max_nodes)
 
     # Verify output shapes
     assert N.shape[0] == batch_size
