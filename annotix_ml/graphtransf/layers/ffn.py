@@ -16,6 +16,7 @@ class FfnNodeEdge(nn.Module):
         self,
         d: int,
         de: int,
+        dropout: float = 0.1,
     ):
         """
         Args:
@@ -30,8 +31,10 @@ class FfnNodeEdge(nn.Module):
             OrderedDict(
                 [
                     ("W1", nn.Linear(d, 2 * d)),
+                    ("Dropout1", nn.Dropout(dropout)),
                     ("ReLU", nn.ReLU()),
                     ("W2", nn.Linear(2 * d, d)),
+                    ("Dropout2", nn.Dropout(dropout)),
                 ]
             )
         )
@@ -41,8 +44,10 @@ class FfnNodeEdge(nn.Module):
             OrderedDict(
                 [
                     ("W1", nn.Linear(de, 2 * de)),
+                    ("Dropout1", nn.Dropout(dropout)),
                     ("ReLU", nn.ReLU()),
                     ("W2", nn.Linear(2 * de, de)),
+                    ("Dropout2", nn.Dropout(dropout)),
                 ]
             )
         )
@@ -57,14 +62,14 @@ class FfnNodeEdge(nn.Module):
         e: torch.Tensor,
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # Compute the nodes outputs
+        # Compute the nodes outputs, make residual connection
         inter_nodes = self.feedforward_N(h) + h  # (bs, n, d)
 
         # Mask the nodes outputs
         inter_nodes = mask_any_tensor(inter_nodes, mask)  # (bs, n, d)
         normed_nodes = self.norm_N(inter_nodes)  # (bs, n, d)
 
-        # Compute the edges outputs
+        # Compute the edges outputs, make residual connection
         inter_edges = self.feedforward_E(e) + e  # (bs, n, n, de)
 
         # Mak the edges outputs
