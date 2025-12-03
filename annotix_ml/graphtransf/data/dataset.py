@@ -6,14 +6,33 @@ import torch
 from pandas.core.frame import DataFrame
 from torch.utils.data import Dataset
 
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
+from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
+
+
+def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
+    """
+    Extract all unique atom symbols from a list of SMILES strings.
+
+    Args:
+    - smiles_list: list[str], list of SMILES strings to analyze
+
+    Returns:
+    - list[str], sorted list of unique atom symbols found in the SMILES
+    """
+    atoms = set()
+    for smiles in smiles_list:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is not None:
+            for atom in mol.GetAtoms():
+                atoms.add(atom.GetSymbol())
+    return sorted(list(atoms))
 
 
 class GraphDatasetFromSMILEs(Dataset):
     """
     Build a torch Dataset from a csv files having one column indicating the
     SMILEs of molecules. The molecules are filtered to only include the ones
-    with the atoms within the VALID_ELEMENTS constant.
+    with the atoms within the VALID_ELEMENTS constant or a custom list.
     The nodes and edges distributions of the data are also computed to later
     be used for the noise model.
     """
@@ -24,6 +43,7 @@ class GraphDatasetFromSMILEs(Dataset):
         smile_column: str = "smiles",
         split: str | None = None,
         split_column: str | None = None,
+        valid_elements: list[str] | None = None,
     ):
         """
         Args:
@@ -35,6 +55,8 @@ class GraphDatasetFromSMILEs(Dataset):
         dataset.
         - split_column: str | None = None, the name of the column where to search
         the split of the row.
+        - valid_elements: list[str] | None = None, list of valid atom symbols to use.
+        If None, automatically extracts atoms from the SMILES in the dataset.
 
         Returns:
         This describes here the __getitem__ method of this object. At index idx
@@ -57,6 +79,16 @@ class GraphDatasetFromSMILEs(Dataset):
         if split:
             data = data[data[split_column] == split]
 
+        # Extract SMILES list
+        smiles_list = data[smile_column].to_list()
+
+        # Determine valid elements to use
+        if valid_elements is None:
+            # Auto-detect atoms from the dataset
+            self.valid_elements = _extract_atoms_from_smiles(smiles_list)
+        else:
+            self.valid_elements = valid_elements
+
         # Get the valid smiles, and compute node / edges distributions -> for noise schedule
         smiles_nodes_edges = [
             (
@@ -64,7 +96,7 @@ class GraphDatasetFromSMILEs(Dataset):
                 graph[0].sum(0).unsqueeze(0),
                 graph[1].sum(0).sum(0).unsqueeze(0),
             )  # graph[0]=nodes, graph[1]=edges
-            for sm in data[smile_column].to_list()
+            for sm in smiles_list
             if (graph := self.smilesToGraph(sm))
         ]
         smiles, nodes, edges = zip(*smiles_nodes_edges)
@@ -80,8 +112,7 @@ class GraphDatasetFromSMILEs(Dataset):
         edge_distribution = edge_number / (edge_number.sum(0).item())
         self.edges_distribution = edge_distribution
 
-    @staticmethod
-    def smilesToGraph(smiles: str) -> tuple[torch.Tensor, torch.Tensor]:
+    def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Convert a smiles into its node and edges representation as tensors.
 
@@ -100,17 +131,17 @@ class GraphDatasetFromSMILEs(Dataset):
 
         # Initialize the nodes, edges matrices
         n = mol.GetNumAtoms()
-        nodes = torch.zeros((n, len(VALID_ELEMENTS)), dtype=int)  # (n, natoms)
+        nodes = torch.zeros((n, len(self.valid_elements)), dtype=int)  # (n, natoms)
         edges = torch.zeros((n, n, len(TYPE_EDGES)), dtype=int)  # (n, n, nbonds)
 
         for i, atom in enumerate(mol.GetAtoms()):
             # Return None for the molecules that are not in the ones of interest
             atom_symbol = atom.GetSymbol()
-            if atom_symbol not in VALID_ELEMENTS:
+            if atom_symbol not in self.valid_elements:
                 return None
 
             # One-hot encode the atom
-            nodes[i, VALID_ELEMENTS.index(atom_symbol)] = 1
+            nodes[i, self.valid_elements.index(atom_symbol)] = 1
 
             # Iter over the bonds of the atom
             for bond in atom.GetBonds():
@@ -135,8 +166,7 @@ class GraphDatasetFromSMILEs(Dataset):
 
         return nodes, edges
 
-    @staticmethod
-    def graphToSmiles(nodes: torch.Tensor, edges: torch.Tensor) -> str:
+    def graphToSmiles(self, nodes: torch.Tensor, edges: torch.Tensor) -> str:
         """
         Convert a graph representation (nodes and edges) back to a SMILES string.
 
@@ -154,7 +184,7 @@ class GraphDatasetFromSMILEs(Dataset):
         atom_indices = []
         for i in range(nodes.shape[0]):
             atom_idx = torch.argmax(nodes[i]).item()
-            atom_symbol = VALID_ELEMENTS[atom_idx]
+            atom_symbol = self.valid_elements[atom_idx]
             atom = Chem.Atom(atom_symbol)
             idx = mol.AddAtom(atom)
             atom_indices.append(idx)

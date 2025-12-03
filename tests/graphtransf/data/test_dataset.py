@@ -40,7 +40,7 @@ def test_dataset_distribution():
 
     # Select a part of the dataset
     df = df[df.fold == "train"].sample(100)
-    dataset = GraphDatasetFromSMILEs(df)
+    dataset = GraphDatasetFromSMILEs(df, valid_elements=VALID_ELEMENTS)
 
     # Check the distribution sizes
     node_distribution = dataset.nodes_distribution
@@ -55,15 +55,22 @@ def test_dataset_distribution():
 
 
 def test_graph_to_smiles():
+    # Open the MSG dataset
+    df = pd.read_csv(BASE_DIR / "data" / "MassSpecGym.csv")
+
+    # Select a part of the dataset
+    df = df[df.fold == "train"].sample(100)
+    dataset = GraphDatasetFromSMILEs(df, valid_elements=VALID_ELEMENTS)
+
     # List of smiles to test
     smiles_list = ["C", "CC", "CCO", "c1ccccc1", "C1CCCCC1", "C(=O)O"]
 
     for sm in smiles_list:
         # Convert to graph
-        nodes, edges = GraphDatasetFromSMILEs.smilesToGraph(sm)
+        nodes, edges = dataset.smilesToGraph(sm)
 
         # Convert back to smiles
-        reconstructed_smiles = GraphDatasetFromSMILEs.graphToSmiles(nodes, edges)
+        reconstructed_smiles = dataset.graphToSmiles(nodes, edges)
 
         # Check if the smiles are the same
         # We canonicalize both just in case
