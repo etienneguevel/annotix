@@ -6,7 +6,7 @@ from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.layers import (
     EmbeddingLaplacian,
     FfnNodeEdge,
-    MultiHeadEdgeNode,
+    MultiHeadEdgeNodeWithY,
     Unembedding,
     MLPNodeEdge,
 )
@@ -49,7 +49,7 @@ def test_model_creation():
 
     assert len(model.layers) == n_layers
     for layer in model.layers:
-        if type(attn := layer.attnEdgeNode) is MultiHeadEdgeNode:
+        if type(attn := layer.attnEdgeNode) is MultiHeadEdgeNodeWithY:
             assert (attn.d == d) & (attn.de == de) & (attn.n_heads == n_heads)
 
         elif type(ffn := layer.ffnEdgeNode) is FfnNodeEdge:

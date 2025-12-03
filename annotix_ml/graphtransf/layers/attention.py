@@ -7,7 +7,7 @@ from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.layers.ffn import FfnNodeEdge
 
 
-class MultiHeadEdgeNode(nn.Module):
+class MultiHeadEdgeNodeWithY(nn.Module):
     """
     Class implementing the attention classification of the Edge-Node model.
     """
@@ -239,6 +239,154 @@ class MultiHeadEdgeNode(nn.Module):
         return h, e, mask
 
 
+class MultiHeadEdgeNode(nn.Module):
+    """
+    Class implementing the attention classification of the Edge-Node model,
+    without global features y.
+    """
+
+    def __init__(
+        self,
+        d: int,
+        de: int,
+        n_heads: int,
+    ):
+        """
+        Args:
+        - d: int, hidden dimension of the model
+        - de: int, hidden dimension of the edges
+        - n_heads: int, number of heads
+        """
+        super().__init__()
+        if not (d % n_heads == 0):
+            raise ValueError(
+                f"Hidden dim : {d} is not a multiple of num heads : {n_heads}"
+            )
+        self.d = d
+        self.de = de
+        self.dk = d // n_heads
+        self.n_heads = n_heads
+
+        # Put the 3 matrices together to optimize computing
+        self.qkv = nn.Linear(d, 3 * d)
+
+        # Initialize the matrices for FiLM (only for edges)
+        self.FiLM_E = nn.Linear(de, 2 * d)
+
+        # Initialize the matrices for output projection
+        self.Out_N = nn.Linear(d, d)
+        self.norm_n = nn.LayerNorm(d)
+
+        self.Out_E = nn.Linear(d, de)
+        self.norm_e = nn.LayerNorm(de)
+
+    def forward_normal(
+        self,
+        h: torch.Tensor,
+        e: torch.Tensor,
+        mask: torch.Tensor,
+        attn_map_mode: bool = False,
+    ):
+        """
+        Function to get the attention map. attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
+        Args:
+        - h: torch.tensor, tensor of the nodes representation (bs, n, d)
+        - e: torch.tensor, tensor of the edges representation (bs, n, n, d)
+        - mask: torch.tensor, binary mask representing the number of nodes
+        present in each element of the batch.
+        """
+        # Compute the classic attention map
+        # h : (bs, n, d)
+        # e : (bs, n, n, de)
+        # mask : (bs, n)
+
+        bs, n, d = h.size()
+        bse, *_, de = e.size()
+        assert bs == bse, "Wrong batch sizes for nodes and edges."
+        assert d == self.d, "Wrong dimension for the nodes embeddings."
+        assert de == self.de, (
+            f"Wrong dimension for the edges embeddings, got {de} expected {self.de}."
+        )
+
+        # Calculate the Query, Key and Values vectors
+        qkv = self.qkv(h).unflatten(
+            -1, (3 * self.dk, self.n_heads)
+        )  # (bs, n, 3 * dk, nh)
+        qkv = mask_any_tensor(qkv, mask)  # Mask the qkv matrix
+
+        qkv = qkv.permute((0, 3, 1, 2))  # (bs, nh, n, 3 * dk)
+        Q, K, V = qkv.chunk(3, -1)  # (bs, nh, n, dk), (bs, nh, n, dk), (bs, nh, n, dk)
+
+        # Change the axis & add a dim for outer product
+        Q = Q.unsqueeze(3)  # (bs, nh, n, 1, dk)
+        K = K.unsqueeze(2)  # (bs, nh, 1, n, dk)
+
+        # Calculate the edges key vector
+        E = self.FiLM_E(e).unflatten(
+            -1, (2 * self.dk, self.n_heads)
+        )  # (bs, n, n, 2 * dk, nh)
+        E = mask_any_tensor(E, mask)  # (bs, n, n, 2 * dk, nh)
+        E1, E2 = E.permute((0, 4, 1, 2, 3)).chunk(
+            2, -1
+        )  # (bs, nh, n, n, dk), (bs, nh, n, n, dk)
+
+        # Do the outer product of Q and K
+        # attn[..., i, j, :] = Q[..., i, :] * K[..., j, :]
+        attn = Q * K  # (bs, nh, n, n, dk)
+        attn /= sqrt(self.dk)  # (bs, nh, n, n, dk)
+
+        # Add the edges to the attn product -> FiLM
+        attn = E1 + (E2 * attn) + attn  # (bs, nh, n, n, dk)
+
+        # Do the summed softmax of the edges
+        node_attn = attn.sum(-1)  # (bs, nh, n, n)
+
+        # Mask the attention scores before softmax
+        mask_attn = mask.unsqueeze(1).unsqueeze(2)  # (bs, 1, 1, n)
+        node_attn = node_attn.masked_fill(mask_attn == 0, -1e9)
+
+        node_attn = node_attn.softmax(-1)  # (bs, nh, n, n)
+
+        if attn_map_mode:
+            return attn, node_attn
+
+        # Add to the values
+        node_attn = node_attn @ V  # (bs, nh, n, dk)
+        node_attn = node_attn.transpose(1, 2).flatten(start_dim=2)  # (bs, n, d)
+
+        # Stack the edges attn
+        edge_attn = attn.permute((0, 2, 3, 1, 4)).flatten(start_dim=3)  # (bs, n, n, d)
+
+        # Do the output transformation
+        h = self.norm_n(h + self.Out_N(node_attn))  # (bs, n, d)
+        e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
+
+        # Ensure that the masking is still correct
+        h = mask_any_tensor(h, mask)  # (bs, n, d)
+        e = mask_any_tensor(e, mask)  # (bs, n, n, de)
+
+        return h, e
+
+    def forward(
+        self,
+        h: torch.Tensor,
+        e: torch.Tensor,
+        mask: torch.Tensor,
+    ):
+        if h.is_nested & e.is_nested:
+            raise NotImplementedError("Nested tensors not supported yet.")
+
+        elif h.is_nested | e.is_nested:
+            raise TypeError(
+                "Only one of the two tensors is nested -> both need to be the same type."
+            )
+
+        else:
+            h, e = self.forward_normal(h, e, mask)
+
+        return h, e, mask
+
+
 class AttentionLayer(nn.Module):
     """
     Class implementing the total attention layer of the model. It consists of a
@@ -256,7 +404,7 @@ class AttentionLayer(nn.Module):
         self.d = d
         self.de = de
         self.n_heads = n_heads
-        self.attnEdgeNode = MultiHeadEdgeNode(d, de, dy, n_heads)
+        self.attnEdgeNode = MultiHeadEdgeNodeWithY(d, de, dy, n_heads)
         self.ffn = FfnNodeEdge(d, de)
 
     def forward(

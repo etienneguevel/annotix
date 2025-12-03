@@ -1,5 +1,8 @@
 import torch
-from annotix_ml.graphtransf.layers.attention import MultiHeadEdgeNode, AttentionLayer
+from annotix_ml.graphtransf.layers.attention import (
+    MultiHeadEdgeNodeWithY,
+    AttentionLayer,
+)
 from annotix_ml.graphtransf.test_utils import create_random_inp
 
 
@@ -17,7 +20,7 @@ def test_attention_layer():
 
     # Create the layers
     nh = 8
-    attention_layer = MultiHeadEdgeNode(
+    attention_layer = MultiHeadEdgeNodeWithY(
         d=d,
         de=de,
         dy=dy,
@@ -47,7 +50,7 @@ def test_attention_map():
 
     # Create the layers
     nh = 8
-    attention_layer = MultiHeadEdgeNode(
+    attention_layer = MultiHeadEdgeNodeWithY(
         d=d,
         de=de,
         dy=dy,
@@ -109,7 +112,7 @@ def test_masked_attention():
     mask[1, -4:] = 0
 
     # Create the layer
-    attention_layer = MultiHeadEdgeNode(
+    attention_layer = MultiHeadEdgeNodeWithY(
         d=d,
         de=de,
         dy=dy,
