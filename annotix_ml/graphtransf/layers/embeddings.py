@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
+from annotix_ml.graphtransf.layers.mlp import MLP
 
 
 class EmbeddingLaplacian(nn.Module):
@@ -37,10 +38,10 @@ class EmbeddingLaplacian(nn.Module):
         self.global_features = global_features
         self.natoms = natoms
         self.nbonds = nbonds
-        self.EmbeddingNodes = nn.Linear(natoms, d, bias=False)
-        self.EmbeddingEdges = nn.Linear(nbonds, de, bias=False)
-        self.EmbeddingY = nn.Linear(global_features, dy, bias=False)
-        self.LaplacianProjection = nn.Linear(node_features, d)
+        self.EmbeddingNodes = MLP(natoms, 2 * d, d)
+        self.EmbeddingEdges = MLP(nbonds, 2 * de, de)
+        self.EmbeddingY = MLP(global_features, 2 * dy, dy)
+        self.LaplacianProjection = MLP(node_features, 2 * d, d)
 
     def forward(
         self,

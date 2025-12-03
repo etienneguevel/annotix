@@ -1,4 +1,8 @@
-from annotix_ml.graphtransf.layers.attention import MultiHeadEdgeNode, AttentionLayer  # Noqa
+from annotix_ml.graphtransf.layers.attention import (
+    MultiHeadEdgeNode,
+    MultiHeadEdgeNodeWithY,
+    AttentionLayer,
+)  # Noqa
 from annotix_ml.graphtransf.layers.embeddings import (
     EmbeddingLaplacian,
     Unembedding,  # Noqa
