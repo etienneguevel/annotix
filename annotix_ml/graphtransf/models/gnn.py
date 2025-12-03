@@ -66,12 +66,19 @@ class GnnNodeEdges(nn.Module):
         y: torch.Tensor,
         mask: torch.Tensor,
     ):
+        # h -> nodes (bs, n, d)
+        # e -> edges (bs, n, n, de)
+        # y -> global_features (bs, dy)
+
         for i, layer in enumerate(self.layers):
             if i == 0:
                 h, e, y, mask = layer(N, E, y, pos_emb, mask)
 
             else:
                 h, e, y, mask = layer(h, e, y, mask)
+
+            # Symmetrize the edges matrices
+            e = e + e.transpose(1, 2)
 
         return h, e, mask
 
