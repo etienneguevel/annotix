@@ -24,7 +24,7 @@ def create_random_start(bs, n, nbonds, natoms):
     E = F.one_hot(edges)  # (bs, n, n, nbonds)
 
     # Make a mask
-    mask = torch.randint(low=10, high=n, size=(bs,))
+    mask = torch.randint(low=1, high=n, size=(bs,))
     mask = torch.stack(
         [torch.cat([torch.ones(m), torch.zeros(n - m)]) for m in mask]
     )  # (bs, n)

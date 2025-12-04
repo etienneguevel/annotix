@@ -1,7 +1,7 @@
 import os
 from functools import partial
 from typing import Literal
-from uu import Error
+
 
 import torch
 import torch.nn as nn
@@ -141,12 +141,8 @@ class DigressMetaArch:
 
         model = cls.init_from_cfg(cfg, device, train_dataset)
 
-        try:
-            saved_model = torch.load(model_path, weights_only=True)
-            model.diffuser.load_state_dict(saved_model)
-
-        except Error as e:
-            raise e
+        saved_model = torch.load(model_path, weights_only=True)
+        model.diffuser.load_state_dict(saved_model)
 
         return model
 

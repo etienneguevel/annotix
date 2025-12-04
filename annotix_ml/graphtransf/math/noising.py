@@ -62,6 +62,7 @@ def sample_discrete_features(
     # Noise X
     # The masked rows should define probability distributions as well
     node_mask = node_mask == 1  # convert mask to bool type
+    probX = probX.clone()
     probX[~node_mask] = 1 / probX.shape[-1]
 
     # Flatten the probability tensor to sample with multinomial
@@ -76,6 +77,7 @@ def sample_discrete_features(
     inverse_edge_mask = ~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2))
     diag_mask = torch.eye(n).unsqueeze(0).expand(bs, -1, -1)  # (bs, n, n)
 
+    probE = probE.clone()
     probE[inverse_edge_mask] = 1 / probE.shape[-1]
     probE[diag_mask.bool()] = 1 / probE.shape[-1]
 
