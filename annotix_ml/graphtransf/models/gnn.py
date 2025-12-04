@@ -72,11 +72,15 @@ class GnnNodeEdges(nn.Module):
         bs = N.shape[0]
         n = N.shape[1]
 
-        diag_mask = torch.eye(n)  # (n, n)
-        diag_mask = ~diag_mask.type_as(E).bool()
-        diag_mask = (
-            diag_mask.unsqueeze(0).unsqueeze(-1).expand((bs, -1, -1, -1))
-        )  # (bs, n, n, 1)
+        # diag_mask = torch.eye(n)  # (n, n)
+        # diag_mask = ~diag_mask.type_as(E).bool()
+        # diag_mask = (
+        #     diag_mask.unsqueeze(0).unsqueeze(-1).expand((bs, -1, -1, -1))
+        # )  # (bs, n, n, 1)
+
+        # Capture inputs for residual connection
+        N_in = N
+        E_in = E
 
         for i, layer in enumerate(self.layers):
             if i == 0:
@@ -89,6 +93,15 @@ class GnnNodeEdges(nn.Module):
 
             # Symmetrize the edges matrices
             e = 1 / 2 * (e + e.transpose(1, 2))
+
+        # Add residual connections (skip connection from input to output)
+        # Note: This assumes the output dimensions match the input dimensions (natoms/nbonds)
+        # which is true for MLPNodeEdge and Unembedding layers.
+        h = h + N_in
+        e = e + E_in
+
+        # Re-symmetrize after adding residual
+        e = 1 / 2 * (e + e.transpose(1, 2))
 
         return h, e, mask
 
