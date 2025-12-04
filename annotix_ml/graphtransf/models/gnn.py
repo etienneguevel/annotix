@@ -69,16 +69,30 @@ class GnnNodeEdges(nn.Module):
         # h -> nodes (bs, n, d)
         # e -> edges (bs, n, n, de)
         # y -> global_features (bs, dy)
+        bs = N.shape[0]
+        n = N.shape[1]
+
+        diag_mask = torch.eye(n)  # (n, n)
+        diag_mask = ~diag_mask.type_as(E).bool()
+        diag_mask = (
+            diag_mask.unsqueeze(0).unsqueeze(-1).expand((bs, -1, -1, -1))
+        )  # (bs, n, n, 1)
 
         for i, layer in enumerate(self.layers):
             if i == 0:
                 h, e, y, mask = layer(N, E, y, pos_emb, mask)
+                # Symmetrize edges at the beginning
+                e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
 
             else:
                 h, e, y, mask = layer(h, e, y, mask)
 
-            # Symmetrize the edges matrices
-            e = e + e.transpose(1, 2)
+        # Symmetrize the edges at the end
+        e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, nbonds)
+
+        # Remove the edges on the diagonal, put it in no edges (dim 0)
+        e = e * diag_mask
+        e[diag_mask.squeeze(-1), 0] = 1
 
         return h, e, mask
 
