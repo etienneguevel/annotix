@@ -78,7 +78,7 @@ class GnnNodeEdges(nn.Module):
                 h, e, y, mask = layer(h, e, y, mask)
 
             # Symmetrize the edges matrices
-            e = e + e.transpose(1, 2)
+            e = 1 / 2 * (e + e.transpose(1, 2))
 
         return h, e, mask
 

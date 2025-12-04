@@ -148,7 +148,9 @@ def test_forward_backward_with_extra_features():
     )
 
     # Create random batch
-    N, E, mask = create_random_start(bs, n, len(TYPE_EDGES), len(VALID_ELEMENTS))
+    N, E, mask = create_random_start(
+        bs, n, len(TYPE_EDGES), len(train_dataset.valid_elements)
+    )
     batch = (N, E, mask)
 
     # Test forward_backward
@@ -198,7 +200,7 @@ def test_generate():
     # Verify output shapes
     assert N.shape[0] == batch_size
     assert E.shape[0] == batch_size
-    assert N.shape[-1] == len(VALID_ELEMENTS)
+    assert N.shape[-1] == len(train_dataset.valid_elements)
     assert E.shape[-1] == len(TYPE_EDGES)
 
     # Verify outputs are one-hot encoded

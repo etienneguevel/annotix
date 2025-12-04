@@ -28,7 +28,7 @@ def test_attention_layer():
     )
 
     # Test the forward method
-    attn, edge_attn, mask_out = attention_layer.forward(N, E, y, mask)
+    attn, edge_attn, _, mask_out = attention_layer.forward(N, E, y, mask)
     assert attn.size() == N.size(), f"The size of the attn vector is {attn.size()}"
     assert edge_attn.size() == E.size(), (
         f"The size of the edge attn vector is {edge_attn.size()}"
@@ -58,7 +58,7 @@ def test_attention_map():
     )
 
     # Get the 2 attention
-    _, attn = attention_layer.forward_normal(N, E, y, mask, attn_map_mode=True)
+    _, attn, *_ = attention_layer.compute_attn(N, E, y, mask, attn_map_mode=True)
 
     assert (attn.sum(-1).round().int() == 1).all(), "attn is not normalized"
 
@@ -120,7 +120,7 @@ def test_masked_attention():
     )
 
     # Get the attention map
-    attn, node_attn = attention_layer.forward_normal(N, E, y, mask, attn_map_mode=True)
+    attn, node_attn = attention_layer.compute_attn(N, E, y, mask, attn_map_mode=True)
 
     # Check that padded nodes receive 0 attention
     # node_attn shape: (bs, nh, n, n)

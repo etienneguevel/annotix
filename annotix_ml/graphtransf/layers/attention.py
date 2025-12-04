@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.layers.ffn import FfnNodeEdge
+from annotix_ml.graphtransf.layers.mlp import MLP
 
 
 class MultiHeadEdgeNodeWithY(nn.Module):
@@ -49,6 +50,11 @@ class MultiHeadEdgeNodeWithY(nn.Module):
 
         self.Out_E = nn.Linear(d, de)
         self.norm_e = nn.LayerNorm(de)
+
+        # Make the matrices for y updating
+        self.Update_y = nn.Linear(4 * d + 4 * de + dy, dy)
+        self.Out_y = MLP(dy, dy, dy)
+        self.norm_y = nn.LayerNorm(dy)
 
     def forward_nested(
         self,
@@ -110,7 +116,7 @@ class MultiHeadEdgeNodeWithY(nn.Module):
 
         return None
 
-    def forward_normal(
+    def compute_attn(
         self,
         h: torch.Tensor,
         e: torch.Tensor,
@@ -205,17 +211,33 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         edge_attn = yE1 + yE2 * edge_attn + edge_attn  # (bs, n, n, d)
         edge_attn = mask_any_tensor(edge_attn, mask)
 
-        # Do the output transformation
-        h = self.norm_n(h + self.Out_N(node_attn))  # (bs, n, d)
-        e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
+        return node_attn, edge_attn
 
-        # Ensure that the masking is still correct
-        h = mask_any_tensor(h, mask)  # (bs, n, d)
-        e = mask_any_tensor(e, mask)  # (bs, n, n, de)
+    def update_y(
+        self,
+        h: torch.Tensor,
+        e: torch.Tensor,
+        y: torch.Tensor,
+    ) -> torch.Tensor:
+        # Compute the features of h
+        h_feats = torch.hstack(
+            (h.max(1).values, h.min(1).values, h.mean(1), h.std(1))
+        )  # (bs, 4 * d)
 
-        # TODO : modify the update of y
+        # Compute the features of e
+        e_feats = torch.hstack(
+            (
+                e.max(2).values.max(1).values,
+                e.min(2).values.min(1).values,
+                e.mean((1, 2)),
+                e.std((1, 2)),
+            )
+        )  # (bs, 4 * de)
 
-        return h, e
+        # Compute new y
+        new_y = self.Update_y(torch.hstack((h_feats, e_feats, y)))  # (bs, dy)
+
+        return new_y
 
     def forward(
         self,
@@ -234,9 +256,20 @@ class MultiHeadEdgeNodeWithY(nn.Module):
             )
 
         else:
-            h, e = self.forward_normal(h, e, y, mask)
+            # Compute the attention
+            node_attn, edge_attn = self.compute_attn(h, e, y, mask)
+            new_y = self.update_y(h, e, y)  # (bs, dy)
 
-        return h, e, mask
+            # Do the output transformation
+            h = self.norm_n(h + self.Out_N(node_attn))  # (bs, n, d)
+            e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
+            y = self.norm_y(y + self.Out_y(new_y))  # (bs, dy)
+
+            # Ensure that the masking is still correct
+            h = mask_any_tensor(h, mask)  # (bs, n, d)
+            e = mask_any_tensor(e, mask)  # (bs, n, n, de)
+
+        return h, e, y, mask
 
 
 class MultiHeadEdgeNode(nn.Module):
@@ -406,6 +439,8 @@ class AttentionLayer(nn.Module):
         self.n_heads = n_heads
         self.attnEdgeNode = MultiHeadEdgeNodeWithY(d, de, dy, n_heads)
         self.ffn = FfnNodeEdge(d, de)
+        self.mlpy = MLP(dy, 2 * dy, dy)
+        self.norm_y = nn.LayerNorm(dy)
 
     def forward(
         self,
@@ -415,9 +450,12 @@ class AttentionLayer(nn.Module):
         mask: torch.Tensor,
     ):
         # Compute the attention, make the residual connection
-        h_attn, e_attn, _ = self.attnEdgeNode(h, e, y, mask)
+        h_attn, e_attn, y_attn, mask = self.attnEdgeNode(h, e, y, mask)
+        # print(y_attn.shape)
+        # print(self.mlpy)
 
         # Compute the output of the feedforward network, make residual connections
         h, e, _ = self.ffn(h_attn, e_attn, mask)
+        y = self.norm_y(y_attn + self.mlpy(y_attn))
 
         return h, e, y, mask
