@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
+from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.data.dataset import GraphDatasetFromSMILEs
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges
@@ -67,7 +67,7 @@ class DigressMetaArch:
         self.extra_features = extra_features_functions
 
         # Instanciate the diffusion model
-        self.natoms = len(VALID_ELEMENTS)
+        self.natoms = len(train_dataset.valid_elements)
         self.nbonds = len(TYPE_EDGES)
 
         self.diffuser = GnnNodeEdges(
@@ -80,11 +80,12 @@ class DigressMetaArch:
             n_layers=n_layers,
             natoms=self.natoms,
             nbonds=self.nbonds,
-        )
+            last_layer=last_layer,
+        ).to(device)
 
         # Instanciate the noising model
         if noise_strategy == "uniform":
-            nodes_distribution = torch.ones(len(VALID_ELEMENTS)) / len(VALID_ELEMENTS)
+            nodes_distribution = torch.ones(self.natoms) / self.natoms
             edges_distribution = torch.ones(len(TYPE_EDGES)) / len(TYPE_EDGES)
 
         elif noise_strategy == "distribution":
@@ -99,6 +100,7 @@ class DigressMetaArch:
             nodes_distribution=nodes_distribution,
             edges_distribution=edges_distribution,
         )
+        self.noiser.move_to(device)
 
         # Make the loss
         self.loss = nn.CrossEntropyLoss()

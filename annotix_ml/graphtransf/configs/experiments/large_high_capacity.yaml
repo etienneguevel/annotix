@@ -7,3 +7,10 @@ model:
 
 train:
   save_path: logs/qm9_large
+  batch_size: 2048
+  num_train_steps: 1000
+  save_steps: 100
+
+valid:
+  batch_size: 2048
+  num_eval_steps: 100

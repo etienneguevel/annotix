@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from argparse import ArgumentParser
 from collections import defaultdict
 
@@ -129,7 +130,10 @@ def train(cfg):
 
     # Prepare the save path
     save_path = cfg.train.save_path
-    os.makedirs(save_path, exist_ok=True)
+    if os.path.isdir(save_path):
+        shutil.rmtree(save_path)
+
+    os.makedirs(save_path)
 
     # Make the losses and the optimizer
     optimizer = torch.optim.AdamW(
