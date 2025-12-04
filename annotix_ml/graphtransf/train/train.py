@@ -124,6 +124,39 @@ def train(cfg):
     # Define the models
     digress = DigressMetaArch.init_from_cfg(cfg, device, train_dataset)
 
+    # Log model dimensions
+    print("\n" + "=" * 50)
+    print("MODEL DIMENSIONS")
+    print("=" * 50)
+    print(f"Hidden dimension (d): {cfg.model.d}")
+    print(f"Edge dimension (de): {cfg.model.de}")
+    print(f"Global features dimension (dy): {cfg.model.dy}")
+    print(f"Number of attention heads: {cfg.model.n_heads}")
+    print(f"Number of layers: {cfg.model.n_layers}")
+    print(f"Number of atom types (natoms): {digress.natoms}")
+    print(f"Number of bond types (nbonds): {digress.nbonds}")
+    if hasattr(cfg.model, "extra_features") and cfg.model.extra_features:
+        print(f"Extra features: {cfg.model.extra_features}")
+    print("=" * 50 + "\n")
+
+    # Print the diffuser model architecture
+    print("=" * 50)
+    print("DIFFUSER MODEL ARCHITECTURE")
+    print("=" * 50)
+    print(digress.diffuser)
+    print("=" * 50 + "\n")
+
+    # Log dataset information
+    print("=" * 50)
+    print("DATASET INFORMATION")
+    print("=" * 50)
+    print(f"Training samples: {len(train_dataset)}")
+    print(f"Validation samples: {len(valid_dataset)}")
+    print(f"Valid elements: {train_dataset.valid_elements}")
+    print(f"Node distribution: {train_dataset.nodes_distribution.tolist()}")
+    print(f"Edge distribution: {train_dataset.edges_distribution.tolist()}")
+    print("=" * 50 + "\n")
+
     # Define the metrics
     metrics = defaultdict(list)
     train_metrics = defaultdict(list)
