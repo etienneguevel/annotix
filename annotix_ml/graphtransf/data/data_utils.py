@@ -1,6 +1,6 @@
 import torch
 import rdkit.Chem as Chem
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
+from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 
 
 def mask_any_tensor(
@@ -70,7 +70,10 @@ def mask_any_tensor(
 
 
 def batch_graph_to_smiles(
-    nodes: torch.Tensor, edges: torch.Tensor, mask: torch.Tensor
+    nodes: torch.Tensor,
+    edges: torch.Tensor,
+    mask: torch.Tensor,
+    valid_elements: list[str],
 ) -> list[str | None]:
     """
     Convert a batch of graphs into a list of SMILES strings.
@@ -79,6 +82,7 @@ def batch_graph_to_smiles(
     - nodes: torch.Tensor, one-hot encoded nodes (bs, n, natoms)
     - edges: torch.Tensor, one-hot encoded edges (bs, n, n, nbonds)
     - mask: torch.Tensor, binary mask indicating valid nodes (bs, n)
+    - valid_elements: list[str], list of valid element symbols
 
     Returns:
     - smiles_list: list[str | None], list of reconstructed SMILES strings. None if invalid.
@@ -104,7 +108,7 @@ def batch_graph_to_smiles(
         atom_indices = []
         for j in range(n_atoms):
             atom_idx = torch.argmax(current_nodes[j]).item()
-            atom_symbol = VALID_ELEMENTS[atom_idx]
+            atom_symbol = valid_elements[atom_idx]
             atom = Chem.Atom(atom_symbol)
             idx = mol.AddAtom(atom)
             atom_indices.append(idx)

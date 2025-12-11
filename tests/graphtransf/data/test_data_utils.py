@@ -41,7 +41,7 @@ def test_batch_graph_to_smiles():
     mask[1, 0] = 1
 
     # Run function
-    smiles_list = batch_graph_to_smiles(nodes, edges, mask)
+    smiles_list = batch_graph_to_smiles(nodes, edges, mask, VALID_ELEMENTS)
     assert len(smiles_list) == 2
 
     # Expected SMILES might vary slightly depending on canonicalization, but C-C is CC and C is C
