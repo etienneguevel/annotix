@@ -231,14 +231,16 @@ class DigressMetaArch:
         return total_loss, accuracy
 
     @torch.no_grad()
-    def generate(self, batch_size, max_nodes, min_nodes=1):
+    def generate(self, batch_size: int, max_nodes: int, min_nodes: int = 1):
         # sample random n
         n = torch.randint(min_nodes, max_nodes, (batch_size,))
-        max_nodes = n.max().item()
 
         # Make the mask
         mask = torch.stack(
-            [torch.cat([torch.ones(m), torch.zeros(max_nodes - m)]) for m in n]
+            [
+                torch.cat([torch.ones(int(m)), torch.zeros(max_nodes - int(m))])
+                for m in n
+            ]
         )  # (bs, max_nodes)
         mask = mask.to(self.device)
 
@@ -259,6 +261,7 @@ class DigressMetaArch:
         )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         # Denoise the graph
+        self.diffuser.eval()
         for t in reversed(range(0, self.noiser.T)):
             # Convert to float for compatibility with noising model
             N = N.float().to(self.device)
