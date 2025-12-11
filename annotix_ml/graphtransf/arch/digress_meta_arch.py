@@ -6,6 +6,7 @@ from typing import Literal
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
+from tqdm import tqdm
 
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -231,7 +232,7 @@ class DigressMetaArch:
         return total_loss, accuracy
 
     @torch.no_grad()
-    def generate(self, batch_size, max_nodes, min_nodes=1):
+    def generate(self, batch_size, max_nodes, min_nodes=1, progress_bar=False):
         # sample random n
         n = torch.randint(min_nodes, max_nodes, (batch_size,))
         max_nodes = n.max().item()
@@ -259,7 +260,14 @@ class DigressMetaArch:
         )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         # Denoise the graph
-        for t in reversed(range(0, self.noiser.T)):
+        if progress_bar:
+            t_range = tqdm(
+                reversed(range(0, self.noiser.T)), total=self.noiser.T, desc="Denoising"
+            )
+        else:
+            t_range = reversed(range(0, self.noiser.T))
+
+        for t in t_range:
             # Convert to float for compatibility with noising model
             N = N.float().to(self.device)
             E = E.float().to(self.device)
