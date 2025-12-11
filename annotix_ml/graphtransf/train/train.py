@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 
 import torch
+import wandb
 from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
@@ -79,6 +80,13 @@ def do_eval(model, eval_loader, device):
 
 
 def train(cfg):
+    # Initialize wandb
+    wandb.init(
+        project=cfg.run.project,
+        name=cfg.run.name,
+        config=OmegaConf.to_container(cfg, resolve=True),
+    )
+
     # Select the device for the training
     device = (
         torch.device("cuda")
