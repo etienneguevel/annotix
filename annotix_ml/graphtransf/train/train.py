@@ -14,6 +14,7 @@ from tqdm import tqdm
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.datacollator import collateGraph
 from annotix_ml.graphtransf.data.data_utils import batch_graph_to_smiles
+from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import compute_metrics
@@ -26,7 +27,7 @@ def get_args():
     return parser.parse_args()
 
 
-def do_eval(model, eval_loader, device):
+def do_eval(model: DigressMetaArch, eval_loader: DataLoader, device: torch.device):
     DisableLog("rdApp.*")
     metrics = defaultdict(list)
     for batch in tqdm(eval_loader, desc="evaluation"):
@@ -48,8 +49,8 @@ def do_eval(model, eval_loader, device):
         )  # (bs, n, n, n_edges)
 
         # Convert the graph to smiles
-        true_smiles = batch_graph_to_smiles(N, E, mask)  # (bs,)
-        pred_smiles = batch_graph_to_smiles(N_, E_, mask)  # (bs,)
+        true_smiles = batch_graph_to_smiles(N, E, mask, model.valid_elements)  # (bs,)
+        pred_smiles = batch_graph_to_smiles(N_, E_, mask, model.valid_elements)  # (bs,)
 
         # Compute the metrics
         batch_metrics = compute_metrics(
@@ -61,6 +62,39 @@ def do_eval(model, eval_loader, device):
             E,
             mask,
         )
+
+        # Compute accuracy per node type
+        target_nodes = N.argmax(-1)
+        pred_nodes = pN.argmax(-1)
+        valid_mask = mask.bool()
+
+        target_nodes_flat = target_nodes[valid_mask]
+        pred_nodes_flat = pred_nodes[valid_mask]
+
+        for i, atom_type in enumerate(model.valid_elements):
+            atom_mask = target_nodes_flat == i
+            if atom_mask.sum() > 0:
+                acc = (pred_nodes_flat[atom_mask] == i).float().mean().item()
+                batch_metrics[f"accuracy_node_{atom_type}"] = [acc]
+
+        # Compute accuracy per edge type
+        target_edges = E.argmax(-1)
+        pred_edges = pE.argmax(-1)
+        edge_mask = mask.unsqueeze(2) * mask.unsqueeze(1)
+        edge_mask = edge_mask.bool()
+
+        target_edges_flat = target_edges[edge_mask]
+        pred_edges_flat = pred_edges[edge_mask]
+
+        if len(target_edges_flat) > 0:
+            acc_edge = (pred_edges_flat == target_edges_flat).float().mean().item()
+            batch_metrics["accuracy_edge_global"] = [acc_edge]
+
+        for i, edge_type in enumerate(TYPE_EDGES):
+            edge_type_mask = target_edges_flat == i
+            if edge_type_mask.sum() > 0:
+                acc = (pred_edges_flat[edge_type_mask] == i).float().mean().item()
+                batch_metrics[f"accuracy_edge_{str(edge_type)}"] = [acc]
 
         # Accumulate metrics
         for k, v in batch_metrics.items():
@@ -74,6 +108,25 @@ def do_eval(model, eval_loader, device):
         else:
             final_metrics[k] = 0.0
 
+    # Compute the validity of the generated graphs
+    # We use the max number of nodes in the validation set
+    max_n = 0
+    for batch in eval_loader:
+        N, _, _ = batch
+        max_n = max(max_n, N.shape[1])
+
+    # Generate the graphs
+    print("Generating graphs for validity computation...")
+    gen_N, gen_E, gen_mask = model.generate(
+        batch_size=eval_loader.batch_size, max_nodes=max_n, progress_bar=True
+    )
+
+    # Convert to smiles
+    gen_smiles = batch_graph_to_smiles(gen_N, gen_E, gen_mask, model.valid_elements)
+
+    # Compute the validity
+    validity = sum([1 for s in gen_smiles if s is not None]) / len(gen_smiles)
+    final_metrics["gen_validity"] = validity
     print(f"Evaluation Metrics: {final_metrics}")
 
     return final_metrics
@@ -131,6 +184,7 @@ def train(cfg):
 
     # Define the models
     digress = DigressMetaArch.init_from_cfg(cfg, device, train_dataset)
+    digress.valid_elements = train_dataset.valid_elements
 
     # Log model dimensions
     print("\n" + "=" * 50)

@@ -26,7 +26,12 @@ class NoisingModel(nn.Module):
     get_Q_t(t: int) -> tuple[torch.Tensor, torch.Tensor]
     returns the nodes and edges matrices of diffusion from step t-1 to t
 
-    get_Q_bar_t(t: int) -> tuple[torch.Tensor, torch.Tensor]
+    get_Q_bar_t(t: i
+    )
+
+    # Load model
+    print(f"Loading model from {args.model_checkpoint}...")
+    model = DigressMetaArch.load_pretrnt) -> tuple[torch.Tensor, torch.Tensor]
     returns the nodes and edges matrices of diffusion from step 0 to t
     """
 
@@ -55,20 +60,25 @@ class NoisingModel(nn.Module):
         self.alphas_bar = alphas_bar
 
     def get_Q_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
-        alpha = self.alphas[t]
+        alpha = self.alphas[int(t)]
         device = self.alphas.device
         Q_nodes = alpha * torch.eye(len(self.n_m), device=device) + (
             1 - alpha
         ) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)  # (natoms, natoms)
 
-        Q_edges = alpha * torch.eye(len(self.e_m), device=device) + (
+        Q_edges = al
+    )
+
+    # Load model
+    print(f"Loading model from {args.model_checkpoint}...")
+    model = DigressMetaArch.load_pretrpha * torch.eye(len(self.e_m), device=device) + (
             1 - alpha
         ) * self.e_m.unsqueeze(-1).expand(-1, self.nbonds)  # (nbonds, nbonds)
 
         return Q_nodes.T, Q_edges.T
 
     def get_Q_bar_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
-        alpha_bar = self.alphas_bar[t]
+        alpha_bar = self.alphas_bar[int(t)]
         device = self.alphas_bar.device
         Q_bar_nodes = alpha_bar * torch.eye(len(self.n_m), device=device) + (
             1 - alpha_bar
