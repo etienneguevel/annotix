@@ -1,3 +1,7 @@
+run:
+  project: annotix_ml
+  name: digress_base
+
 dataset:
   data_path: data/qm9.csv
   smile_column: smiles

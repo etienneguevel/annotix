@@ -183,7 +183,13 @@ def train(cfg):
     )
 
     # Define the models
-    digress = DigressMetaArch.init_from_cfg(cfg, device, train_dataset)
+    digress = DigressMetaArch.init_from_cfg(
+        cfg,
+        device,
+        train_dataset.valid_elements,
+        train_dataset.nodes_distribution,
+        train_dataset.edges_distribution,
+    )
     digress.valid_elements = train_dataset.valid_elements
 
     # Log model dimensions
