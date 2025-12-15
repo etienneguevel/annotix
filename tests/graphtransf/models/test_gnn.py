@@ -88,7 +88,6 @@ def test_model_forward():
     bs = 64
     n = 54
     N, E, mask = create_random_start(bs, n, nbonds, natoms)
-    y = torch.randn((bs, k + 4))
 
     # get the extra features
     extra_features_functions = []
@@ -115,8 +114,8 @@ def test_model_forward():
         de=de,
         dy=dy,
         n_heads=n_heads,
-        node_features=k + 3,
-        global_features=k + 4,
+        node_features=k + 4,
+        global_features=k + 5,
         n_layers=n_layers,
         natoms=natoms,
         nbonds=nbonds,

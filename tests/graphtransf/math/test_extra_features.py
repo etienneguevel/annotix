@@ -18,7 +18,18 @@ def test_laplacian_emb():
     for edges, m in zip(E, mask):
         n_mol = int(m.sum(-1))
         adj = edges[:n_mol, :n_mol, :]
-        eigvectors, eigvals = laplacian_embedding(adj, k)
+        node_feat, global_feat = laplacian_embedding(adj, k)
+        # node_feat: (n_mol, k+1), global_feat: (k+1,)
+
+        assert global_feat.shape == (k + 1,), (
+            f"expected {(k + 1,)} got {global_feat.shape}"
+        )
+        assert node_feat.shape == (n_mol, k + 1), (
+            f"expected {(n_mol, k + 1)} got {node_feat.shape}"
+        )
+
+        eigvals = global_feat[..., 1:]
+        eigvectors = node_feat[..., 1:]
 
         assert eigvals.shape == (k,), f"expected {(k,)} got {eigvals.shape}"
         assert eigvectors.shape == (n_mol, k), (
@@ -27,7 +38,17 @@ def test_laplacian_emb():
 
     # Test single graph with mask
     for edges, m in zip(E, mask):
-        eigvectors, eigvals = laplacian_embedding(edges, k, mask=m)
+        node_feat, global_feat = laplacian_embedding(edges, k, mask=m)
+
+        assert global_feat.shape == (k + 1,), (
+            f"expected {(k + 1,)} got {global_feat.shape}"
+        )
+        assert node_feat.shape == (n, k + 1), (
+            f"expected {(n, k + 1)} got {node_feat.shape}"
+        )
+
+        eigvals = global_feat[..., 1:]
+        eigvectors = node_feat[..., 1:]
 
         assert eigvals.shape == (k,), f"expected {(k,)} got {eigvals.shape}"
         assert eigvectors.shape == (n, k), f"expected {(n, k)} got {eigvectors.shape}"
@@ -40,21 +61,21 @@ def test_laplacian_emb():
             ), "Masked nodes should have zero eigenvectors"
 
     # Test batched graphs without mask
-    eigvecs_batch, eigvals_batch = laplacian_embedding(E, k)
-    assert eigvals_batch.shape == (bs, k), (
-        f"expected {(bs, k)} got {eigvals_batch.shape}"
+    node_feat_batch, global_feat_batch = laplacian_embedding(E, k)
+    assert global_feat_batch.shape == (bs, k + 1), (
+        f"expected {(bs, k + 1)} got {global_feat_batch.shape}"
     )
-    assert eigvecs_batch.shape == (bs, n, k), (
-        f"expected {(bs, n, k)} got {eigvecs_batch.shape}"
+    assert node_feat_batch.shape == (bs, n, k + 1), (
+        f"expected {(bs, n, k + 1)} got {node_feat_batch.shape}"
     )
 
     # Test batched graphs with mask
-    eigvecs_batch_m, eigvals_batch_m = laplacian_embedding(E, k, mask=mask)
-    assert eigvals_batch_m.shape == (bs, k), (
-        f"expected {(bs, k)} got {eigvals_batch_m.shape}"
+    node_feat_batch_m, global_feat_batch_m = laplacian_embedding(E, k, mask=mask)
+    assert global_feat_batch_m.shape == (bs, k + 1), (
+        f"expected {(bs, k + 1)} got {global_feat_batch_m.shape}"
     )
-    assert eigvecs_batch_m.shape == (bs, n, k), (
-        f"expected {(bs, n, k)} got {eigvecs_batch_m.shape}"
+    assert node_feat_batch_m.shape == (bs, n, k + 1), (
+        f"expected {(bs, n, k + 1)} got {node_feat_batch_m.shape}"
     )
 
 
@@ -77,7 +98,10 @@ def test_laplacian_emb_known_matrix():
     edges[:, :, 1] = A
 
     # Request the single non-zero eigenvector (single graph without mask)
-    eigvecs, eigvals = laplacian_embedding(edges, k=1)
+    node_feat, global_feat = laplacian_embedding(edges, k=1)
+
+    # Extract eigenvectors
+    eigvecs = node_feat[:, 1:]
 
     assert eigvecs.shape == (n, 1)
 
@@ -96,7 +120,8 @@ def test_laplacian_emb_known_matrix():
 
     # Test with batched version (no mask)
     edges_batch = edges.unsqueeze(0)
-    eigvecs_b, eigvals_b = laplacian_embedding(edges_batch, k=1)
+    node_feat_b, global_feat_b = laplacian_embedding(edges_batch, k=1)
+    eigvecs_b = node_feat_b[:, :, 1:]
 
     assert eigvecs_b.shape == (1, n, 1)
     assert torch.allclose(eigvecs, eigvecs_b[0], atol=1e-5), (
@@ -105,14 +130,18 @@ def test_laplacian_emb_known_matrix():
 
     # Test with mask (all nodes active)
     mask_full = torch.ones(n, dtype=torch.float32)
-    eigvecs_m, eigvals_m = laplacian_embedding(edges, k=1, mask=mask_full)
+    node_feat_m, global_feat_m = laplacian_embedding(edges, k=1, mask=mask_full)
+    eigvecs_m = node_feat_m[:, 1:]
+
     assert torch.allclose(eigvecs, eigvecs_m, atol=1e-5), (
         "Results with full mask should match no mask"
     )
 
     # Test with partial mask (only first node active)
     mask_partial = torch.tensor([1.0, 0.0], dtype=torch.float32)
-    eigvecs_p, eigvals_p = laplacian_embedding(edges, k=1, mask=mask_partial)
+    node_feat_p, global_feat_p = laplacian_embedding(edges, k=1, mask=mask_partial)
+    eigvecs_p = node_feat_p[:, 1:]
+
     assert eigvecs_p[1, 0].item() == 0.0, "Masked node should have zero eigenvector"
 
 

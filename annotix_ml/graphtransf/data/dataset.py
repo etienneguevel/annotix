@@ -122,6 +122,7 @@ class GraphDatasetFromSMILEs(Dataset):
         Returns:
         The nodes and edges tensor resp. of sizes (n, natoms) and (n, n, nbonds).
         """
+
         # Make a molecule
         mol = Chem.MolFromSmiles(smiles)
 

@@ -66,12 +66,7 @@ class NoisingModel(nn.Module):
             1 - alpha
         ) * self.n_m.unsqueeze(-1).expand(-1, self.natoms)  # (natoms, natoms)
 
-        Q_edges = al
-    )
-
-    # Load model
-    print(f"Loading model from {args.model_checkpoint}...")
-    model = DigressMetaArch.load_pretrpha * torch.eye(len(self.e_m), device=device) + (
+        Q_edges = alpha * torch.eye(len(self.e_m), device=device) + (
             1 - alpha
         ) * self.e_m.unsqueeze(-1).expand(-1, self.nbonds)  # (nbonds, nbonds)
 
@@ -161,7 +156,7 @@ class NoisingModel(nn.Module):
         - node_mask: torch.Tensor, the mask vector.
 
         Returns:
-        Noised nodes and edges, as well as the unmodified mask.
+        Noised nodes and edges, as well as the t used for noising.
         """
         # N (bs, n, natoms)
         # E (bs, n, n, nbonds)
@@ -169,8 +164,9 @@ class NoisingModel(nn.Module):
         bs = N.shape[0]
         device = N.device
         sampled_t = torch.randint(1, self.T, (bs,), device=device)
+        noised_N, noised_E = self.compute_noised_graph(N, E, sampled_t, node_mask)
 
-        return self.compute_noised_graph(N, E, sampled_t, node_mask)
+        return noised_N, noised_E, sampled_t.unsqueeze(1)
 
     def compute_noised_graph(
         self,
@@ -178,7 +174,7 @@ class NoisingModel(nn.Module):
         E: torch.Tensor,
         t: int | torch.Tensor,
         node_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the noised graph at a given step t.
 
@@ -188,11 +184,7 @@ class NoisingModel(nn.Module):
         - node_mask: torch.Tensor | None, the mask vector.
         - t: int | torch.Tensor, the time step(s) to noise to.
 
-        Returns:self.Q_bar_nodes = self.Q_bar_nodes.to(device)
-        self.Q_bar_edges = self.Q_bar_edges.to(device)
-        self.Q_bar_nodes_bar = self.Q_bar_nodes_bar.to(device)
-        self.Q_bar_edges_bar = self.Q_bar_edges_bar.to(device)
-        Noised nodes and edges, as well as the unmodified mask.
+        Returns: Noised nodes and edges.
         """
         # Handle unbatched input
         is_unbatched = N.dim() == 2
@@ -220,7 +212,7 @@ class NoisingModel(nn.Module):
                 t_tensor = t_tensor.unsqueeze(0)
 
         # Make the matrices & stack them
-        Q_matrices = [self.get_Q_bar_t(t_val.item()) for t_val in t_tensor]
+        Q_matrices = [self.get_Q_bar_t(int(t_val.item())) for t_val in t_tensor]
         Q_bar_nodes, Q_bar_edges = zip(
             *Q_matrices
         )  # (natoms, natoms), (nbonds, nbonds)
@@ -242,9 +234,9 @@ class NoisingModel(nn.Module):
         E = E.to(type_tensor)
 
         if is_unbatched:
-            return N.squeeze(0), E.squeeze(0), node_mask.squeeze(0)
+            return N.squeeze(0), E.squeeze(0)
 
-        return N, E, node_mask
+        return N, E
 
     def move_to(self, device: torch.device) -> None:
         """

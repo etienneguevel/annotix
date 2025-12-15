@@ -1,10 +1,11 @@
 import torch
 
+from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, DICT_EDGES
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 
 
 def laplacian_embedding(
-    edges: torch.Tensor, k: int, mask: torch.Tensor = None
+    edges: torch.Tensor, k: int, mask: torch.Tensor | None = None
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Fonction to compute the eigenvectors of the normalized Laplacian matrix of
@@ -98,10 +99,32 @@ def laplacian_embedding(
     eigvals_ = torch.stack(eigvals_list, dim=0)  # (bs, k)
     eigvectors_ = torch.stack(eigvectors_list, dim=0)  # (bs, n, k)
 
-    if not is_batched:
-        return eigvectors_[0], eigvals_[0]
+    node_features = torch.cat(
+        (
+            not_in_ev1,
+            eigvectors_,
+        ),
+        dim=-1,
+    )
 
-    return eigvectors_.to(device), eigvals_.to(device)
+    global_features = torch.cat(
+        (
+            n_connected_components.unsqueeze(-1),
+            eigvals_,
+        ),
+        dim=-1,
+    )
+
+    if not is_batched:
+        return (
+            node_features[0],
+            global_features[0],
+        )
+
+    return (
+        node_features.to(device),
+        global_features.to(device),
+    )
 
 
 def batch_trace(X):
@@ -294,3 +317,60 @@ def node_cycle(edges: torch.Tensor, mask: torch.Tensor = None):
         return kcyclesx[0], kcyclesy[0]
 
     return kcyclesx, kcyclesy  # (bs, n, 3), (bs, 4)
+
+
+def valency(edges: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    # edges: bs, n, n, nedges
+    # mask: bs, n
+
+    bond_valence = torch.tensor(
+        list(DICT_EDGES.values()),
+        device=edges.device,
+        dtype=edges.dtype,
+    )  # nedges
+
+    valence = (edges @ bond_valence).sum(-1).unsqueeze(-1)  # bs, n, 1
+    valence = mask_any_tensor(valence, mask)
+
+    return valence
+
+
+def charge(
+    nodes: torch.Tensor,
+    edges: torch.Tensor,
+    mask: torch.Tensor,
+    valid_elements: list[str],
+) -> torch.Tensor:
+    # nodes: bs, n, natoms
+    # edges: bs, n, n, nedges
+    # mask: bs, n
+    cov_mat = torch.tensor(
+        [getattr(VALID_ELEMENTS.get(at), "covalence") for at in valid_elements],
+        device=nodes.device,
+        dtype=nodes.dtype,
+    )  # natoms
+
+    valence_th = (nodes @ cov_mat).unsqueeze(-1)  # bs, n, 1
+
+    # Compute the actual covalence
+    valence = valency(edges, mask)  # bs, n, 1
+
+    # Compute the diff
+    ch = valence - valence_th  # bs, n, 1
+    ch = mask_any_tensor(ch, mask)
+
+    return ch
+
+
+def weight(nodes: torch.Tensor, valid_elements: list[str]):
+    # nodes: bs, n, natoms
+    # mask: bs, n
+
+    weight_tensor = torch.tensor(
+        [getattr(VALID_ELEMENTS[at], "weight") for at in valid_elements],
+        device=nodes.device,
+        dtype=nodes.dtype,
+    )  # natoms
+    weight_mols = (nodes @ weight_tensor).sum(-1).unsqueeze(-1)  # bs, 1
+
+    return weight_mols

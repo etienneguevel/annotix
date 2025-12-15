@@ -32,13 +32,13 @@ def test_digress_meta_arch_initialization():
         dy=dy,
         n_heads=n_heads,
         n_layers=n_layers,
-        train_dataset=train_dataset,
         noise_strategy="uniform",
         diffusion_steps=diffusion_steps,
         loss_ratio=loss_ratio,
         device=device,
-        k=k,
         extra_features=["laplacian_embedding"],
+        valid_elements=list(VALID_ELEMENTS),
+        k=k,
     )
 
     assert meta_arch.loss_ratio == loss_ratio
@@ -61,13 +61,15 @@ def test_digress_meta_arch_initialization_from_config():
         dy=cfg.model.dy,
         n_heads=cfg.model.n_heads,
         n_layers=cfg.model.n_layers,
-        train_dataset=train_dataset,
         noise_strategy="uniform",
         diffusion_steps=cfg.model.diffusion_steps,
         loss_ratio=cfg.train.loss_ratio,
         device=device,
-        k=cfg.model.num_ev,
+        valid_elements=train_dataset.valid_elements,
         extra_features=["laplacian_embedding"],
+        k=cfg.model.num_ev,
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
     )
 
     assert meta_arch.loss_ratio == cfg.train.loss_ratio
@@ -99,22 +101,28 @@ def test_compute_extra_features():
         dy=dy,
         n_heads=n_heads,
         n_layers=n_layers,
-        train_dataset=train_dataset,
         noise_strategy="uniform",
         diffusion_steps=diffusion_steps,
         loss_ratio=loss_ratio,
         device=device,
+        valid_elements=train_dataset.valid_elements,
         k=k,
         extra_features=["laplacian_embedding"],
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
     )
 
     # Create random edges and mask
-    _, edges, mask = create_random_start(bs, n, len(TYPE_EDGES), len(VALID_ELEMENTS))
-    pos_emb, y = meta_arch.compute_extra_features(edges, mask)
+    sampled_t = torch.randint(1, diffusion_steps, (bs, 1))
+    nodes, edges, mask = create_random_start(
+        bs, n, len(TYPE_EDGES), len(VALID_ELEMENTS)
+    )
+    pos_emb, y = meta_arch.compute_extra_features(nodes, edges, mask, sampled_t)
 
-    print(pos_emb.shape)
-    assert pos_emb.shape[-1] == bs
+    assert pos_emb.shape[0] == bs
+    assert pos_emb.shape[-1] == meta_arch.node_features
     assert y.shape[0] == bs
+    assert y.shape[-1] == meta_arch.global_features
 
 
 def test_forward_backward_with_extra_features():
@@ -138,13 +146,15 @@ def test_forward_backward_with_extra_features():
         dy=dy,
         n_heads=n_heads,
         n_layers=n_layers,
-        train_dataset=train_dataset,
         noise_strategy="uniform",
         diffusion_steps=diffusion_steps,
         loss_ratio=loss_ratio,
         device=device,
+        valid_elements=train_dataset.valid_elements,
         k=k,
-        extra_features=["laplacian_embedding", "node_cycle"],
+        extra_features=["laplacian_embedding", "node_cycle", "valence_features"],
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
     )
 
     # Create random batch
@@ -175,24 +185,26 @@ def test_generate():
     device = torch.device("cpu")
 
     # Create the model
-    meta_arch = DigressMetaArch(
+    meta_arch = meta_arch = DigressMetaArch(
         d=d,
         de=de,
         dy=dy,
         n_heads=n_heads,
         n_layers=n_layers,
-        train_dataset=train_dataset,
         noise_strategy="uniform",
         diffusion_steps=diffusion_steps,
         loss_ratio=loss_ratio,
         device=device,
+        valid_elements=train_dataset.valid_elements,
         k=k,
         extra_features=["laplacian_embedding"],
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
     )
 
     # Generation parameters
     batch_size = 4
-    max_nodes = 15
+    max_nodes = 9
 
     # Generate graphs
     N, E, _ = meta_arch.generate(batch_size, max_nodes)

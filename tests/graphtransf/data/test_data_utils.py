@@ -17,7 +17,7 @@ def test_batch_graph_to_smiles():
     # Nodes: (bs, n, natoms)
     bs = 2
     n = 3  # Max atoms
-    natoms = len(VALID_ELEMENTS)
+    natoms = len(list(VALID_ELEMENTS))
     nbonds = len(TYPE_EDGES)
 
     nodes = torch.zeros((bs, n, natoms))
@@ -25,7 +25,7 @@ def test_batch_graph_to_smiles():
     mask = torch.zeros((bs, n))
 
     # Mol 1: 2 atoms
-    c_idx = VALID_ELEMENTS.index("C")
+    c_idx = list(VALID_ELEMENTS).index("C")
     nodes[0, 0, c_idx] = 1
     nodes[0, 1, c_idx] = 1
     mask[0, 0] = 1
@@ -41,7 +41,7 @@ def test_batch_graph_to_smiles():
     mask[1, 0] = 1
 
     # Run function
-    smiles_list = batch_graph_to_smiles(nodes, edges, mask, VALID_ELEMENTS)
+    smiles_list = batch_graph_to_smiles(nodes, edges, mask, list(VALID_ELEMENTS))
     assert len(smiles_list) == 2
 
     # Expected SMILES might vary slightly depending on canonicalization, but C-C is CC and C is C

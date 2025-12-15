@@ -12,10 +12,11 @@ model:
   diffusion_steps: 500
   noise_strategy: distribution
   last_layer: mlp
-  num_ev: 5
+  num_ev: 2
   extra_features:
     - laplacian_embedding
     - node_cycle
+    - valence_features
 
 train:
   batch_size: 512

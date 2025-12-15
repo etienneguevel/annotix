@@ -40,7 +40,7 @@ def test_dataset_distribution():
 
     # Select a part of the dataset
     df = df[df.fold == "train"].sample(100)
-    dataset = GraphDatasetFromSMILEs(df, valid_elements=VALID_ELEMENTS)
+    dataset = GraphDatasetFromSMILEs(df, valid_elements=list(VALID_ELEMENTS))
 
     # Check the distribution sizes
     node_distribution = dataset.nodes_distribution
@@ -60,7 +60,7 @@ def test_graph_to_smiles():
 
     # Select a part of the dataset
     df = df[df.fold == "train"].sample(100)
-    dataset = GraphDatasetFromSMILEs(df, valid_elements=VALID_ELEMENTS)
+    dataset = GraphDatasetFromSMILEs(df)
 
     # List of smiles to test
     smiles_list = ["C", "CC", "CCO", "c1ccccc1", "C1CCCCC1", "C(=O)O"]
