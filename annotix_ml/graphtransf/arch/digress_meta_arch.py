@@ -309,10 +309,16 @@ class DigressMetaArch:
         # Compute the cross-entropy for each of the atoms
         metrics = {}
         for idx, at in enumerate(self.valid_elements):
-            input = pN.softmax(-1)[..., idx]  # (bs, n, 1)
-            target = N[..., idx].squeeze(-1)  # (bs, n)
+            input = pN.transpose(1, 2).softmax(-1)[..., idx]  # (bs, n, 1)
+            target = N[..., idx]
+            mask_bool = mask.bool()
 
-            ce = nn.functional.cross_entropy(input, target)
+            # input: (bs, n, 1) -> (bs, n)
+            input_masked = input.squeeze(-1)[mask_bool]
+            # target: (bs, n)
+            target_masked = target[mask_bool].float()
+
+            ce = nn.functional.binary_cross_entropy(input_masked, target_masked)
             metrics[f"ce_{at}"] = ce
 
         metrics |= {

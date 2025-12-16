@@ -282,6 +282,7 @@ def train(cfg):
         train_log = {"train/loss": loss.item(), "train/learning_rate": lr, "step": i}
         for k, v in acc.items():
             train_log[f"train/{k}"] = v
+
         wandb.log(train_log)
 
         # Remove the batch from memory
@@ -301,6 +302,7 @@ def train(cfg):
                 eval_log = {"step": i}
                 for k, v in eval_metrics.items():
                     eval_log[f"eval/{k}"] = v
+
                 wandb.log(eval_log)
 
         if i % cfg.train.save_steps == 0:

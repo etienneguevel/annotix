@@ -1,3 +1,6 @@
+run:
+  name: digress_large
+
 model:
   d: 512
   de: 128
@@ -7,10 +10,9 @@ model:
 
 train:
   save_path: logs/qm9_large
-  batch_size: 2048
-  num_train_steps: 1000
+  num_train_steps: 2000
   save_steps: 100
 
 valid:
-  batch_size: 2048
+  batch_size: 1024
   num_eval_steps: 100
