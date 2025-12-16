@@ -62,8 +62,8 @@ class GnnNodeEdges(nn.Module):
         self,
         N: torch.Tensor,
         E: torch.Tensor,
-        pos_emb: torch.Tensor,
-        y: torch.Tensor,
+        node_features: torch.Tensor,
+        global_features: torch.Tensor,
         mask: torch.Tensor,
     ):
         # h -> nodes (bs, n, d)
@@ -84,7 +84,7 @@ class GnnNodeEdges(nn.Module):
 
         for i, layer in enumerate(self.layers):
             if i == 0:
-                h, e, y, mask = layer(N, E, y, pos_emb, mask)
+                h, e, y, mask = layer(N, E, global_features, node_features, mask)
                 # Symmetrize edges at the beginning
                 e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
 

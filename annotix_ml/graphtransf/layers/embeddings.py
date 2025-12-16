@@ -47,15 +47,16 @@ class EmbeddingLaplacian(nn.Module):
         self,
         N: torch.Tensor,
         E: torch.Tensor,
-        y: torch.Tensor,
-        pos_emb: torch.Tensor,
+        global_features_t: torch.Tensor,
+        node_features_t: torch.Tensor,
         mask: torch.Tensor,
     ):
         """
         Args:
         - N: torch.Tensor, node matrix (bs, n, natoms)
         - E: torch.Tensor, adjacency matrix (bs, n, n, nbonds)
-        - pos_emb: torch.Tensor, Laplacian eigenvectors (bs, n, k)
+        - global_features_t: torch.Tensor, global extra features (bs, global_features)
+        - node_features_t: torch.Tensor, extra features for the nodes (bs, n, node_features)
         - mask: torch.Tensor, boolean mask (bs, n)
 
         Returns:
@@ -63,7 +64,9 @@ class EmbeddingLaplacian(nn.Module):
         The mask is also returned unmodified.
         """
         # Calculate the node embedding and add the positional emb
-        h = self.EmbeddingNodes(N) + self.LaplacianProjection(pos_emb)  # (bs, n, d)
+        h = self.EmbeddingNodes(N) + self.LaplacianProjection(
+            node_features_t
+        )  # (bs, n, d)
         h = mask_any_tensor(h, mask)
 
         # Compute the edge embedding
@@ -71,7 +74,7 @@ class EmbeddingLaplacian(nn.Module):
         e = mask_any_tensor(e, mask)
 
         # Compute the y embedding
-        y = self.EmbeddingY(y)  # (bs, dy)
+        y = self.EmbeddingY(global_features_t)  # (bs, dy)
 
         return h, e, y, mask
 

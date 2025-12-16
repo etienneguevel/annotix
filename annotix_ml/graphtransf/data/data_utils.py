@@ -102,36 +102,88 @@ def batch_graph_to_smiles(
         current_edges = edges[i, :n_atoms, :n_atoms]
 
         # Create a writable molecule
-        mol = Chem.RWMol()
-
-        # Add atoms
-        atom_indices = []
-        for j in range(n_atoms):
-            atom_idx = torch.argmax(current_nodes[j]).item()
-            atom_symbol = valid_elements[atom_idx]
-            atom = Chem.Atom(atom_symbol)
-            idx = mol.AddAtom(atom)
-            atom_indices.append(idx)
-
-        # Add bonds
-        # Iterate over the upper triangle to avoid duplicates
-        for j in range(n_atoms):
-            for k in range(j + 1, n_atoms):
-                bond_type_idx = torch.argmax(current_edges[j, k]).item()
-                bond_type = TYPE_EDGES[bond_type_idx]
-
-                if bond_type != "NoBond":
-                    mol.AddBond(atom_indices[j], atom_indices[k], bond_type)
+        mol = graph_to_mol(current_nodes, current_edges, valid_elements)
 
         # Sanitize the molecule
+        smiles = Chem.MolToSmiles(mol)
+
         try:
-            Chem.SanitizeMol(mol)
-        except ValueError:
-            smiles_list.append(None)
-            continue
+            mol = Chem.MolFromSmiles(smiles)
+
+        except:
+            mol = None
+
+        if mol:
+            smiles = Chem.MolToSmiles(mol)
+
+        else:
+            mol = auto_fix_kekulization(smiles)
+            try:
+                smiles = Chem.MolToSmiles(mol)
+
+            except:
+                smiles = None
 
         # Convert to SMILES
-        smiles = Chem.MolToSmiles(mol)
+
         smiles_list.append(smiles)
 
     return smiles_list
+
+
+def graph_to_mol(nodes, edges, valid_elements):
+    n_atoms = nodes.shape[0]
+    # Create a writable molecule
+    mol = Chem.RWMol()
+
+    # Add atoms
+    atom_indices = []
+    for j in range(n_atoms):
+        atom_idx = torch.argmax(nodes[j]).item()
+        atom_symbol = valid_elements[atom_idx]
+        atom = Chem.Atom(atom_symbol)
+        idx = mol.AddAtom(atom)
+        atom_indices.append(idx)
+
+    # Add bonds
+    # Iterate over the upper triangle to avoid duplicates
+    for j in range(n_atoms):
+        for k in range(j + 1, n_atoms):
+            bond_type_idx = torch.argmax(edges[j, k]).item()
+            bond_type = TYPE_EDGES[bond_type_idx]
+
+            if bond_type != "NoBond":
+                mol.AddBond(atom_indices[j], atom_indices[k], bond_type)
+
+    return mol
+
+
+def auto_fix_kekulization(smiles):
+    mol = Chem.MolFromSmiles(smiles, sanitize=False)
+
+    # 1) initialize valence / implicit Hs (but do NOT kekulize)
+    Chem.SanitizeMol(
+        mol,
+        sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL
+        ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE
+        ^ Chem.SanitizeFlags.SANITIZE_SETAROMATICITY,
+    )
+
+    # 2) now it's safe to (re)compute aromaticity
+    Chem.SetAromaticity(mol)
+
+    # 3) heuristic: assign one pyrrolic N
+    aromatic_ns = [
+        a
+        for a in mol.GetAtoms()
+        if a.GetSymbol() == "N" and a.GetIsAromatic() and a.GetDegree() == 2
+    ]
+
+    if aromatic_ns:
+        n = aromatic_ns[0]
+        n.SetNumExplicitHs(1)
+        n.SetNoImplicit(True)
+
+    # 4) full sanitize (now kekulization works)
+    Chem.SanitizeMol(mol)
+    return mol
