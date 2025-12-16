@@ -148,6 +148,7 @@ def train(cfg):
         if torch.mps.is_available()
         else torch.device("cpu")
     )
+    print(f"Using device: {device}\n")
 
     train_dataset, valid_dataset = make_datasets(
         cfg.dataset.data_path,
@@ -277,6 +278,12 @@ def train(cfg):
         lr = optimizer.param_groups[0]["lr"]
         pbar.set_postfix(loss=loss.item(), lr=lr, **acc)  # pyright: ignore[reportArgumentType]
 
+        # Log training metrics to wandb
+        train_log = {"train/loss": loss.item(), "train/learning_rate": lr, "step": i}
+        for k, v in acc.items():
+            train_log[f"train/{k}"] = v
+        wandb.log(train_log)
+
         # Remove the batch from memory
         del batch
 
@@ -289,6 +296,12 @@ def train(cfg):
                 eval_metrics = do_eval(digress, valid_loader, device)
                 for k, v in eval_metrics.items():
                     metrics[k].append(v)
+
+                # Log evaluation metrics to wandb
+                eval_log = {"step": i}
+                for k, v in eval_metrics.items():
+                    eval_log[f"eval/{k}"] = v
+                wandb.log(eval_log)
 
         if i % cfg.train.save_steps == 0:
             torch.save(
