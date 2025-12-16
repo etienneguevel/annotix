@@ -305,12 +305,22 @@ class DigressMetaArch:
         accuracy = compute_accuracy(
             pN.transpose(1, 2), pE.permute((0, 2, 3, 1)), N, E, mask
         )
-        accuracy = {
+
+        # Compute the cross-entropy for each of the atoms
+        metrics = {}
+        for idx, at in enumerate(self.valid_elements):
+            input = pN.softmax(-1)[..., idx]  # (bs, n, 1)
+            target = N[..., idx].squeeze(-1)  # (bs, n)
+
+            ce = nn.functional.cross_entropy(input, target)
+            metrics[f"ce_{at}"] = ce
+
+        metrics |= {
             "node_accuracy": torch.tensor(accuracy["node_accuracy"]).mean().item(),
             "edge_accuracy": torch.tensor(accuracy["edge_accuracy"]).mean().item(),
         }
 
-        return total_loss, accuracy
+        return total_loss, metrics
 
     @torch.no_grad()
     def generate(
