@@ -117,8 +117,8 @@ def batch_graph_to_smiles(
             smiles = Chem.MolToSmiles(mol)
 
         else:
-            mol = auto_fix_kekulization(smiles)
             try:
+                mol = auto_fix_kekulization(smiles)
                 smiles = Chem.MolToSmiles(mol)
 
             except:
@@ -185,5 +185,8 @@ def auto_fix_kekulization(smiles):
         n.SetNoImplicit(True)
 
     # 4) full sanitize (now kekulization works)
-    Chem.SanitizeMol(mol)
+    try:
+        Chem.SanitizeMol(mol)
+    except Chem.rdchem.KekulizeException:
+        return None  # Return None if kekulization fails
     return mol

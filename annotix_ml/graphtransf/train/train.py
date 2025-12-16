@@ -262,8 +262,10 @@ def train(cfg):
         batch = tuple(el.to(device) for el in batch)
 
         # Do the forward backward loop
-        loss, acc = digress.forward_backward(batch)
-        for k, v in acc.items():
+        loss, epoch_metrics = digress.forward_backward(batch)
+        for k, v in epoch_metrics.items():
+            if isinstance(v, torch.Tensor):
+                v = v.item()
             train_metrics[k].append(v)
 
         # Update the parameters
@@ -276,11 +278,11 @@ def train(cfg):
 
         # Update the progress bar
         lr = optimizer.param_groups[0]["lr"]
-        pbar.set_postfix(loss=loss.item(), lr=lr, **acc)  # pyright: ignore[reportArgumentType]
+        pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)  # pyright: ignore[reportArgumentType]
 
         # Log training metrics to wandb
         train_log = {"train/loss": loss.item(), "train/learning_rate": lr, "step": i}
-        for k, v in acc.items():
+        for k, v in epoch_metrics.items():
             train_log[f"train/{k}"] = v
 
         wandb.log(train_log)
