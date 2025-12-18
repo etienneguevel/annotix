@@ -13,7 +13,7 @@ test_data/
 __pycache__/
 *.py[cod]
 *$py.class
-
+/wandb/
 # C extensions
 *.so
 
