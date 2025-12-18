@@ -1,0 +1,17 @@
+run:
+  project: annotix_ml
+  name: digress_wide_long
+
+model:
+  d: 384
+  de: 96
+  dy: 96
+  n_heads: 12
+  n_layers: 5
+  diffusion_steps: 500
+  noise_strategy: distribution
+  last_layer: mlp
+  num_ev: 2
+  extra_features:
+    - laplacian_embedding
+    - node_cycle
