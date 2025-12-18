@@ -69,6 +69,75 @@ def mask_any_tensor(
     return t
 
 
+def mol_to_smiles(mol):
+    try:
+        Chem.SanitizeMol(mol)
+    except ValueError:
+        return None
+    return Chem.MolToSmiles(mol)
+
+
+def graph_to_mol(nodes, edges, valid_elements):
+    n_atoms = nodes.shape[0]
+    # Create a writable molecule
+    mol = Chem.RWMol()
+
+    # Add atoms
+    atom_indices = []
+    for j in range(n_atoms):
+        atom_idx = torch.argmax(nodes[j]).item()
+        atom_symbol = valid_elements[atom_idx]
+        atom = Chem.Atom(atom_symbol)
+        idx = mol.AddAtom(atom)
+        atom_indices.append(idx)
+
+    # Add bonds
+    # Iterate over the upper triangle to avoid duplicates
+    for j in range(n_atoms):
+        for k in range(j + 1, n_atoms):
+            bond_type_idx = torch.argmax(edges[j, k]).item()
+            bond_type = TYPE_EDGES[bond_type_idx]
+
+            if bond_type != "NoBond":
+                mol.AddBond(atom_indices[j], atom_indices[k], bond_type)
+
+    return mol
+
+
+def auto_fix_kekulization(smiles):
+    mol = Chem.MolFromSmiles(smiles, sanitize=False)
+
+    # 1) initialize valence / implicit Hs (but do NOT kekulize)
+    Chem.SanitizeMol(
+        mol,
+        sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL
+        ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE
+        ^ Chem.SanitizeFlags.SANITIZE_SETAROMATICITY,
+    )
+
+    # 2) now it's safe to (re)compute aromaticity
+    Chem.SetAromaticity(mol)
+
+    # 3) heuristic: assign one pyrrolic N
+    aromatic_ns = [
+        a
+        for a in mol.GetAtoms()
+        if a.GetSymbol() == "N" and a.GetIsAromatic() and a.GetDegree() == 2
+    ]
+
+    if aromatic_ns:
+        n = aromatic_ns[0]
+        n.SetNumExplicitHs(1)
+        n.SetNoImplicit(True)
+
+    # 4) full sanitize (now kekulization works)
+    try:
+        Chem.SanitizeMol(mol)
+    except Chem.rdchem.KekulizeException:
+        return None  # Return None if kekulization fails
+    return mol
+
+
 def batch_graph_to_smiles(
     nodes: torch.Tensor,
     edges: torch.Tensor,
@@ -131,62 +200,53 @@ def batch_graph_to_smiles(
     return smiles_list
 
 
-def graph_to_mol(nodes, edges, valid_elements):
-    n_atoms = nodes.shape[0]
-    # Create a writable molecule
-    mol = Chem.RWMol()
+def batch_graph_to_smiles_digress(
+    nodes: torch.Tensor,
+    edges: torch.Tensor,
+    mask: torch.Tensor,
+    valid_elements: list[str],
+) -> list[str | None]:
+    smiles_list = []
+    bs = nodes.shape[0]
 
-    # Add atoms
-    atom_indices = []
-    for j in range(n_atoms):
-        atom_idx = torch.argmax(nodes[j]).item()
-        atom_symbol = valid_elements[atom_idx]
-        atom = Chem.Atom(atom_symbol)
-        idx = mol.AddAtom(atom)
-        atom_indices.append(idx)
+    for i in range(bs):
+        # Determine the number of atoms for this graph
+        n_atoms = int(mask[i].sum().item())
 
-    # Add bonds
-    # Iterate over the upper triangle to avoid duplicates
-    for j in range(n_atoms):
-        for k in range(j + 1, n_atoms):
-            bond_type_idx = torch.argmax(edges[j, k]).item()
-            bond_type = TYPE_EDGES[bond_type_idx]
+        # Slice the nodes and edges
+        # nodes: (n, natoms) -> (n_atoms, natoms)
+        current_nodes = nodes[i, :n_atoms]
 
-            if bond_type != "NoBond":
-                mol.AddBond(atom_indices[j], atom_indices[k], bond_type)
+        # edges: (n, n, nbonds) -> (n_atoms, n_atoms, nbonds)
+        current_edges = edges[i, :n_atoms, :n_atoms]
 
-    return mol
+        # Create a writable molecule
+        mol = graph_to_mol(current_nodes, current_edges, valid_elements)
+        smiles = mol_to_smiles(mol)
 
+        try:
+            mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True, sanitizeFrags=True)
+        except Exception:
+            pass
 
-def auto_fix_kekulization(smiles):
-    mol = Chem.MolFromSmiles(smiles, sanitize=False)
+        if smiles is not None:
+            try:
+                mol_frags = Chem.rdmolops.GetMolFrags(
+                    mol, asMols=True, sanitizeFrags=True
+                )
+                largest_mol = max(mol_frags, default=mol, key=lambda m: m.GetNumAtoms())
+                smiles = mol_to_smiles(largest_mol)
+                smiles_list.append(smiles)
 
-    # 1) initialize valence / implicit Hs (but do NOT kekulize)
-    Chem.SanitizeMol(
-        mol,
-        sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL
-        ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE
-        ^ Chem.SanitizeFlags.SANITIZE_SETAROMATICITY,
-    )
+            except Chem.rdchem.AtomValenceException:
+                print("Valence error in GetmolFrags")
+                smiles_list.append(None)
 
-    # 2) now it's safe to (re)compute aromaticity
-    Chem.SetAromaticity(mol)
+            except Chem.rdchem.KekulizeException:
+                print("Can't kekulize molecule")
+                smiles_list.append(None)
 
-    # 3) heuristic: assign one pyrrolic N
-    aromatic_ns = [
-        a
-        for a in mol.GetAtoms()
-        if a.GetSymbol() == "N" and a.GetIsAromatic() and a.GetDegree() == 2
-    ]
+        else:
+            smiles_list.append(None)
 
-    if aromatic_ns:
-        n = aromatic_ns[0]
-        n.SetNumExplicitHs(1)
-        n.SetNoImplicit(True)
-
-    # 4) full sanitize (now kekulization works)
-    try:
-        Chem.SanitizeMol(mol)
-    except Chem.rdchem.KekulizeException:
-        return None  # Return None if kekulization fails
-    return mol
+    return smiles_list

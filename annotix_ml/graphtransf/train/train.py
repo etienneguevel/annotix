@@ -13,7 +13,10 @@ from tqdm import tqdm
 
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.datacollator import collateGraph
-from annotix_ml.graphtransf.data.data_utils import batch_graph_to_smiles
+from annotix_ml.graphtransf.data.data_utils import (
+    batch_graph_to_smiles,
+    batch_graph_to_smiles_digress,
+)
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.samplers import InfiniteSampler
@@ -117,7 +120,7 @@ def do_eval(
 
 def generate_samples(
     model: DigressMetaArch, num_samples: int, num_nodes_dist: torch.Tensor
-):
+) -> tuple[float, float, list[str]]:
     # Sample from the distribution
     n = (
         num_nodes_dist.unsqueeze(0).expand((num_samples, -1)).multinomial(1).squeeze(-1)
@@ -133,10 +136,18 @@ def generate_samples(
     # Convert to smiles
     gen_smiles = batch_graph_to_smiles(gen_N, gen_E, gen_mask, model.valid_elements)
     valid_smiles = [s for s in gen_smiles if s]
+
+    # Convert to smiles with Digress method
+    gen_smiles_digress = batch_graph_to_smiles_digress(
+        gen_N, gen_E, gen_mask, model.valid_elements
+    )
+    valid_smiles_digress = [s for s in gen_smiles_digress if s]
+
     # Compute the validity
     validity = len(valid_smiles) / len(gen_smiles)
+    validity_digress = len(valid_smiles_digress) / len(gen_smiles)
 
-    return validity, valid_smiles
+    return validity, validity_digress, valid_smiles
 
 
 def train(cfg):
@@ -304,10 +315,11 @@ def train(cfg):
             # Do the evaluation
             with torch.no_grad():
                 eval_metrics = do_eval(digress, valid_loader, device)
-                validity, valid_smiles = generate_samples(
+                validity, validity_digress, valid_smiles = generate_samples(
                     digress, cfg.eval.num_samples, train_dataset.num_atoms_dist
                 )
                 eval_metrics["gen_validity"] = validity
+                eval_metrics["gen_validity_digress"] = validity_digress
                 print(f"Evaluation Metrics: {eval_metrics}")
 
                 for k, v in eval_metrics.items():
