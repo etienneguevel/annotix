@@ -305,7 +305,7 @@ def train(cfg):
             with torch.no_grad():
                 eval_metrics = do_eval(digress, valid_loader, device)
                 validity, valid_smiles = generate_samples(
-                    digress, cfg.eval.num_samples, train_dataset.num_atoms_dist
+                    digress, cfg.valid.num_samples, train_dataset.num_atoms_dist
                 )
                 eval_metrics["gen_validity"] = validity
                 print(f"Evaluation Metrics: {eval_metrics}")
