@@ -123,13 +123,13 @@ def do_eval(model: DigressMetaArch, eval_loader: DataLoader, device: torch.devic
 
     # Convert to smiles
     gen_smiles = batch_graph_to_smiles(gen_N, gen_E, gen_mask, model.valid_elements)
-
+    valid_smiles = [s for s in gen_smiles if s]
     # Compute the validity
-    validity = sum([1 for s in gen_smiles if s is not None]) / len(gen_smiles)
+    validity = len(valid_smiles) / len(gen_smiles)
     final_metrics["gen_validity"] = validity
     print(f"Evaluation Metrics: {final_metrics}")
 
-    return final_metrics
+    return final_metrics, valid_smiles
 
 
 def train(cfg):
@@ -296,7 +296,7 @@ def train(cfg):
 
             # Do the evaluation
             with torch.no_grad():
-                eval_metrics = do_eval(digress, valid_loader, device)
+                eval_metrics, valid_smiles = do_eval(digress, valid_loader, device)
                 for k, v in eval_metrics.items():
                     metrics[k].append(v)
 
@@ -306,6 +306,13 @@ def train(cfg):
                     eval_log[f"eval/{k}"] = v
 
                 wandb.log(eval_log)
+
+                # Save the valid smiles
+                with open(
+                    os.path.join(cfg.train.save_path, f"valid_smiles_{i}.txt"), "w"
+                ) as f:
+                    for s in valid_smiles:
+                        f.write(f"{s}\n")
 
         if i % cfg.train.save_steps == 0:
             torch.save(
