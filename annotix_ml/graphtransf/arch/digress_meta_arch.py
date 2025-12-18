@@ -7,6 +7,7 @@ from typing import Literal
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
+from torch.linalg import LinAlgError
 from tqdm import tqdm
 
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
@@ -335,95 +336,113 @@ class DigressMetaArch:
         max_nodes: int,
         min_nodes: int = 1,
         progress_bar=False,
+        num_attempts: int = 3,
     ):
-        # sample random n
-        if isinstance(num_samples, int):
-            n = torch.randint(min_nodes, max_nodes, (num_samples,))
+        i = 0
+        while i < num_attempts:
+            try:
+                # sample random n
+                if isinstance(num_samples, int):
+                    n = torch.randint(min_nodes, max_nodes, (num_samples,))
 
-        elif isinstance(num_samples, torch.Tensor):
-            n = num_samples
-            assert len(num_samples.shape) == 1, (
-                f"Wrong shape for num_samples: {num_samples.shape}"
-            )
-            num_samples = n.shape[0]
+                elif isinstance(num_samples, torch.Tensor):
+                    n = num_samples
+                    assert len(num_samples.shape) == 1, (
+                        f"Wrong shape for num_samples: {num_samples.shape}"
+                    )
+                    num_samples = n.shape[0]
 
-        # Make the mask
-        mask = torch.stack(
-            [
-                torch.cat([torch.ones(int(m)), torch.zeros(max_nodes - int(m))])
-                for m in n
-            ]
-        )  # (bs, max_nodes)
-        mask = mask.to(self.device)
+                # Make the mask
+                mask = torch.stack(
+                    [
+                        torch.cat([torch.ones(int(m)), torch.zeros(max_nodes - int(m))])
+                        for m in n
+                    ]
+                )  # (bs, max_nodes)
+                mask = mask.to(self.device)
 
-        # Make the distributions based on the dataset
-        N_dist = (
-            self.nodes_distribution.unsqueeze(0)
-            .unsqueeze(0)
-            .expand(num_samples, max_nodes, -1)
-        )  # (bs, n, n_atoms)
-        E_dist = (
-            self.edges_distribution.unsqueeze(0)
-            .unsqueeze(0)
-            .unsqueeze(0)
-            .expand(num_samples, max_nodes, max_nodes, -1)
-        )  # (bs, n, n, n_edges)
+                # Make the distributions based on the dataset
+                N_dist = (
+                    self.nodes_distribution.unsqueeze(0)
+                    .unsqueeze(0)
+                    .expand(num_samples, max_nodes, -1)
+                )  # (bs, n, n_atoms)
+                E_dist = (
+                    self.edges_distribution.unsqueeze(0)
+                    .unsqueeze(0)
+                    .unsqueeze(0)
+                    .expand(num_samples, max_nodes, max_nodes, -1)
+                )  # (bs, n, n, n_edges)
 
-        # sample a random graph
-        N, E = sample_discrete_features(
-            N_dist, E_dist, mask
-        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                # sample a random graph
+                N, E = sample_discrete_features(
+                    N_dist, E_dist, mask
+                )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
-        # Denoise the graph
-        self.diffuser.eval()
+                # Denoise the graph
+                self.diffuser.eval()
 
-        if progress_bar:
-            t_range = tqdm(
-                reversed(range(0, self.noiser.T)), total=self.noiser.T, desc="Denoising"
-            )
-        else:
-            t_range = reversed(range(0, self.noiser.T))
+                if progress_bar:
+                    t_range = tqdm(
+                        reversed(range(0, self.noiser.T)),
+                        total=self.noiser.T,
+                        desc="Denoising",
+                    )
+                else:
+                    t_range = reversed(range(0, self.noiser.T))
 
-        for t in t_range:
-            # Convert to float for compatibility with noising model
-            N = N.float().to(self.device)
-            E = E.float().to(self.device)
+                for t in t_range:
+                    # Convert to float for compatibility with noising model
+                    N = N.float().to(self.device)
+                    E = E.float().to(self.device)
 
-            # Mask the graph
-            N = mask_any_tensor(N, mask, fill=0)  # (bs, n, n_atoms)
-            E = mask_any_tensor(E, mask, fill=0)  # (bs, n, n, n_edges)
+                    # Mask the graph
+                    N = mask_any_tensor(N, mask, fill=0)  # (bs, n, n_atoms)
+                    E = mask_any_tensor(E, mask, fill=0)  # (bs, n, n, n_edges)
 
-            # Compute the probabilities obtained by the model
-            t_tensor = torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))  # bs, 1
-            pos_emb, y = self.compute_extra_features(N, E, mask, t_tensor)
+                    # Compute the probabilities obtained by the model
+                    t_tensor = (
+                        torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))
+                    )  # bs, 1
+                    pos_emb, y = self.compute_extra_features(N, E, mask, t_tensor)
 
-            pN, pE, _ = self.diffuser(
-                N, E, pos_emb, y, mask
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                    pN, pE, _ = self.diffuser(
+                        N, E, pos_emb, y, mask
+                    )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
-            pN = pN.softmax(-1)  #  (bs, n, n_atoms)
-            pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
+                    pN = pN.softmax(-1)  #  (bs, n, n_atoms)
+                    pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
 
-            # Compute the posterior distribution
-            post_N, post_E = self.noiser.get_posterior(
-                N, E, t
-            )  # (bs, n, n_atoms, n_atoms), (bs, n, n, n_edges, n_edges)
+                    # Compute the posterior distribution
+                    post_N, post_E = self.noiser.get_posterior(
+                        N, E, t
+                    )  # (bs, n, n_atoms, n_atoms), (bs, n, n, n_edges, n_edges)
 
-            # Compute the combined distribution -> element-wise multiplication
-            # Then sum over all the possible starting values (dim -2)
-            probN = (post_N * pN.unsqueeze(-1)).sum(dim=-2)  # (bs, n, n_atoms)
-            probE = (post_E * pE.unsqueeze(-1)).sum(dim=-2)  # (bs, n, n, n_edges)
+                    # Compute the combined distribution -> element-wise multiplication
+                    # Then sum over all the possible starting values (dim -2)
+                    probN = (post_N * pN.unsqueeze(-1)).sum(dim=-2)  # (bs, n, n_atoms)
+                    probE = (post_E * pE.unsqueeze(-1)).sum(
+                        dim=-2
+                    )  # (bs, n, n, n_edges)
 
-            # Normalize with epsilon to prevent division by zero
-            eps = 1e-6
-            probN = probN / (probN.sum(dim=-1, keepdim=True) + eps)  # (bs, n, n_atoms)
-            probE = probE / (
-                probE.sum(dim=-1, keepdim=True) + eps
-            )  # (bs, n, n, n_edges)
+                    # Normalize with epsilon to prevent division by zero
+                    eps = 1e-6
+                    probN = probN / (
+                        probN.sum(dim=-1, keepdim=True) + eps
+                    )  # (bs, n, n_atoms)
+                    probE = probE / (
+                        probE.sum(dim=-1, keepdim=True) + eps
+                    )  # (bs, n, n, n_edges)
 
-            # Sample from the combined distribution
-            N, E = sample_discrete_features(
-                probN, probE, mask
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                    # Sample from the combined distribution
+                    N, E = sample_discrete_features(
+                        probN, probE, mask
+                    )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
-        return N, E, mask
+                return N, E, mask
+
+            except LinAlgError:
+                print(f"Generation failed, attempt {i + 1} / {num_attempts}")
+                i += 1
+
+        raise LinAlgError("Impossible to generate graphs with current model.")

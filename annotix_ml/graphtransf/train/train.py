@@ -8,6 +8,7 @@ import torch
 import wandb
 from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
 from omegaconf import OmegaConf
+from torch.linalg import LinAlgError
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -129,23 +130,29 @@ def generate_samples(
 
     # Generate the graphs
     print("Generating graphs for validity computation...")
-    gen_N, gen_E, gen_mask = model.generate(
-        num_samples=n, max_nodes=n.max(), progress_bar=True
-    )
+    try:
+        gen_N, gen_E, gen_mask = model.generate(
+            num_samples=n, max_nodes=n.max(), progress_bar=True
+        )
 
-    # Convert to smiles
-    gen_smiles = batch_graph_to_smiles(gen_N, gen_E, gen_mask, model.valid_elements)
-    valid_smiles = [s for s in gen_smiles if s]
+        # Convert to smiles
+        gen_smiles = batch_graph_to_smiles(gen_N, gen_E, gen_mask, model.valid_elements)
+        valid_smiles = [s for s in gen_smiles if s]
 
-    # Convert to smiles with Digress method
-    gen_smiles_digress = batch_graph_to_smiles_digress(
-        gen_N, gen_E, gen_mask, model.valid_elements
-    )
-    valid_smiles_digress = [s for s in gen_smiles_digress if s]
+        # Convert to smiles with Digress method
+        gen_smiles_digress = batch_graph_to_smiles_digress(
+            gen_N, gen_E, gen_mask, model.valid_elements
+        )
+        valid_smiles_digress = [s for s in gen_smiles_digress if s]
 
-    # Compute the validity
-    validity = len(valid_smiles) / len(gen_smiles)
-    validity_digress = len(valid_smiles_digress) / len(gen_smiles)
+        # Compute the validity
+        validity = len(valid_smiles) / len(gen_smiles)
+        validity_digress = len(valid_smiles_digress) / len(gen_smiles)
+
+    except LinAlgError:
+        validity = 0
+        validity_digress = 0
+        valid_smiles = []
 
     return validity, validity_digress, valid_smiles
 
