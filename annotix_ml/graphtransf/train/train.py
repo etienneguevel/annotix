@@ -27,7 +27,11 @@ def get_args():
     return parser.parse_args()
 
 
-def do_eval(model: DigressMetaArch, eval_loader: DataLoader, device: torch.device):
+def do_eval(
+    model: DigressMetaArch,
+    eval_loader: DataLoader,
+    device: torch.device,
+) -> dict[str, float]:
     DisableLog("rdApp.*")
     metrics = defaultdict(list)
     for batch in tqdm(eval_loader, desc="evaluation"):
@@ -108,17 +112,22 @@ def do_eval(model: DigressMetaArch, eval_loader: DataLoader, device: torch.devic
         else:
             final_metrics[k] = 0.0
 
-    # Compute the validity of the generated graphs
-    # We use the max number of nodes in the validation set
-    max_n = 0
-    for batch in eval_loader:
-        N, _, _ = batch
-        max_n = max(max_n, N.shape[1])
+    return final_metrics
+
+
+def generate_samples(
+    model: DigressMetaArch, num_samples: int, num_nodes_dist: torch.Tensor
+):
+    # Sample from the distribution
+    n = (
+        num_nodes_dist.unsqueeze(0).expand((num_samples, -1)).multinomial(1).squeeze(-1)
+        + 1
+    )
 
     # Generate the graphs
     print("Generating graphs for validity computation...")
     gen_N, gen_E, gen_mask = model.generate(
-        batch_size=eval_loader.batch_size, max_nodes=max_n, progress_bar=True
+        num_samples=n, max_nodes=n.max(), progress_bar=True
     )
 
     # Convert to smiles
@@ -126,10 +135,8 @@ def do_eval(model: DigressMetaArch, eval_loader: DataLoader, device: torch.devic
     valid_smiles = [s for s in gen_smiles if s]
     # Compute the validity
     validity = len(valid_smiles) / len(gen_smiles)
-    final_metrics["gen_validity"] = validity
-    print(f"Evaluation Metrics: {final_metrics}")
 
-    return final_metrics, valid_smiles
+    return validity, valid_smiles
 
 
 def train(cfg):
@@ -296,7 +303,13 @@ def train(cfg):
 
             # Do the evaluation
             with torch.no_grad():
-                eval_metrics, valid_smiles = do_eval(digress, valid_loader, device)
+                eval_metrics = do_eval(digress, valid_loader, device)
+                validity, valid_smiles = generate_samples(
+                    digress, cfg.eval.num_samples, train_dataset.num_atoms_dist
+                )
+                eval_metrics["gen_validity"] = validity
+                print(f"Evaluation Metrics: {eval_metrics}")
+
                 for k, v in eval_metrics.items():
                     metrics[k].append(v)
 

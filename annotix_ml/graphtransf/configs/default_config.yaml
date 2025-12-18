@@ -36,4 +36,5 @@ train:
 
 valid:
   batch_size: 2048
+  num_samples: 1024
   num_eval_steps: 500

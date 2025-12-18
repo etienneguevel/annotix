@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import PosixPath
 
 import pandas as pd
@@ -112,7 +113,14 @@ class GraphDatasetFromSMILEs(Dataset):
         edge_distribution = edge_number / (edge_number.sum(0).item())
         self.edges_distribution = edge_distribution
 
-    def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor]:
+        # Compute the distribution of number of nodes
+        num_atoms_dist = Counter([n.sum(-1).item() for n in nodes])
+        max_num_atom = max(num_atoms_dist.keys())
+        self.num_atoms_dist = torch.tensor(
+            [num_atoms_dist.get(i + 1, 0) / len(nodes) for i in range(max_num_atom)]
+        )
+
+    def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor] | None:
         """
         Convert a smiles into its node and edges representation as tensors.
 

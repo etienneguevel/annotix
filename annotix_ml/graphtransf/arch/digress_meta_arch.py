@@ -330,10 +330,22 @@ class DigressMetaArch:
 
     @torch.no_grad()
     def generate(
-        self, batch_size: int, max_nodes: int, min_nodes: int = 1, progress_bar=False
+        self,
+        num_samples: int | torch.Tensor,
+        max_nodes: int,
+        min_nodes: int = 1,
+        progress_bar=False,
     ):
         # sample random n
-        n = torch.randint(min_nodes, max_nodes, (batch_size,))
+        if isinstance(num_samples, int):
+            n = torch.randint(min_nodes, max_nodes, (num_samples,))
+
+        elif isinstance(num_samples, torch.Tensor):
+            n = num_samples
+            assert len(num_samples.shape) == 1, (
+                f"Wrong shape for num_samples: {num_samples.shape}"
+            )
+            num_samples = n.shape[0]
 
         # Make the mask
         mask = torch.stack(
@@ -348,13 +360,13 @@ class DigressMetaArch:
         N_dist = (
             self.nodes_distribution.unsqueeze(0)
             .unsqueeze(0)
-            .expand(batch_size, max_nodes, -1)
+            .expand(num_samples, max_nodes, -1)
         )  # (bs, n, n_atoms)
         E_dist = (
             self.edges_distribution.unsqueeze(0)
             .unsqueeze(0)
             .unsqueeze(0)
-            .expand(batch_size, max_nodes, max_nodes, -1)
+            .expand(num_samples, max_nodes, max_nodes, -1)
         )  # (bs, n, n, n_edges)
 
         # sample a random graph
@@ -382,7 +394,7 @@ class DigressMetaArch:
             E = mask_any_tensor(E, mask, fill=0)  # (bs, n, n, n_edges)
 
             # Compute the probabilities obtained by the model
-            t_tensor = torch.tensor(t).unsqueeze(-1).expand((batch_size, -1))  # bs, 1
+            t_tensor = torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))  # bs, 1
             pos_emb, y = self.compute_extra_features(N, E, mask, t_tensor)
 
             pN, pE, _ = self.diffuser(
