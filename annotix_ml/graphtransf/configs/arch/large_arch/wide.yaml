@@ -1,12 +1,12 @@
 run:
   project: annotix_ml
-  name: digress_medium_wide
+  name: digress_large_wide
 
 model:
-  d: 384
-  de: 96
-  dy: 96
-  n_heads: 12
+  d: 1024
+  de: 256
+  dy: 256
+  n_heads: 16
   n_layers: 5
   diffusion_steps: 500
   noise_strategy: distribution
@@ -18,5 +18,5 @@ model:
 
 train:
   batch_size: 512
-  num_train_steps: 40000
-  save_path: logs/qm9_medium_wide
+  num_train_steps: 100000
+  save_path: logs/qm9_large_wide

@@ -19,3 +19,4 @@ model:
 train:
   batch_size: 512
   num_train_steps: 40000
+  save_path: logs/qm9_medium_long
