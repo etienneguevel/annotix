@@ -22,12 +22,18 @@ from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import compute_metrics
-from annotix_ml import ROOT
+from annotix_ml.graphtransf.train.setup import setup
 
 
 def get_args():
     parser = ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--project-name", type=str, required=False)
+    parser.add_argument("--save-path", type=str, required=False)
+    parser.add_argument("--extra-features", type=str, required=False)
+    parser.add_argument("--batch-size", type=int, required=False)
+    parser.add_argument("--num-train-steps", type=int, required=False)
+
     return parser.parse_args()
 
 
@@ -375,17 +381,7 @@ def train(cfg):
 
 def main():
     args = get_args()
-
-    # Load default config
-    default_cfg_path = ROOT / "graphtransf" / "configs" / "default_config.yaml"
-    default_cfg = OmegaConf.load(default_cfg_path)
-
-    # Load user config
-    user_cfg = OmegaConf.load(args.config)
-
-    # Merge configs
-    cfg = OmegaConf.merge(default_cfg, user_cfg)
-
+    cfg = setup(args)
     train(cfg)
 
 
