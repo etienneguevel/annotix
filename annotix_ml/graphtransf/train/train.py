@@ -240,8 +240,11 @@ def train(cfg):
     print("=" * 50 + "\n")
 
     # Print the diffuser model architecture
+    num_param = sum([p.numel() for p in digress.diffuser.parameters()])
     print("=" * 50)
     print("DIFFUSER MODEL ARCHITECTURE")
+    print("=" * 50)
+    print(f"Num parameters: {num_param / 1e6:.2f}")
     print("=" * 50)
     print(digress.diffuser)
     print("=" * 50 + "\n")

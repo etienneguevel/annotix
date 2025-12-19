@@ -23,8 +23,12 @@ echo "Starting all experiments..."
 echo "Logs will be saved to: $LOGS_DIR"
 echo "================================"
 
+# Path to default config
+DEFAULT_CONFIG="$PROJECT_ROOT/annotix_ml/graphtransf/configs/default_config.yaml"
+
 # Loop through all YAML config files recursively in the experiments directory
-find "$CONFIGS_DIR" -type f -name "*.yaml" | sort | while read -r config_file; do
+# We explicitly list DEFAULT_CONFIG first, then find and sort the rest
+{ echo "$DEFAULT_CONFIG"; find "$CONFIGS_DIR" -type f -name "*.yaml" | sort; } | while read -r config_file; do
     folder_name=$(basename "$(dirname "$config_file")")
     file_name=$(basename "$config_file" .yaml)
     config_name="${folder_name}_${file_name}"

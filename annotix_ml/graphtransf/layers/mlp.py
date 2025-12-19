@@ -7,7 +7,7 @@ class MLP(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(d, d_hidden),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(d_hidden, d_out),
         )
 
