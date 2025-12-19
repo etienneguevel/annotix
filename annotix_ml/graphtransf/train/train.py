@@ -287,7 +287,12 @@ def train(cfg):
         batch = tuple(el.to(device) for el in batch)
 
         # Do the forward backward loop
-        loss, epoch_metrics = digress.forward_backward(batch)
+        try:
+            loss, epoch_metrics = digress.forward_backward(batch)
+        except LinAlgError:
+            print("LinAlgError in forward_backward")
+            continue
+
         for k, v in epoch_metrics.items():
             if isinstance(v, torch.Tensor):
                 v = v.item()
