@@ -5,6 +5,7 @@ def make_datasets(
     data_path: str,
     smile_column: str = "smiles",
     split_column: str = "fold",
+    val_tag: str = "val",
 ):
     # Make the datasets
     train_dataset = GraphDatasetFromSMILEs(
@@ -16,7 +17,7 @@ def make_datasets(
     valid_dataset = GraphDatasetFromSMILEs(
         data=data_path,
         smile_column=smile_column,
-        split="val",
+        split=val_tag,
         split_column=split_column,
     )
 

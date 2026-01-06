@@ -185,6 +185,7 @@ def train(cfg):
         cfg.dataset.data_path,
         cfg.dataset.smile_column,
         cfg.dataset.split_column,
+        cfg.dataset.val_tag,
     )
 
     # Make the DataLoaders
