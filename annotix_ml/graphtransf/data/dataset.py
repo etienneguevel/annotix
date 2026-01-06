@@ -6,6 +6,7 @@ import rdkit.Chem as Chem
 import torch
 from pandas.core.frame import DataFrame
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 
@@ -97,7 +98,7 @@ class GraphDatasetFromSMILEs(Dataset):
                 graph[0].sum(0).unsqueeze(0),
                 graph[1].sum(0).sum(0).unsqueeze(0),
             )  # graph[0]=nodes, graph[1]=edges
-            for sm in smiles_list
+            for sm in tqdm(smiles_list)
             if (graph := self.smilesToGraph(sm))
         ]
         smiles, nodes, edges = zip(*smiles_nodes_edges)
