@@ -28,6 +28,10 @@ def main():
     df_train = ds["train"].to_pandas()
     df_test = ds["test"].to_pandas()
 
+    # Sample 10000 elements from train for validation
+    df_train = df_train.sample(frac=1, random_state=12)
+    df_train.iloc[-10000:, 1] = "val"
+
     # Save them
     DATADIR.mkdir(parents=True, exist_ok=True)
     df = pd.concat([df_train, df_test])

@@ -6,7 +6,6 @@ dataset:
   data_path: data/moses.csv
   smile_column: SMILES
   split_column: SPLIT
-  val_tag: test
 
 model:
   d: 256
