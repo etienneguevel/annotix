@@ -13,11 +13,11 @@ model:
   de: 64
   dy: 64
   n_heads: 8
-  n_layers: 6
+  n_layers: 5
   diffusion_steps: 500
   noise_strategy: distribution
   last_layer: mlp
-  num_ev: 2
+  num_ev: 5
   extra_features:
     - laplacian_embedding
     - node_cycle

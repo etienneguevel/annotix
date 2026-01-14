@@ -222,6 +222,7 @@ def train(cfg):
         train_dataset.valid_elements,
         train_dataset.nodes_distribution,
         train_dataset.edges_distribution,
+        max_weight=train_dataset.max_weight,
     )
     digress.valid_elements = train_dataset.valid_elements
 
@@ -259,6 +260,7 @@ def train(cfg):
     print(f"Valid elements: {train_dataset.valid_elements}")
     print(f"Node distribution: {train_dataset.nodes_distribution.tolist()}")
     print(f"Edge distribution: {train_dataset.edges_distribution.tolist()}")
+    print(f"Max weight in dataset: {train_dataset.max_weight}")
     print("=" * 50 + "\n")
 
     # Define the metrics

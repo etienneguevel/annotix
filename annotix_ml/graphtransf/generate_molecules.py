@@ -31,6 +31,13 @@ def get_args():
         help="Path to the model checkpoint (.pt file).",
     )
     parser.add_argument(
+        "--mode",
+        type=str,
+        default="annotix_ml",
+        choices=["annotix_ml", "digress"],
+        help="Mode to run the model in.",
+    )
+    parser.add_argument(
         "--config_path",
         type=str,
         required=True,
@@ -79,14 +86,41 @@ def main():
 
     # Load model
     print(f"Loading model from {args.model_checkpoint}...")
-    model = DigressMetaArch.load_pretrained(
-        cfg,
-        device,
-        args.model_checkpoint,
-        train_dataset.valid_elements,
-        train_dataset.nodes_distribution,
-        train_dataset.edges_distribution,
-    )
+    if args.mode == "annotix_ml":
+        model = DigressMetaArch.load_pretrained(
+            cfg,
+            device,
+            args.model_checkpoint,
+            train_dataset.valid_elements,
+            train_dataset.nodes_distribution,
+            train_dataset.edges_distribution,
+        )
+
+    elif args.mode == "digress":
+        model = DigressMetaArch.init_from_cfg(
+            cfg,
+            device,
+            train_dataset.valid_elements,
+            train_dataset.nodes_distribution,
+            train_dataset.edges_distribution,
+        )
+        digress_model = torch.load(
+            args.model_checkpoint, map_location=device, weights_only=False
+        )
+        if model.diffuser.state_dict().keys() != digress_model.state_dict().keys():
+            print("WARNING: Model keys do not match. Model may not be as expected.")
+
+        if [p.numel() for p in model.diffuser.parameters()] != [
+            p.numel() for p in digress_model.parameters()
+        ]:
+            print(
+                "WARNING: Model parameters do not match. Model may not be as expected."
+            )
+
+        model.diffuser = digress_model
+
+    else:
+        raise ValueError(f"Unknown mode: {args.mode}")
 
     model.diffuser.eval()
 
@@ -114,7 +148,7 @@ def main():
             )
 
             gen_N, gen_E, gen_mask = model.generate(
-                batch_size=current_batch_size,
+                num_samples=current_batch_size,
                 max_nodes=max_n,
                 progress_bar=True,
             )
@@ -136,6 +170,7 @@ def main():
             for s in valid_smiles:
                 f.write(f"{s}\n")
         print(f"Saved generated SMILES to {args.output_path}")
+
     else:
         print("Generated SMILES:")
         for s in generated_smiles:

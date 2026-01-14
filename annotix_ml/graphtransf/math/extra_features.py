@@ -28,7 +28,13 @@ def laplacian_embedding(
         if mask is not None:
             mask = mask.unsqueeze(0)
 
+    # Create a mask for the diagonal values
     bs, n, *_ = edges.size()
+    mask_diag = (
+        2 * n * torch.eye(n, device=device).unsqueeze(0).expand(bs, -1, -1)
+    )  # (bs, n, n)
+    if mask is not None:
+        mask_diag = mask_any_tensor(mask_diag, ~mask.int(), fill=0.0)
 
     # edges : (bs, n, n, nbonds)
     A = edges[..., 1:].sum(-1).float()  # Adjacency matrix (bs, n, n)
@@ -44,11 +50,13 @@ def laplacian_embedding(
     # Compute the Laplacian matrix
     eye = torch.eye(n, device=device).unsqueeze(0).expand(bs, -1, -1)
     L = eye - D_inv_sqrt @ A @ D_inv_sqrt  # (bs, n, n)
+    L = L + mask_diag
 
     # Deal with the fact that linalg doesn't comply with mps
     if "mps" in str(device):
         L = L.to("cpu")
-        mask = mask.to("cpu")
+        if mask is not None:
+            mask = mask.to("cpu")
 
     # Get the eigenvectors
     eigvals, eigvectors = torch.linalg.eigh(L)  # (bs, n), (bs, n, n)
@@ -98,6 +106,9 @@ def laplacian_embedding(
 
     eigvals_ = torch.stack(eigvals_list, dim=0)  # (bs, k)
     eigvectors_ = torch.stack(eigvectors_list, dim=0)  # (bs, n, k)
+
+    # Normalize the eigvals by the size of the graph
+    eigvals_ = eigvals_ / n
 
     node_features = torch.cat(
         (
@@ -306,8 +317,11 @@ def node_cycle(edges: torch.Tensor, mask: torch.Tensor = None):
     k6_matrix = k5_matrix @ A
     _, k6y = k6_cycle(A, k2_matrix, k3_matrix, k4_matrix, k6_matrix)
 
-    kcyclesx = torch.cat([k3x, k4x, k5x], dim=-1)  # (bs, n, 3)
-    kcyclesy = torch.cat([k3y, k4y, k5y, k6y], dim=-1)  # (bs, 4)
+    kcyclesx = torch.cat([k3x, k4x, k5x], dim=-1) / 10  # (bs, n, 3)
+    kcyclesy = torch.cat([k3y, k4y, k5y, k6y], dim=-1) / 10  # (bs, 4)
+
+    kcyclesx = kcyclesx.clamp(min=0.0, max=1.0)
+    kcyclesy = kcyclesy.clamp(min=0.0, max=1.0)
 
     # Zero out node-level features for masked nodes
     if mask is not None:
@@ -362,7 +376,9 @@ def charge(
     return ch
 
 
-def weight(nodes: torch.Tensor, valid_elements: list[str]):
+def weight(
+    nodes: torch.Tensor, valid_elements: list[str], max_weight: float | None = None
+):
     # nodes: bs, n, natoms
     # mask: bs, n
 
@@ -372,5 +388,8 @@ def weight(nodes: torch.Tensor, valid_elements: list[str]):
         dtype=nodes.dtype,
     )  # natoms
     weight_mols = (nodes @ weight_tensor).sum(-1).unsqueeze(-1)  # bs, 1
+
+    if max_weight:
+        weight_mols = weight_mols / max_weight
 
     return weight_mols

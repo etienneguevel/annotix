@@ -1,4 +1,5 @@
 import torch
+from torch.nn.attention.flex_attention import create_block_mask
 from torch.nn.functional import pad
 from torch.nn.utils.rnn import pad_sequence
 
@@ -50,3 +51,34 @@ def collateGraph(
     )  # (bs, n_batch)
 
     return N_padded, E_padded, mask
+
+
+def collateGraphJagged(batch: list[tuple[torch.Tensor]]):
+    # Collate the nodes and edges in a jagged way (nested tensors).
+    # We will end with a dimensions :
+    # - L -> total number of nodes of the batch
+    # - M -> total number of edges of the batch
+    list_N, list_E = zip(*batch)
+
+    # Look at the number of atoms in each graph
+    graph_id = torch.hstack(
+        [torch.tensor([i for _ in range(N.shape[0])]) for i, N in enumerate(list_N)]
+    )  # (L,)
+    num_tokens = graph_id.shape[0]
+
+    # Make the block mask
+    def causal(b, h, q_idx, kv_idx):
+        q_bs = graph_id[q_idx]
+        kv_bs = graph_id[kv_idx]
+
+        return q_bs == kv_bs
+
+    block_mask = create_block_mask(
+        causal, B=None, H=None, Q_LEN=num_tokens, KV_LEN=num_tokens
+    )  # (..., ..., L, L)
+
+    # Stack the nodes and edges
+    N_jagged = torch.vstack(list_N).unsqueeze(0)  # (1, L, n_nodes)
+    E_jagged = torch.vstack(list_E).unsqueeze(0)  # (1, M, n_nodes)
+
+    return N_jagged, E_jagged

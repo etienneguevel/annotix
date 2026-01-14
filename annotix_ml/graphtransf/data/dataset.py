@@ -8,7 +8,7 @@ from pandas.core.frame import DataFrame
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
+from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 
 
 def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
@@ -119,6 +119,14 @@ class GraphDatasetFromSMILEs(Dataset):
         max_num_atom = max(num_atoms_dist.keys())
         self.num_atoms_dist = torch.tensor(
             [num_atoms_dist.get(i + 1, 0) / len(nodes) for i in range(max_num_atom)]
+        )
+
+        # Compute the maximum weight of the dataset
+        weight_tensor = torch.tensor(
+            [getattr(VALID_ELEMENTS[at], "weight") for at in self.valid_elements]
+        )
+        self.max_weight = max(
+            [(n_mat.float() @ weight_tensor.float()).sum().item() for n_mat in nodes]
         )
 
     def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor] | None:

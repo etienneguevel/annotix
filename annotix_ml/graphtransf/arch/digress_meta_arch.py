@@ -43,6 +43,7 @@ class DigressMetaArch:
         k: int | None = None,
         extra_features: list[str] | None = None,
         last_layer: Literal["mlp", "unembedding"] = "mlp",
+        max_weight: float | None = None,
     ):
         # Store information
         self.loss_ratio = loss_ratio
@@ -73,7 +74,10 @@ class DigressMetaArch:
 
             elif name == "valence_features":
                 f_charge = partial(charge, valid_elements=valid_elements)
-                f_weight = partial(weight, valid_elements=valid_elements)
+                f_weight = partial(
+                    weight, valid_elements=valid_elements, max_weight=max_weight
+                )
+
                 extra_features_functions.extend([f_charge, valency, f_weight])
                 node_features += 2
                 global_features += 1
@@ -109,8 +113,8 @@ class DigressMetaArch:
             edges_distribution = torch.ones(len(TYPE_EDGES)) / len(TYPE_EDGES)
 
         elif noise_strategy == "distribution":
-            nodes_distribution: torch.Tensor = nodes_distribution
-            edges_distribution: torch.Tensor = edges_distribution
+            nodes_distribution = nodes_distribution
+            edges_distribution = edges_distribution
 
         else:
             raise ValueError(f"{noise_strategy} is not a recognized noise strategy.")
@@ -139,6 +143,7 @@ class DigressMetaArch:
         valid_elements: list[str] | None,
         nodes_distribution: torch.Tensor | None,
         edges_distribution: torch.Tensor | None,
+        max_weight: float | None = None,
     ):
         if not valid_elements:
             valid_elements = list(VALID_ELEMENTS)
@@ -159,6 +164,7 @@ class DigressMetaArch:
             valid_elements=valid_elements,
             nodes_distribution=nodes_distribution,
             edges_distribution=edges_distribution,
+            max_weight=max_weight,
         )
 
     @classmethod
@@ -170,12 +176,18 @@ class DigressMetaArch:
         valid_elements: list[str] | None,
         nodes_distribution: torch.Tensor | None,
         edges_distribution: torch.Tensor | None,
+        max_weight: float | None = None,
     ):
         if not os.path.exists(model_path):
             raise ValueError(f"{model_path} is not an existing path.")
 
         model = cls.init_from_cfg(
-            cfg, device, valid_elements, nodes_distribution, edges_distribution
+            cfg,
+            device,
+            valid_elements,
+            nodes_distribution,
+            edges_distribution,
+            max_weight,
         )
 
         saved_model = torch.load(model_path, weights_only=True)
@@ -249,7 +261,7 @@ class DigressMetaArch:
         y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
 
         # Add the noising step to y
-        t = t.to(device=y.device, dtype=y.dtype)
+        t = t.to(device=y.device, dtype=y.dtype) / self.noiser.T
         y = torch.cat([y, t], dim=-1)
 
         return pos_emb, y
