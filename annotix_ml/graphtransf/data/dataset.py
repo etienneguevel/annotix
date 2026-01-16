@@ -1,8 +1,10 @@
 from collections import Counter
+from typing import Callable
 from pathlib import PosixPath
 
 import pandas as pd
 import rdkit.Chem as Chem
+from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
 import torch
 from pandas.core.frame import DataFrame
 from torch.utils.data import Dataset
@@ -46,6 +48,7 @@ class GraphDatasetFromSMILEs(Dataset):
         split: str | None = None,
         split_column: str | None = None,
         valid_elements: list[str] | None = None,
+        sanitizer: Callable | None = None,
     ):
         """
         Args:
@@ -92,15 +95,35 @@ class GraphDatasetFromSMILEs(Dataset):
             self.valid_elements = valid_elements
 
         # Get the valid smiles, and compute node / edges distributions -> for noise schedule
-        smiles_nodes_edges = [
-            (
-                sm,
-                graph[0].sum(0).unsqueeze(0),
-                graph[1].sum(0).sum(0).unsqueeze(0),
-            )  # graph[0]=nodes, graph[1]=edges
-            for sm in tqdm(smiles_list)
-            if (graph := self.smilesToGraph(sm))
-        ]
+        # Get the valid smiles, and compute node / edges distributions -> for noise schedule
+        smiles_nodes_edges = []
+        for sm in tqdm(smiles_list, desc="Building graph"):
+            graph = self.smilesToGraph(sm)
+            if graph is None:
+                continue
+
+            nodes, edges = graph
+            # Sanitize checks
+            if sanitizer:
+                DisableLog("rdApp.*")
+                if not sanitizer(nodes, edges, valid_elements=self.valid_elements):
+                    continue
+
+            # Compute aggregated stats for distribution calculation later
+            # graph[0]=nodes, graph[1]=edges
+            smiles_nodes_edges.append(
+                (
+                    sm,
+                    nodes.sum(0).unsqueeze(0),
+                    edges.sum(0).sum(0).unsqueeze(0),
+                )
+            )
+
+        if sanitizer:
+            print(
+                f"Sanitizer removed {len(smiles_list) - len(smiles_nodes_edges)} molecules / {len(smiles_list)} molecules"
+            )
+
         smiles, nodes, edges = zip(*smiles_nodes_edges)
         self.smiles = smiles
 

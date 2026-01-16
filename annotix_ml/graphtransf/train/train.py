@@ -276,7 +276,9 @@ def train(cfg):
 
     # Make the losses and the optimizer
     optimizer = torch.optim.AdamW(
-        digress.diffuser.parameters(), lr=cfg.train.starting_learning_rate
+        digress.diffuser.parameters(),
+        lr=cfg.train.starting_learning_rate,
+        amsgrad=True,
     )
 
     # Define the scheduler
@@ -329,9 +331,7 @@ def train(cfg):
 
         wandb.log(train_log)
 
-        # Remove the batch from memory
-        del batch
-
+        # Start the evaluation
         if i % cfg.valid.num_eval_steps == 0:
             # Make the model in eval mode
             digress.diffuser.eval()
@@ -363,6 +363,7 @@ def train(cfg):
                     for s in valid_smiles:
                         f.write(f"{s}\n")
 
+        # Save the model
         if i % cfg.train.save_steps == 0:
             torch.save(
                 digress.diffuser.state_dict(),

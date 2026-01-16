@@ -93,6 +93,7 @@ def graph_to_mol(nodes, edges, valid_elements):
 
     # Add bonds
     # Iterate over the upper triangle to avoid duplicates
+
     for j in range(n_atoms):
         for k in range(j + 1, n_atoms):
             bond_type_idx = torch.argmax(edges[j, k]).item()
@@ -100,6 +101,10 @@ def graph_to_mol(nodes, edges, valid_elements):
 
             if bond_type != "NoBond":
                 mol.AddBond(atom_indices[j], atom_indices[k], bond_type)
+
+                if bond_type == Chem.BondType.AROMATIC:
+                    mol.GetAtomWithIdx(atom_indices[j]).SetIsAromatic(True)
+                    mol.GetAtomWithIdx(atom_indices[k]).SetIsAromatic(True)
 
     return mol
 
@@ -125,17 +130,65 @@ def auto_fix_kekulization(smiles):
         if a.GetSymbol() == "N" and a.GetIsAromatic() and a.GetDegree() == 2
     ]
 
-    if aromatic_ns:
-        n = aromatic_ns[0]
+    # Try adding H to each candidate N
+    for n in aromatic_ns:
         n.SetNumExplicitHs(1)
         n.SetNoImplicit(True)
 
-    # 4) full sanitize (now kekulization works)
+        # 4) full sanitize (now kekulization works?)
+        try:
+            Chem.SanitizeMol(mol)
+            return mol
+        except Chem.rdchem.KekulizeException:
+            # Revert and try next
+            n.SetNumExplicitHs(0)
+            n.SetNoImplicit(False)
+
+    # If loop finishes without success, return None
+    return None
+
+
+def graph_to_smiles(
+    nodes: torch.Tensor,
+    edges: torch.Tensor,
+    valid_elements: list[str],
+) -> str | None:
+    """
+    Convert a single graph into a SMILES string.
+
+    Args:
+    - nodes: torch.Tensor, one-hot encoded nodes (natoms)
+    - edges: torch.Tensor, one-hot encoded edges (natoms, natoms, nbonds)
+    - valid_elements: list[str], list of valid element symbols
+
+    Returns:
+    - smiles: str | None, reconstructed SMILES string. None if invalid.
+    """
+    # Create a writable molecule
+    mol = graph_to_mol(nodes, edges, valid_elements)
+
+    # Sanitize the molecule
     try:
-        Chem.SanitizeMol(mol)
-    except Chem.rdchem.KekulizeException:
-        return None  # Return None if kekulization fails
-    return mol
+        smiles = Chem.MolToSmiles(mol)
+    except Exception:
+        smiles = Chem.MolToSmiles(mol, kekulize=False)
+
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+
+    except Exception:
+        mol = None
+
+    if mol:
+        smiles = Chem.MolToSmiles(mol)
+    else:
+        try:
+            mol = auto_fix_kekulization(smiles)
+            smiles = Chem.MolToSmiles(mol)
+        except:
+            smiles = None
+
+    return smiles
 
 
 def batch_graph_to_smiles(
@@ -170,34 +223,47 @@ def batch_graph_to_smiles(
         # edges: (n, n, nbonds) -> (n_atoms, n_atoms, nbonds)
         current_edges = edges[i, :n_atoms, :n_atoms]
 
-        # Create a writable molecule
-        mol = graph_to_mol(current_nodes, current_edges, valid_elements)
-
-        # Sanitize the molecule
-        smiles = Chem.MolToSmiles(mol)
-
-        try:
-            mol = Chem.MolFromSmiles(smiles)
-
-        except:
-            mol = None
-
-        if mol:
-            smiles = Chem.MolToSmiles(mol)
-
-        else:
-            try:
-                mol = auto_fix_kekulization(smiles)
-                smiles = Chem.MolToSmiles(mol)
-
-            except:
-                smiles = None
-
-        # Convert to SMILES
+        # Convert to SMILES using the helper function
+        smiles = graph_to_smiles(current_nodes, current_edges, valid_elements)
 
         smiles_list.append(smiles)
 
     return smiles_list
+
+
+def graph_to_smiles_digress(
+    nodes: torch.Tensor,
+    edges: torch.Tensor,
+    valid_elements: list[str],
+) -> str | None:
+    """
+    Convert a single graph to SMILES using Digress method (checks for fragments).
+    """
+    # Create a writable molecule
+    mol = graph_to_mol(nodes, edges, valid_elements)
+    smiles = mol_to_smiles(mol)
+
+    try:
+        mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True, sanitizeFrags=True)
+    except Exception:
+        pass
+
+    if smiles is not None:
+        try:
+            mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True, sanitizeFrags=True)
+            largest_mol = max(mol_frags, default=mol, key=lambda m: m.GetNumAtoms())
+            smiles = mol_to_smiles(largest_mol)
+            return smiles
+
+        except Chem.rdchem.AtomValenceException:
+            print("Valence error in GetmolFrags")
+            return None
+
+        except Chem.rdchem.KekulizeException:
+            print("Can't kekulize molecule")
+            return None
+
+    return None
 
 
 def batch_graph_to_smiles_digress(
@@ -206,6 +272,9 @@ def batch_graph_to_smiles_digress(
     mask: torch.Tensor,
     valid_elements: list[str],
 ) -> list[str | None]:
+    """
+    Convert a batch of graphs into a list of SMILES strings using Digress method.
+    """
     smiles_list = []
     bs = nodes.shape[0]
 
@@ -220,33 +289,8 @@ def batch_graph_to_smiles_digress(
         # edges: (n, n, nbonds) -> (n_atoms, n_atoms, nbonds)
         current_edges = edges[i, :n_atoms, :n_atoms]
 
-        # Create a writable molecule
-        mol = graph_to_mol(current_nodes, current_edges, valid_elements)
-        smiles = mol_to_smiles(mol)
-
-        try:
-            mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True, sanitizeFrags=True)
-        except Exception:
-            pass
-
-        if smiles is not None:
-            try:
-                mol_frags = Chem.rdmolops.GetMolFrags(
-                    mol, asMols=True, sanitizeFrags=True
-                )
-                largest_mol = max(mol_frags, default=mol, key=lambda m: m.GetNumAtoms())
-                smiles = mol_to_smiles(largest_mol)
-                smiles_list.append(smiles)
-
-            except Chem.rdchem.AtomValenceException:
-                print("Valence error in GetmolFrags")
-                smiles_list.append(None)
-
-            except Chem.rdchem.KekulizeException:
-                print("Can't kekulize molecule")
-                smiles_list.append(None)
-
-        else:
-            smiles_list.append(None)
+        # Convert using helper
+        smiles = graph_to_smiles_digress(current_nodes, current_edges, valid_elements)
+        smiles_list.append(smiles)
 
     return smiles_list
