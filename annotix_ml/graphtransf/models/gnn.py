@@ -26,6 +26,7 @@ class GnnNodeEdges(nn.Module):
         n_layers: int,
         natoms: int,
         nbonds: int,
+        y_update: bool = True,
         last_layer: str = "mlp",
     ):
         super().__init__()
@@ -43,7 +44,7 @@ class GnnNodeEdges(nn.Module):
 
         # Build the attention layers
         for _ in range(n_layers):
-            layers.append(AttentionLayer(d, de, dy, n_heads))
+            layers.append(AttentionLayer(d, de, dy, n_heads, y_update))
 
         # Build the last layer
         if last_layer == "mlp":

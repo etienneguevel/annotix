@@ -19,6 +19,7 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         de: int,
         dy: int,
         n_heads: int,
+        y_update: bool = True,
     ):
         """
         Args:
@@ -35,6 +36,7 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         self.de = de
         self.dk = d // n_heads
         self.n_heads = n_heads
+        self.y_update = y_update
 
         # Put the 3 matrices together to optimize computing
         self.qkv = nn.Linear(d, 3 * d)
@@ -258,12 +260,13 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         else:
             # Compute the attention
             node_attn, edge_attn = self.compute_attn(h, e, y, mask)
-            new_y = self.update_y(h, e, y)  # (bs, dy)
+            if self.y_update:
+                new_y = self.update_y(h, e, y)  # (bs, dy)
+                y = self.norm_y(y + self.Out_y(new_y))  # (bs, dy)
 
             # Do the output transformation
             h = self.norm_n(h + self.Out_N(node_attn))  # (bs, n, d)
             e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
-            y = self.norm_y(y + self.Out_y(new_y))  # (bs, dy)
 
             # Ensure that the masking is still correct
             h = mask_any_tensor(h, mask)  # (bs, n, d)
@@ -432,15 +435,17 @@ class AttentionLayer(nn.Module):
         de: int,
         dy: int,
         n_heads: int,
+        y_update: bool = True,
     ):
         super().__init__()
         self.d = d
         self.de = de
         self.n_heads = n_heads
-        self.attnEdgeNode = MultiHeadEdgeNodeWithY(d, de, dy, n_heads)
+        self.attnEdgeNode = MultiHeadEdgeNodeWithY(d, de, dy, n_heads, y_update)
         self.ffn = FfnNodeEdge(d, de)
         self.mlpy = MLP(dy, 2 * dy, dy)
         self.norm_y = nn.LayerNorm(dy)
+        self.y_update = y_update
 
     def forward(
         self,
@@ -451,11 +456,10 @@ class AttentionLayer(nn.Module):
     ):
         # Compute the attention, make the residual connection
         h_attn, e_attn, y_attn, mask = self.attnEdgeNode(h, e, y, mask)
-        # print(y_attn.shape)
-        # print(self.mlpy)
 
         # Compute the output of the feedforward network, make residual connections
         h, e, _ = self.ffn(h_attn, e_attn, mask)
-        y = self.norm_y(y_attn + self.mlpy(y_attn))
+        if self.y_update:
+            y = self.norm_y(y_attn + self.mlpy(y_attn))
 
         return h, e, y, mask
