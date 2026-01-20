@@ -15,6 +15,7 @@ model:
   extra_features:
     - laplacian_embedding
     - node_cycle
+    - valence_features
 
 train:
   batch_size: 512
