@@ -299,14 +299,9 @@ class DigressMetaArch:
         )  # (bs, node_features), (bs, global_features)
 
         # Compute the output of the diffuser
-        if self.no_y:
-            pN, pE = self.diffuser(
-                N_noised, E_noised, pos_emb, mask
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
-        else:
-            pN, pE, _ = self.diffuser(
-                N_noised, E_noised, pos_emb, y, mask
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        pN, pE, _ = self.diffuser(
+            N_noised, E_noised, pos_emb, y, mask
+        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         return pN, pE
 
