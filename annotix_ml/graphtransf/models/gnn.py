@@ -121,6 +121,7 @@ class GnnNodeEdgesWithoutY(nn.Module):
         de: int,
         n_heads: int,
         node_features: int,
+        global_features: int,
         n_layers: int,
         natoms: int,
         nbonds: int,
@@ -132,7 +133,11 @@ class GnnNodeEdgesWithoutY(nn.Module):
         self.n_layers = n_layers
 
         # Make the Embedding layer
-        layers = [EmbeddingLaplacianWithoutY(d, de, node_features, natoms, nbonds)]
+        layers = [
+            EmbeddingLaplacianWithoutY(
+                d, de, node_features + global_features, natoms, nbonds
+            )
+        ]
 
         # Build the attention layers
         for _ in range(n_layers):
@@ -155,12 +160,14 @@ class GnnNodeEdgesWithoutY(nn.Module):
         self,
         N: torch.Tensor,
         E: torch.Tensor,
+        y: torch.Tensor,
         node_features: torch.Tensor,
         mask: torch.Tensor,
     ):
         # h -> nodes (bs, n, d)
         # e -> edges (bs, n, n, de)
         # y -> global_features (bs, dy)
+        # node_features -> node_features (bs, n, node_features)
         bs = N.shape[0]
         n = N.shape[1]
 
@@ -173,6 +180,8 @@ class GnnNodeEdgesWithoutY(nn.Module):
         # Capture inputs for residual connection
         N_in = N
         E_in = E
+        y = y.unsqueeze(1).expand((bs, n, -1))
+        features = torch.stack([node_features, y], dim=-1)
 
         for i, layer in enumerate(self.layers):
             if i == 0:

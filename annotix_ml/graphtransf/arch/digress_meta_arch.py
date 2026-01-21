@@ -102,6 +102,7 @@ class DigressMetaArch:
                 de=de,
                 n_heads=n_heads,
                 node_features=node_features,
+                global_features=global_features,
                 n_layers=n_layers,
                 natoms=self.natoms,
                 nbonds=self.nbonds,
@@ -299,14 +300,9 @@ class DigressMetaArch:
         )  # (bs, node_features), (bs, global_features)
 
         # Compute the output of the diffuser
-        if self.no_y:
-            pN, pE, _ = self.diffuser(
-                N_noised, E_noised, pos_emb, mask
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
-        else:
-            pN, pE, _ = self.diffuser(
-                N_noised, E_noised, pos_emb, y, mask
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        pN, pE, _ = self.diffuser(
+            N_noised, E_noised, pos_emb, y, mask
+        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         return pN, pE
 
@@ -443,14 +439,9 @@ class DigressMetaArch:
                     )  # bs, 1
                     pos_emb, y = self.compute_extra_features(N, E, mask, t_tensor)
 
-                    if self.no_y:
-                        pN, pE, _ = self.diffuser(
-                            N, E, pos_emb, mask
-                        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
-                    else:
-                        pN, pE, _ = self.diffuser(
-                            N, E, pos_emb, y, mask
-                        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                    pN, pE, _ = self.diffuser(
+                        N, E, pos_emb, y, mask
+                    )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                     pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
