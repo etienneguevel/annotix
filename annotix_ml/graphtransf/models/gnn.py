@@ -160,8 +160,8 @@ class GnnNodeEdgesWithoutY(nn.Module):
         self,
         N: torch.Tensor,
         E: torch.Tensor,
-        y: torch.Tensor,
         node_features: torch.Tensor,
+        global_features: torch.Tensor,
         mask: torch.Tensor,
     ):
         # h -> nodes (bs, n, d)
@@ -180,12 +180,12 @@ class GnnNodeEdgesWithoutY(nn.Module):
         # Capture inputs for residual connection
         N_in = N
         E_in = E
-        y = y.unsqueeze(1).expand((bs, n, -1))
-        features = torch.stack([node_features, y], dim=-1)
+        global_features = global_features.unsqueeze(1).expand((bs, n, -1))
+        features = torch.stack([node_features, global_features], dim=-1)
 
         for i, layer in enumerate(self.layers):
             if i == 0:
-                h, e, mask = layer(N, E, node_features, mask)
+                h, e, mask = layer(N, E, features, mask)
                 # Symmetrize edges at the beginning
                 e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
 
