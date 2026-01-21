@@ -299,9 +299,14 @@ class DigressMetaArch:
         )  # (bs, node_features), (bs, global_features)
 
         # Compute the output of the diffuser
-        pN, pE, _ = self.diffuser(
-            N_noised, E_noised, pos_emb, y, mask
-        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        if self.no_y:
+            pN, pE, _ = self.diffuser(
+                N_noised, E_noised, pos_emb, mask
+            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        else:
+            pN, pE, _ = self.diffuser(
+                N_noised, E_noised, pos_emb, y, mask
+            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         return pN, pE
 
@@ -439,7 +444,7 @@ class DigressMetaArch:
                     pos_emb, y = self.compute_extra_features(N, E, mask, t_tensor)
 
                     if self.no_y:
-                        pN, pE = self.diffuser(
+                        pN, pE, _ = self.diffuser(
                             N, E, pos_emb, mask
                         )  # (bs, n, n_atoms), (bs, n, n, n_edges)
                     else:
