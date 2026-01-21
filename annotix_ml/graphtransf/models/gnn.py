@@ -8,6 +8,7 @@ from annotix_ml.graphtransf.layers import (
     EmbeddingLaplacian,
     EmbeddingLaplacianWithoutY,
     MLPNodeEdge,
+    MLPNodeEdgeWithoutY,
     Unembedding,
 )
 
@@ -139,7 +140,7 @@ class GnnNodeEdgesWithoutY(nn.Module):
 
         # Build the last layer
         if last_layer == "mlp":
-            layers.append(MLPNodeEdge(d, de, natoms, nbonds))
+            layers.append(MLPNodeEdgeWithoutY(d, de, natoms, nbonds))
 
         elif last_layer == "unembedding":
             layers.append(Unembedding(layers[0]))
