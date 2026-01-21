@@ -463,3 +463,32 @@ class AttentionLayer(nn.Module):
             y = self.norm_y(y_attn + self.mlpy(y_attn))
 
         return h, e, y, mask
+
+
+class AttentionLayerWithoutY(nn.Module):
+    def __init__(
+        self,
+        d: int,
+        de: int,
+        n_heads: int,
+    ):
+        super().__init__()
+        self.d = d
+        self.de = de
+        self.n_heads = n_heads
+        self.attnEdgeNode = MultiHeadEdgeNode(d, de, n_heads)
+        self.ffn = FfnNodeEdge(d, de)
+
+    def forward(
+        self,
+        h: torch.Tensor,
+        e: torch.Tensor,
+        mask: torch.Tensor,
+    ):
+        # Compute the attention, make the residual connection
+        h_attn, e_attn, mask = self.attnEdgeNode(h, e, mask)
+
+        # Compute the output of the feedforward network, make residual connections
+        h, e, _ = self.ffn(h_attn, e_attn, mask)
+
+        return h, e, mask

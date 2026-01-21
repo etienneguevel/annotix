@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
-from annotix_ml.graphtransf.models.gnn import GnnNodeEdges
+from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.math.extra_features import (
     laplacian_embedding,
@@ -39,6 +39,7 @@ class DigressMetaArch:
         device: torch.device,
         valid_elements: list[str],
         y_update: bool = True,
+        no_y: bool = False,
         nodes_distribution: torch.Tensor | None = None,
         edges_distribution: torch.Tensor | None = None,
         k: int | None = None,
@@ -95,19 +96,34 @@ class DigressMetaArch:
         self.natoms = len(valid_elements)
         self.nbonds = len(TYPE_EDGES)
 
-        self.diffuser = GnnNodeEdges(
-            d=d,
-            de=de,
-            dy=dy,
-            n_heads=n_heads,
-            y_update=y_update,
-            node_features=node_features,
-            global_features=global_features,
-            n_layers=n_layers,
-            natoms=self.natoms,
-            nbonds=self.nbonds,
-            last_layer=last_layer,
-        ).to(device)
+        if no_y:
+            self.diffuser = GnnNodeEdgesWithoutY(
+                d=d,
+                de=de,
+                n_heads=n_heads,
+                node_features=node_features,
+                n_layers=n_layers,
+                natoms=self.natoms,
+                nbonds=self.nbonds,
+                last_layer=last_layer,
+            ).to(device)
+
+        else:
+            self.diffuser = GnnNodeEdges(
+                d=d,
+                de=de,
+                dy=dy,
+                n_heads=n_heads,
+                y_update=y_update,
+                node_features=node_features,
+                global_features=global_features,
+                n_layers=n_layers,
+                natoms=self.natoms,
+                nbonds=self.nbonds,
+                last_layer=last_layer,
+            ).to(device)
+
+        self.no_y = no_y
 
         # Instanciate the noising model
         if noise_strategy == "uniform":
@@ -157,6 +173,7 @@ class DigressMetaArch:
             n_heads=cfg.model.n_heads,
             n_layers=cfg.model.n_layers,
             y_update=cfg.model.y_update,
+            no_y=cfg.model.no_y,
             noise_strategy=cfg.model.noise_strategy,
             diffusion_steps=cfg.model.diffusion_steps,
             loss_ratio=cfg.train.loss_ratio,
@@ -282,9 +299,14 @@ class DigressMetaArch:
         )  # (bs, node_features), (bs, global_features)
 
         # Compute the output of the diffuser
-        pN, pE, _ = self.diffuser(
-            N_noised, E_noised, pos_emb, y, mask
-        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        if self.no_y:
+            pN, pE = self.diffuser(
+                N_noised, E_noised, pos_emb, mask
+            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        else:
+            pN, pE, _ = self.diffuser(
+                N_noised, E_noised, pos_emb, y, mask
+            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         return pN, pE
 
@@ -421,9 +443,14 @@ class DigressMetaArch:
                     )  # bs, 1
                     pos_emb, y = self.compute_extra_features(N, E, mask, t_tensor)
 
-                    pN, pE, _ = self.diffuser(
-                        N, E, pos_emb, y, mask
-                    )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                    if self.no_y:
+                        pN, pE = self.diffuser(
+                            N, E, pos_emb, mask
+                        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                    else:
+                        pN, pE, _ = self.diffuser(
+                            N, E, pos_emb, y, mask
+                        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                     pE = pE.softmax(-1)  #  (bs, n, n, n_edges)

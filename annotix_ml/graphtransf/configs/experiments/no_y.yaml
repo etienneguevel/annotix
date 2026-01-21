@@ -1,0 +1,5 @@
+run:
+  name: no_y_digress
+
+model:
+  no_y: True

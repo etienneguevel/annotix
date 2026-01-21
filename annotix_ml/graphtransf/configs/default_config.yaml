@@ -15,6 +15,7 @@ model:
   n_heads: 8
   n_layers: 5
   y_update: True
+  no_y: False
   diffusion_steps: 500
   noise_strategy: distribution
   last_layer: mlp

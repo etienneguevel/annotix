@@ -79,6 +79,70 @@ class EmbeddingLaplacian(nn.Module):
         return h, e, y, mask
 
 
+class EmbeddingLaplacianWithoutY(nn.Module):
+    """
+    Embedding layer for graph like data. It implements two Linear layer for
+    the nodes and the edges of the graph. Another layer is implemented for
+    the projection of the positional embeddings (Laplacian eigenvectors).
+    """
+
+    def __init__(
+        self,
+        d: int,
+        de: int,
+        node_features: int,
+        natoms: int,
+        nbonds: int,
+    ):
+        """
+        Args:
+        - d: int, embedding dimension of the nodes.
+        - de: int, embedding dimension of the edges.
+        - k: int, number of eigenvectors to select.
+        - natoms: int, size of the one-hot encoded nodes.
+        - nbonds: int, size of the one-hot encoded edges.
+        """
+        super().__init__()
+        self.d = d
+        self.de = de
+        self.node_features = node_features
+        self.natoms = natoms
+        self.nbonds = nbonds
+        self.EmbeddingNodes = MLP(natoms, 2 * d, d)
+        self.EmbeddingEdges = MLP(nbonds, 2 * de, de)
+        self.LaplacianProjection = MLP(node_features, 2 * d, d)
+
+    def forward(
+        self,
+        N: torch.Tensor,
+        E: torch.Tensor,
+        node_features_t: torch.Tensor,
+        mask: torch.Tensor,
+    ):
+        """
+        Args:
+        - N: torch.Tensor, node matrix (bs, n, natoms)
+        - E: torch.Tensor, adjacency matrix (bs, n, n, nbonds)
+        - node_features_t: torch.Tensor, extra features for the nodes (bs, n, node_features)
+        - mask: torch.Tensor, boolean mask (bs, n)
+
+        Returns:
+        Embedded nodes and edges. The positional embedding is added to the nodes.
+        The mask is also returned unmodified.
+        """
+        # Calculate the node embedding and add the positional emb
+        h = self.EmbeddingNodes(N) + self.LaplacianProjection(
+            node_features_t
+        )  # (bs, n, d)
+        h = mask_any_tensor(h, mask)
+
+        # Compute the edge embedding
+        e = self.EmbeddingEdges(E)  # (bs, n, n, de)
+        e = mask_any_tensor(e, mask)
+
+        return h, e, mask
+
+
 class Unembedding(nn.Module):
     """
     Unembedding layer to map the embedding of the transformer layers back to

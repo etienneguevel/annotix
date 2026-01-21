@@ -2,9 +2,11 @@ from annotix_ml.graphtransf.layers.attention import (
     MultiHeadEdgeNode,
     MultiHeadEdgeNodeWithY,
     AttentionLayer,
+    AttentionLayerWithoutY,
 )  # Noqa
 from annotix_ml.graphtransf.layers.embeddings import (
     EmbeddingLaplacian,
+    EmbeddingLaplacianWithoutY,
     Unembedding,  # Noqa
 )
 from annotix_ml.graphtransf.layers.ffn import FfnNodeEdge  # Noqa
