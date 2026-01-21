@@ -181,7 +181,7 @@ class GnnNodeEdgesWithoutY(nn.Module):
         N_in = N
         E_in = E
         global_features = global_features.unsqueeze(1).expand((bs, n, -1))
-        features = torch.stack([node_features, global_features], dim=-1)
+        features = torch.cat([node_features, global_features], dim=-1)
 
         for i, layer in enumerate(self.layers):
             if i == 0:
