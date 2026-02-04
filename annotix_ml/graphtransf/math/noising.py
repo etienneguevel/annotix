@@ -7,15 +7,18 @@ def cosine_beta_schedule_discrete(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ.
-    alpha_bar_t = f(t)/f(0), f(t) = cos(0.5*pi((t/steps)+s)/(1+s))
-    beta_t = 1 - alpha_bar_t / alpha_bar_t-1
+
+    The schedule is defined as:
+    alpha_bar_t = f(t)/f(0), f(t) = cos(0.5*pi((t/steps)+s)/(1+s))^2
 
     Args:
-    - t: int, number of timesteps to implement.
-    - s: float, variable for the computation of the alphas.
+        timesteps (int): Number of diffusion timesteps.
+        s (float, optional): Variable for the computation of the alphas. Defaults to 0.008.
 
     Returns:
-    torch tensors of the alphas and alphas_bar, each of size timesteps.
+        tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            - alphas (torch.Tensor): Alpha values for each timestep, of shape (timesteps + 1).
+            - alphas_bar (torch.Tensor): Cumulative product of alphas, of shape (timesteps + 1).
     """
     steps = timesteps + 2
     x = torch.arange(steps)  # (timesteps + 2)
@@ -46,16 +49,17 @@ def sample_discrete_features(
     probX: torch.Tensor, probE: torch.Tensor, node_mask: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Sample features from multinomial distribution with given probabilities.
+    Sample discrete features from multinomial distributions.
 
     Args:
-    - probX: torch.Tensor, node features, (bs, n, natoms).
-    - probE: torch.Tensor, edge features, (bs, n, n, nbonds).
-    - node_mask: torch.Tensor, binary mask for nodes (bs, n).
+        probX (torch.Tensor): Probabilities for node features of shape (bs, n, natoms).
+        probE (torch.Tensor): Probabilities for edge features of shape (bs, n, n, nbonds).
+        node_mask (torch.Tensor): Binary mask for nodes of shape (bs, n).
 
     Returns:
-    The sampled nodes and edges tensors, one-hot encoded after the sampling,
-    resp. of sizes (bs, n, natoms) and (bs, n, n, nbonds).
+        tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            - X_t (torch.Tensor): One-hot encoded sampled node features of shape (bs, n, natoms).
+            - E_t (torch.Tensor): One-hot encoded sampled edge features of shape (bs, n, n, nbonds).
     """
     bs, n, natoms = probX.shape
     nbonds = probE.shape[-1]

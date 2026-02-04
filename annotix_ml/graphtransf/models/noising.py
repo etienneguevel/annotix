@@ -9,30 +9,13 @@ from annotix_ml.graphtransf.math.noising import (
 
 class NoisingModel(nn.Module):
     """
-    torch module implementing the noise addition of the model.
+    Torch module implementing the noise addition of the model.
 
-    Attributes
-    ----------
-    T: int, number of diffusion steps possible
-    natoms: int, the number of valid atoms used.
-    nbonds: int, the number of possible bonds.
-    n_m: list[float], the nodes distribution of the dataset used (natoms).
-    e_m: list[float], the edges distribution of the dataset used (nbonds).
-    alphas: torch.Tensor, the constants used to compute the step-wise diffusion matrices
-    aphas_bar: torch.Tensor, the constants used to compute the diffusion matrices from 0 to step.
-
-    Methods
-    -------
-    get_Q_t(t: int) -> tuple[torch.Tensor, torch.Tensor]
-    returns the nodes and edges matrices of diffusion from step t-1 to t
-
-    get_Q_bar_t(t: i
-    )
-
-    # Load model
-    print(f"Loading model from {args.model_checkpoint}...")
-    model = DigressMetaArch.load_pretrnt) -> tuple[torch.Tensor, torch.Tensor]
-    returns the nodes and edges matrices of diffusion from step 0 to t
+    Args:
+        nodes_distribution (torch.Tensor): The nodes distribution of the dataset used (natoms).
+        edges_distribution (torch.Tensor): The edges distribution of the dataset used (nbonds).
+        diffusion_steps (int): Number of diffusion steps possible.
+        noise_schedule_type (str, optional): The type of noise schedule to use. Defaults to "cosine".
     """
 
     def __init__(
@@ -42,6 +25,15 @@ class NoisingModel(nn.Module):
         diffusion_steps: int,
         noise_schedule_type: str = "cosine",
     ):
+        """
+        Initialize the NoisingModel.
+
+        Args:
+            nodes_distribution (torch.Tensor): The nodes distribution of the dataset used (natoms).
+            edges_distribution (torch.Tensor): The edges distribution of the dataset used (nbonds).
+            diffusion_steps (int): Number of diffusion steps possible.
+            noise_schedule_type (str, optional): The type of noise schedule to use. Defaults to "cosine".
+        """
         super().__init__()
         self.T = diffusion_steps
         self.n_m = nodes_distribution
@@ -60,6 +52,15 @@ class NoisingModel(nn.Module):
         self.alphas_bar = alphas_bar
 
     def get_Q_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns the nodes and edges matrices of diffusion from step t-1 to t.
+
+        Args:
+            t (int): The current time step.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: The nodes and edges diffusion matrices.
+        """
         alpha = self.alphas[int(t)]
         device = self.alphas.device
         Q_nodes = alpha * torch.eye(len(self.n_m), device=device) + (
@@ -73,6 +74,15 @@ class NoisingModel(nn.Module):
         return Q_nodes.T, Q_edges.T
 
     def get_Q_bar_t(self, t: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns the nodes and edges matrices of diffusion from step 0 to t.
+
+        Args:
+            t (int): The current time step.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: The nodes and edges diffusion matrices from 0 to t.
+        """
         alpha_bar = self.alphas_bar[int(t)]
         device = self.alphas_bar.device
         Q_bar_nodes = alpha_bar * torch.eye(len(self.n_m), device=device) + (
@@ -90,19 +100,20 @@ class NoisingModel(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the posterior distribution of nodes and edges at step t-1 given step t.
+
         According to the formula of Vignac it is :
         Z^t @ (Q^t)' * Z^0 @ Q_bar^(t-1) / Z^0 @ Q_bar^t @ (Z^t)'
 
         Args:
-        - N: torch.Tensor, the nodes one-hot encoded vector at step t.
-        - E: torch.Tensor, the edges one-hot encoded vector at step t.
-        - t: int, the current time step.
-        - eps: float = 1e-6, the value to add to the sum and avoid zero div.
+            N (torch.Tensor): The nodes one-hot encoded vector at step t.
+            E (torch.Tensor): The edges one-hot encoded vector at step t.
+            t (int): The current time step.
+            eps (float, optional): The value to add to the sum and avoid zero div. Defaults to 1e-6.
 
         Returns:
-        The posterior probabilities for nodes and edges at step t-1. The proba
-        are computed for each possible values of N^0 and E^0 making them resp
-        (bs, n, natoms, natoms) and (bs, n, n, nbonds, nbonds) tensors.
+            tuple[torch.Tensor, torch.Tensor]: The posterior probabilities for nodes and edges at step t-1.
+                The proba are computed for each possible values of N^0 and E^0 making them resp
+                (bs, n, natoms, natoms) and (bs, n, n, nbonds, nbonds) tensors.
         """
         Q_n, Q_e = self.get_Q_t(t)  #  (natoms, natoms), (nbonds, nbonds)
         Q_bar_n, Q_bar_e = self.get_Q_bar_t(t)  #  (natoms, natoms), (nbonds, nbonds)
@@ -146,17 +157,21 @@ class NoisingModel(nn.Module):
         self, N: torch.Tensor, E: torch.Tensor, node_mask: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Noise the nodes and edges matrices of a given batch. A random t is
-        sampled for each graph and the edges and nodes are noised with the
+        Noise the nodes and edges matrices of a given batch.
+
+        A random t is sampled for each graph and the edges and nodes are noised with the
         corresponding matrices.
 
         Args:
-        - N: torch.Tensor, the nodes one-hot encoded vector.
-        - E: torch.Tensor, the edges one-hot encoded vector.
-        - node_mask: torch.Tensor, the mask vector.
+            N (torch.Tensor): The nodes one-hot encoded vector.
+            E (torch.Tensor): The edges one-hot encoded vector.
+            node_mask (torch.Tensor): The mask vector.
 
         Returns:
-        Noised nodes and edges, as well as the t used for noising.
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - noised_N (torch.Tensor): Noised nodes features.
+                - noised_E (torch.Tensor): Noised edges features.
+                - sampled_t (torch.Tensor): The time steps used for noising.
         """
         # N (bs, n, natoms)
         # E (bs, n, n, nbonds)
@@ -179,12 +194,13 @@ class NoisingModel(nn.Module):
         Compute the noised graph at a given step t.
 
         Args:
-        - N: torch.Tensor, the nodes one-hot encoded vector.
-        - E: torch.Tensor, the edges one-hot encoded vector.
-        - node_mask: torch.Tensor | None, the mask vector.
-        - t: int | torch.Tensor, the time step(s) to noise to.
+            N (torch.Tensor): The nodes one-hot encoded vector.
+            E (torch.Tensor): The edges one-hot encoded vector.
+            t (int | torch.Tensor): The time step(s) to noise to.
+            node_mask (torch.Tensor, optional): The mask vector. Defaults to None.
 
-        Returns: Noised nodes and edges.
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: The noised nodes and edges.
         """
         # Handle unbatched input
         is_unbatched = N.dim() == 2
@@ -243,7 +259,7 @@ class NoisingModel(nn.Module):
         Move the noiser to the specified device.
 
         Args:
-        - device: torch.device, the device to move the noiser to.
+            device (torch.device): The device to move the noiser to.
         """
         self.alphas = self.alphas.to(device)
         self.alphas_bar = self.alphas_bar.to(device)

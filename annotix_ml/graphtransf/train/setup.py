@@ -1,11 +1,11 @@
 from omegaconf import OmegaConf
 
-from annotix_ml import ROOT
+from annotix_ml import BASE_DIR
 
 
 def setup(args):
     # Load default config
-    default_cfg_path = ROOT / "graphtransf" / "configs" / "default_config.yaml"
+    default_cfg_path = BASE_DIR / "configs" / "default_config.yaml"
     default_cfg = OmegaConf.load(default_cfg_path)
 
     # Load user config

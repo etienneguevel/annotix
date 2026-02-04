@@ -5,7 +5,7 @@ import torch
 from omegaconf import OmegaConf
 from rdkit import RDLogger
 
-from annotix_ml import ROOT
+from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.data_utils import batch_graph_to_smiles
@@ -62,7 +62,7 @@ def main():
         raise ValueError(f"Config file not found: {args.config_path}")
 
     # Load default config
-    default_cfg_path = ROOT / "graphtransf" / "configs" / "default_config.yaml"
+    default_cfg_path = BASE_DIR / "configs" / "default_config.yaml"
     default_cfg = OmegaConf.load(default_cfg_path)
 
     # Load user config

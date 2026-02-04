@@ -34,11 +34,11 @@ def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
 
 class GraphDatasetFromSMILEs(Dataset):
     """
-    Build a torch Dataset from a csv files having one column indicating the
-    SMILEs of molecules. The molecules are filtered to only include the ones
-    with the atoms within the VALID_ELEMENTS constant or a custom list.
-    The nodes and edges distributions of the data are also computed to later
-    be used for the noise model.
+    Torch Dataset for molecular graphs built from SMILES strings.
+
+    The dataset filters molecules to include only those with atoms present in a
+    predefined list of valid elements. It also computes the distribution of nodes
+    and edges in the data, which can be used for noise scheduling in diffusion models.
     """
 
     def __init__(
@@ -51,23 +51,17 @@ class GraphDatasetFromSMILEs(Dataset):
         sanitizer: Callable | None = None,
     ):
         """
-        Args:
-        - data: str | DataFrame, either the path to the csv or the csv opened as
-        a pd.DataFrame.
-        - smile_column: str = "smiles", the column in which the smiles are
-        contained.
-        - split: str | None = None, the name of the split to select to build the
-        dataset.
-        - split_column: str | None = None, the name of the column where to search
-        the split of the row.
-        - valid_elements: list[str] | None = None, list of valid atom symbols to use.
-        If None, automatically extracts atoms from the SMILES in the dataset.
+        Initialize the GraphDatasetFromSMILEs.
 
-        Returns:
-        This describes here the __getitem__ method of this object. At index idx
-        we get the one-hot encoded nodes and edges vectors resp. of sizes (n, natoms) and
-        (n, n, nbonds) where n is the number of heavy atoms within the SMILEs,
-        natoms is the length of VALID_ATOMS and nbonds is the length of TYPE_EDGES.
+        Args:
+            data (str | DataFrame): Path to a CSV file or a pandas DataFrame containing the data.
+            smile_column (str): Name of the column containing SMILES strings. Defaults to "smiles".
+            split (str, optional): Name of the split to filter by (e.g., 'train', 'test').
+            split_column (str, optional): Name of the column used for split filtering.
+            valid_elements (list[str], optional): List of valid atom symbols. If None, elements
+                are automatically extracted from the dataset.
+            sanitizer (Callable, optional): A function to further filter molecules based on
+                their graph representation.
         """
         super().__init__()
         if isinstance(data, (str, PosixPath)):
@@ -154,13 +148,15 @@ class GraphDatasetFromSMILEs(Dataset):
 
     def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor] | None:
         """
-        Convert a smiles into its node and edges representation as tensors.
+        Convert a SMILES string into node and edge tensor representations.
 
         Args:
-        - smiles: str, the smiles string to convert
+            smiles (str): The SMILES string to convert.
 
         Returns:
-        The nodes and edges tensor resp. of sizes (n, natoms) and (n, n, nbonds).
+            tuple[torch.Tensor, torch.Tensor] | None: A tuple (nodes, edges) if successful,
+                where nodes is of shape (n, natoms) and edges is of shape (n, n, nbonds).
+                Returns None if conversion fails or if the molecule contains invalid elements.
         """
 
         # Make a molecule
@@ -209,14 +205,14 @@ class GraphDatasetFromSMILEs(Dataset):
 
     def graphToSmiles(self, nodes: torch.Tensor, edges: torch.Tensor) -> str:
         """
-        Convert a graph representation (nodes and edges) back to a SMILES string.
+        Convert a graph representation back to a SMILES string.
 
         Args:
-        - nodes: torch.Tensor, one-hot encoded nodes (n, natoms)
-        - edges: torch.Tensor, one-hot encoded edges (n, n, nbonds)
+            nodes (torch.Tensor): One-hot encoded node features of shape (n, natoms).
+            edges (torch.Tensor): One-hot encoded edge features of shape (n, n, nbonds).
 
         Returns:
-        - smiles: str, the reconstructed SMILES string
+            str: The reconstructed SMILES string.
         """
         # Create a writable molecule
         mol = Chem.RWMol()
@@ -255,17 +251,25 @@ class GraphDatasetFromSMILEs(Dataset):
         return smiles
 
     def __len__(self):
+        """
+        Get the number of molecules in the dataset.
+
+        Returns:
+            int: The number of SMILES strings in the dataset.
+        """
         return len(self.smiles)
 
     def __getitem__(self, idx):
         """
+        Get a graph representation of a molecule by index.
+
         Args:
-        - idx: int, the index of the dataset to fetch
+            idx (int): The index of the molecule to fetch.
 
         Returns:
-        One-hot encoded nodes and edges vectors resp. of sizes (n, natoms) and
-        (n, n, nbonds) where n is the number of heavy atoms within the SMILEs,
-        natoms is the length of VALID_ATOMS and nbonds is the length of TYPE_EDGES.
+            tuple[torch.Tensor, torch.Tensor]: A tuple (nodes, edges) containing:
+                - nodes (torch.Tensor): One-hot encoded nodes of shape (n, natoms).
+                - edges (torch.Tensor): One-hot encoded edges of shape (n, n, nbonds).
         """
         sm = self.smiles[idx]
 

@@ -5,6 +5,18 @@ from rdkit.Chem import DataStructs, rdFingerprintGenerator, rdRascalMCES
 
 
 def MCES_distance(smile1: str, smile2: str) -> int:
+    """
+    Compute the Maximum Common Edge Subgraph (MCES) distance between two molecules.
+
+    The distance is defined as: (num_bonds1 + num_bonds2) - (2 * num_mces_bonds).
+
+    Args:
+        smile1 (str): SMILES string of the first molecule.
+        smile2 (str): SMILES string of the second molecule.
+
+    Returns:
+        int: The MCES distance between the two molecules.
+    """
     # Create the mol associated to the smiles
     mol1 = Chem.MolFromSmiles(smile1)
     mol2 = Chem.MolFromSmiles(smile2)
@@ -27,6 +39,17 @@ def MCES_distance(smile1: str, smile2: str) -> int:
 
 
 def mol_to_fingerprint(m: Chem.Mol, radius: int = 3, nbits: int = 2048):
+    """
+    Convert a RDKit molecule object to a numpy Morgan fingerprint.
+
+    Args:
+        m (Chem.Mol): RDKit molecule object.
+        radius (int, optional): Radius for Morgan fingerprint. Defaults to 3.
+        nbits (int, optional): Number of bits in the fingerprint. Defaults to 2048.
+
+    Returns:
+        np.ndarray: Morgan fingerprint as a numpy array.
+    """
     morgan_gen = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=nbits)
     curr_fp = morgan_gen.GetFingerprint(m)
     fingerprint = np.zeros((0,), dtype=np.uint8)
@@ -36,6 +59,16 @@ def mol_to_fingerprint(m: Chem.Mol, radius: int = 3, nbits: int = 2048):
 
 
 def tanimoto_sim(smile1: str, smile2: str) -> float:
+    """
+    Compute Tanimoto similarity between two SMILES strings using Morgan fingerprints.
+
+    Args:
+        smile1 (str): SMILES string of the first molecule.
+        smile2 (str): SMILES string of the second molecule.
+
+    Returns:
+        float: Tanimoto similarity score.
+    """
     # Create the mol associated to the smiles
     mol1 = Chem.MolFromSmiles(smile1)
     mol2 = Chem.MolFromSmiles(smile2)
@@ -54,8 +87,13 @@ def tanimoto_sim(smile1: str, smile2: str) -> float:
 
 def compute_validity(pred_smiles: list[str | None]) -> list[float]:
     """
-    Compute the validity of the predicted smiles.
-    Returns a list of 1.0 for valid smiles and 0.0 for invalid ones.
+    Compute the validity score for a list of predicted SMILES.
+
+    Args:
+        pred_smiles (list[str | None]): List of predicted SMILES strings (None if invalid).
+
+    Returns:
+        list[float]: List of validity indicators (1.0 for valid, 0.0 for invalid).
     """
     return [1.0 if s is not None else 0.0 for s in pred_smiles]
 
@@ -64,8 +102,14 @@ def compute_tanimoto_similarity(
     pred_smiles: list[str | None], true_smiles: list[str | None]
 ) -> list[float]:
     """
-    Compute the Tanimoto similarity for valid predicted smiles.
-    Returns a list of similarities for valid predictions only.
+    Compute Tanimoto similarities for pairs of predicted and ground truth SMILES.
+
+    Args:
+        pred_smiles (list[str | None]): List of predicted SMILES strings.
+        true_smiles (list[str | None]): List of ground truth SMILES strings.
+
+    Returns:
+        list[float]: List of similarity values for valid predicted/true pairs.
     """
     tanimoto_sims = []
     for p_s, t_s in zip(pred_smiles, true_smiles):
@@ -86,8 +130,17 @@ def compute_accuracy(
     mask: torch.Tensor,
 ) -> dict[str, list[float]]:
     """
-    Compute the node and edge accuracy for each graph in the batch.
-    Returns a dictionary with lists of accuracy values.
+    Compute node and edge categorical accuracy for a batch of graphs.
+
+    Args:
+        pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
+        pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nbonds).
+        N (torch.Tensor): Target node one-hot labels of shape (bs, n, natoms).
+        E (torch.Tensor): Target edge one-hot labels of shape (bs, n, n, nbonds).
+        mask (torch.Tensor): Node mask of shape (bs, n).
+
+    Returns:
+        dict[str, list[float]]: Dictionary containing 'node_accuracy' and 'edge_accuracy' lists.
     """
     # Node accuracy
     N_target = N.argmax(-1)  # (bs, n)
@@ -131,8 +184,21 @@ def compute_metrics(
     mask: torch.Tensor,
 ) -> dict[str, list[float]]:
     """
-    Compute the metrics for the evaluation loop.
-    Returns a dictionary where values are lists of metrics.
+    Aggregate various evaluation metrics for a batch.
+
+    Metrics include validity, Tanimoto similarity, and node/edge accuracy.
+
+    Args:
+        pred_smiles (list[str | None]): List of predicted SMILES.
+        true_smiles (list[str | None]): List of ground truth SMILES.
+        pN (torch.Tensor): Predicted node probabilities.
+        pE (torch.Tensor): Predicted edge probabilities.
+        N (torch.Tensor): Target node features.
+        E (torch.Tensor): Target edge features.
+        mask (torch.Tensor): Node mask.
+
+    Returns:
+        dict[str, list[float]]: Dictionary of lists containing computed metrics for each sample.
     """
     metrics = {}
 

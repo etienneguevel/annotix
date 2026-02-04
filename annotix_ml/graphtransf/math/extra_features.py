@@ -8,17 +8,19 @@ def laplacian_embedding(
     edges: torch.Tensor, k: int, mask: torch.Tensor | None = None
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Fonction to compute the eigenvectors of the normalized Laplacian matrix of
-    the edges of a graph.
-    Returns the k non-0 eigenvectors.
+    Compute features based on the eigenvectors of the normalized Laplacian matrix of a graph.
+
     Args:
-        - edges: torch.Tensor, matrix of adjacency of the graph (bs, n, n, nbonds) or (n, n, nbonds)
-        - k: int, number of eigenvectors to use (should be inf to n-1)
-        - mask: torch.Tensor, binary mask indicating existing nodes (bs, n) or (n,), optional
+        edges (torch.Tensor): Adjacency matrix of shape (bs, n, n, nbonds) or (n, n, nbonds).
+        k (int): Number of eigenvectors to select.
+        mask (torch.Tensor, optional): Binary mask indicating existing nodes (bs, n) or (n,).
 
     Returns:
-    tensors corresponding to the k smallest non-0 eigenvectors.
-    If batched: (bs, n, k), if single: (n, k)
+        tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            - node_features (torch.Tensor): Laplacian node features of shape (bs, n, k+1) or (n, k+1).
+                First value indicates if the node is in the largest connected component, next are the values of the node in the k eigenvectors.
+            - global_features (torch.Tensor): Laplacian global features of shape (bs, k+1) or (k+1).
+                First value indicates the number of connected components, next are the values of eigenvalues.
     """
     device = edges.device
     is_batched = edges.dim() == 4
@@ -138,18 +140,30 @@ def laplacian_embedding(
     )
 
 
-def batch_trace(X):
+def batch_trace(X: torch.Tensor) -> torch.Tensor:
     """
-    Expect a matrix of shape (bs, n, n), returns the trace in shape bs.
+    Compute the trace of a batch of matrices.
+
+    Args:
+        X (torch.Tensor): Batch of matrices of shape (bs, n, n).
+
+    Returns:
+        torch.Tensor: The trace of each matrix, shape (bs,).
     """
     diag = torch.diagonal(X, dim1=-2, dim2=-1)
     trace = diag.sum(dim=-1)
     return trace
 
 
-def batch_diagonal(X):
+def batch_diagonal(X: torch.Tensor) -> torch.Tensor:
     """
-    Extracts the diagonal from the last two dims of a tensor
+    Extract the diagonal from the last two dimensions of a tensor.
+
+    Args:
+        X (torch.Tensor): Input tensor.
+
+    Returns:
+        torch.Tensor: The diagonal elements.
     """
     return torch.diagonal(X, dim1=-2, dim2=-1)
 
@@ -263,25 +277,18 @@ def k6_cycle(A, k2_matrix, k3_matrix, k4_matrix, k6_matrix):
     return None, (c6_t / 12).unsqueeze(-1).float()
 
 
-def node_cycle(edges: torch.Tensor, mask: torch.Tensor = None):
+def node_cycle(edges: torch.Tensor, mask: torch.Tensor | None = None):
     """
     Compute cycle counts of sizes 3, 4, 5, and 6 for a graph.
 
-    This function computes both node-level and graph-level cycle features from
-    a graph's edge tensor. It uses matrix powers of the adjacency matrix to
-    efficiently compute cycle counts.
-
     Args:
-        edges: torch.Tensor of shape (bs, n, n, nbonds) or (n, n, nbonds), where each edge is represented
-               with nbonds different bond types. The first bond type is typically ignored.
-        mask: torch.Tensor of shape (bs, n) or (n,), binary mask indicating existing nodes, optional
+        edges (torch.Tensor): Edge tensor of shape (bs, n, n, nbonds) or (n, n, nbonds).
+        mask (torch.Tensor, optional): Binary mask indicating existing nodes (bs, n) or (n,).
 
     Returns:
-        tuple: A tuple of two tensors:
-            - kcyclesx: Node-level cycle counts for 3, 4, and 5-cycles,
-                        shape (bs, n, 3) or (n, 3), where columns are [3-cycles, 4-cycles, 5-cycles]
-            - kcyclesy: Graph-level cycle counts for 3, 4, 5, and 6-cycles,
-                        shape (bs, 4) or (4,), where columns are [3-cycles, 4-cycles, 5-cycles, 6-cycles]
+        tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            - kcyclesx (torch.Tensor): Node-level cycle counts for 3, 4, and 5-cycles.
+            - kcyclesy (torch.Tensor): Graph-level cycle counts for 3, 4, 5, and 6-cycles.
     """
     is_batched = edges.dim() == 4
 
@@ -334,6 +341,16 @@ def node_cycle(edges: torch.Tensor, mask: torch.Tensor = None):
 
 
 def valency(edges: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """
+    Compute the valency of each node in the graph.
+
+    Args:
+        edges (torch.Tensor): Edge tensor of shape (bs, n, n, nedges).
+        mask (torch.Tensor): Binary mask for nodes of shape (bs, n).
+
+    Returns:
+        torch.Tensor: Node valency features of shape (bs, n, 1).
+    """
     # edges: bs, n, n, nedges
     # mask: bs, n
 
@@ -355,6 +372,18 @@ def charge(
     mask: torch.Tensor,
     valid_elements: list[str],
 ) -> torch.Tensor:
+    """
+    Compute the formal charge of each node in the graph.
+
+    Args:
+        nodes (torch.Tensor): Node features of shape (bs, n, natoms).
+        edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
+        mask (torch.Tensor): Binary mask for nodes of shape (bs, n).
+        valid_elements (list[str]): List of valid atomic element symbols.
+
+    Returns:
+        torch.Tensor: Node charge features of shape (bs, n, 1).
+    """
     # nodes: bs, n, natoms
     # edges: bs, n, n, nedges
     # mask: bs, n
@@ -378,7 +407,18 @@ def charge(
 
 def weight(
     nodes: torch.Tensor, valid_elements: list[str], max_weight: float | None = None
-):
+) -> torch.Tensor:
+    """
+    Compute the total molecular weight of the graph.
+
+    Args:
+        nodes (torch.Tensor): Node features of shape (bs, n, natoms).
+        valid_elements (list[str]): List of valid atomic element symbols.
+        max_weight (float, optional): Maximum weight for normalization.
+
+    Returns:
+        torch.Tensor: Molecular weight feature of shape (bs, 1).
+    """
     # nodes: bs, n, natoms
     # mask: bs, n
 
