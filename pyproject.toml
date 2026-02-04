@@ -4,11 +4,13 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
     "datasets>=4.4.2",
+    "h5py",
     "omegaconf>=2.3.0",
     "pandas>=2.3.3",
     "rdkit>=2025.9.1",
     "requests>=2.32.5",
     "torch>=2.8.0",
+    "torch-geometric",
     "tqdm>=4.67.1",
     "wandb>=0.23.1",
 ]
