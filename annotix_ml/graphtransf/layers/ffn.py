@@ -8,8 +8,15 @@ from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 
 class FfnNodeEdge(nn.Module):
     """
-    Feed forward network of the attention layers. Nodes and Edges each have
-    a MLP with one hidden layer.
+    Feed-forward network for node and edge features.
+
+    This layer applies separate MLPs with one hidden layer to node and edge features,
+    followed by layer normalization and residual connections.
+
+    Args:
+        d (int): Hidden dimension for node features.
+        de (int): Hidden dimension for edge features.
+        dropout (float, optional): Dropout probability. Defaults to 0.1.
     """
 
     def __init__(
@@ -19,9 +26,12 @@ class FfnNodeEdge(nn.Module):
         dropout: float = 0.1,
     ):
         """
+        Initialize the FfnNodeEdge layer.
+
         Args:
-        - d: int, the dimension of the nodes embeddings of the network.
-        - de: int, the dimension of the edges embeddings of the network.
+            d (int): Hidden dimension for node features.
+            de (int): Hidden dimension for edge features.
+            dropout (float, optional): Dropout probability. Defaults to 0.1.
         """
         super().__init__()
         # Init the FFN for nodes
@@ -62,6 +72,20 @@ class FfnNodeEdge(nn.Module):
         e: torch.Tensor,
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the FfnNodeEdge layer.
+
+        Args:
+            h (torch.Tensor): Node features of shape (bs, n, d).
+            e (torch.Tensor): Edge features of shape (bs, n, n, de).
+            mask (torch.Tensor): Node mask of shape (bs, n).
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - h (torch.Tensor): Updated node features of shape (bs, n, d).
+                - e (torch.Tensor): Updated edge features of shape (bs, n, n, de).
+                - mask (torch.Tensor): The input mask tensor.
+        """
         # Compute the nodes outputs, make residual connection
         inter_nodes = self.feedforward_N(h) + h  # (bs, n, d)
 

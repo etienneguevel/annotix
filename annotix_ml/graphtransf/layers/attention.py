@@ -10,7 +10,18 @@ from annotix_ml.graphtransf.layers.mlp import MLP
 
 class MultiHeadEdgeNodeWithY(nn.Module):
     """
-    Class implementing the attention classification of the Edge-Node model.
+    Multi-head attention layer for edge and node features with global feature updates.
+
+    This layer implements an attention mechanism that processes node, edge, and global (y) features.
+    It uses FiLM (Feature-wise Linear Modulation) to incorporate edge and global information into the
+    attention process and node/edge updates.
+
+    Args:
+        d (int): Hidden dimension for node features.
+        de (int): Hidden dimension for edge features.
+        dy (int): Hidden dimension for global features.
+        n_heads (int): Number of attention heads.
+        y_update (bool, optional): Whether to update global features. Defaults to True.
     """
 
     def __init__(
@@ -22,10 +33,14 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         y_update: bool = True,
     ):
         """
+        Initialize the MultiHeadEdgeNodeWithY layer.
+
         Args:
-        - d: int, hidden dimension of the model
-        - de: int, hidden dimension of the edges
-        - n_heads: int, number of heads
+            d (int): Hidden dimension of the model.
+            de (int): Hidden dimension of the edges.
+            dy (int): Hidden dimension of the global features.
+            n_heads (int): Number of attention heads.
+            y_update (bool, optional): Whether to update global features. Defaults to True.
         """
         super().__init__()
         if not (d % n_heads == 0):
@@ -64,12 +79,16 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         e: torch.Tensor,
     ):
         """
-        Function to get the attention map.
-        attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
+        Forward pass using nested tensors (experimental).
+
+        Computes the attention map: attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
+
         Args:
-        - h: torch.tensor, nested tensor of the nodes representation (bs, *n, d)
-        - e: torch.tensor, nested tensor of the edges representation (bs, *n, *n, d)
-        TODO : Check if i can do without mask, or if needed for after FiLM
+            h (torch.Tensor): Nested tensor of nodes representation of shape (bs, *n, d).
+            e (torch.Tensor): Nested tensor of edges representation of shape (bs, *n, *n, de).
+
+        Returns:
+            None: Implementation is incomplete.
         """
         # Compute the classic attention map
         # h : (bs, *n, d)
@@ -126,13 +145,37 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         mask: torch.Tensor,
         attn_map_mode: bool = False,
     ):
-        """
-        Function to get the attention map. attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
+        r"""
+        Compute attention and update node and edge representations using FiLM modulation.
+
+        The attention mechanism is computed as follows:
+        1. Node-based query (Q) and key (K) outer product scaled by $\sqrt{d_k}$:
+           $A_{ij} = (Q_i \otimes K_j) / \sqrt{d_k}$
+        2. Edge-based FiLM modulation of the attention:
+           $A'_{ij} = E1_{ij} + E2_{ij} \odot A_{ij} + A_{ij}$
+        3. Feature updates for nodes and edges:
+           - Node attention weights: $\alpha_{ij} = \text{softmax}_j(\sum_k A'_{ijk})$
+           - Updated node representation (before global FiLM): $h_{attn} = \sum_j \alpha_{ij} V_j$
+           - Updated edge representation (before global FiLM): $e_{attn, ij} = \text{concat}_k(A'_{ijk})$
+        4. Global feature (y) modulation using FiLM:
+           - $h_{final} = yN1 + yN2 \odot h_{attn} + h_{attn}$
+           - $e_{final} = yE1 + yE2 \odot e_{attn} + e_{attn}$
+
         Args:
-        - h: torch.tensor, tensor of the nodes representation (bs, n, d)
-        - e: torch.tensor, tensor of the edges representation (bs, n, n, d)
-        - mask: torch.tensor, binary mask representing the number of nodes
-        present in each element of the batch.
+            h (torch.Tensor): Node representation tensor of shape (bs, n, d).
+            e (torch.Tensor): Edge representation tensor of shape (bs, n, n, de).
+            y (torch.Tensor): Global representation tensor of shape (bs, dy).
+            mask (torch.Tensor): Binary mask for nodes of shape (bs, n).
+            attn_map_mode (bool, optional): If True, returns the attention weights. Defaults to False.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor]:
+                - If attn_map_mode is False: (node_attn, edge_attn)
+                    - node_attn (torch.Tensor): Updated node representations of shape (bs, n, d).
+                    - edge_attn (torch.Tensor): Updated edge representations of shape (bs, n, n, d).
+                - If attn_map_mode is True: (attn, node_attn)
+                    - attn (torch.Tensor): Raw attention tensor of shape (bs, nh, n, n, dk).
+                    - node_attn (torch.Tensor): Softmaxed attention weights of shape (bs, nh, n, n).
         """
         # Compute the classic attention map
         # h : (bs, n, d)
@@ -221,6 +264,17 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         e: torch.Tensor,
         y: torch.Tensor,
     ) -> torch.Tensor:
+        """
+        Update global feature representation based on node and edge features.
+
+        Args:
+            h (torch.Tensor): Node features of shape (bs, n, d).
+            e (torch.Tensor): Edge features of shape (bs, n, n, de).
+            y (torch.Tensor): Current global features of shape (bs, dy).
+
+        Returns:
+            torch.Tensor: New global feature representation of shape (bs, dy).
+        """
         # Compute the features of h
         h_feats = torch.hstack(
             (h.max(1).values, h.min(1).values, h.mean(1), h.std(1))
@@ -248,6 +302,18 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         y: torch.Tensor,
         mask: torch.Tensor,
     ):
+        """
+        Forward pass of the MultiHeadEdgeNodeWithY layer.
+
+        Args:
+            h (torch.Tensor): Node features of shape (bs, n, d).
+            e (torch.Tensor): Edge features of shape (bs, n, n, de).
+            y (torch.Tensor): Global features of shape (bs, dy).
+            mask (torch.Tensor): Node mask of shape (bs, n).
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: Updated (h, e, y, mask).
+        """
         if h.is_nested & e.is_nested:
             # /!\ Not implemented yet
             _ = self.forward_nested(h, e)
@@ -277,8 +343,12 @@ class MultiHeadEdgeNodeWithY(nn.Module):
 
 class MultiHeadEdgeNode(nn.Module):
     """
-    Class implementing the attention classification of the Edge-Node model,
-    without global features y.
+    Multi-head attention layer for edge and node features without global updates.
+
+    Args:
+        d (int): Hidden dimension for node features.
+        de (int): Hidden dimension for edge features.
+        n_heads (int): Number of attention heads.
     """
 
     def __init__(
@@ -288,10 +358,12 @@ class MultiHeadEdgeNode(nn.Module):
         n_heads: int,
     ):
         """
+        Initialize the MultiHeadEdgeNode layer.
+
         Args:
-        - d: int, hidden dimension of the model
-        - de: int, hidden dimension of the edges
-        - n_heads: int, number of heads
+            d (int): Hidden dimension of the model.
+            de (int): Hidden dimension of the edges.
+            n_heads (int): Number of attention heads.
         """
         super().__init__()
         if not (d % n_heads == 0):
@@ -323,13 +395,24 @@ class MultiHeadEdgeNode(nn.Module):
         mask: torch.Tensor,
         attn_map_mode: bool = False,
     ):
-        """
-        Function to get the attention map. attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
+        r"""
+        Compute attention and update representations without global features.
+
+        The mechanism follows these steps:
+        1. Node outer product scaled by $\sqrt{d_k}$: $A_{ij} = (Q_i \otimes K_j) / \sqrt{d_k}$
+        2. Edge FiLM modulation: $A'_{ij} = E1_{ij} + E2_{ij} \odot A_{ij} + A_{ij}$
+        3. Aggregation:
+           - Node update: $h_{attn} = \text{softmax}_j(\sum_k A'_{ijk}) V_j$
+           - Edge update: $e_{attn, ij} = \text{concat}_k(A'_{ijk})$
+
         Args:
-        - h: torch.tensor, tensor of the nodes representation (bs, n, d)
-        - e: torch.tensor, tensor of the edges representation (bs, n, n, d)
-        - mask: torch.tensor, binary mask representing the number of nodes
-        present in each element of the batch.
+            h (torch.Tensor): Node representation tensor of shape (bs, n, d).
+            e (torch.Tensor): Edge representation tensor of shape (bs, n, n, de).
+            mask (torch.Tensor): Binary mask for nodes of shape (bs, n).
+            attn_map_mode (bool, optional): If True, returns the attention weights. Defaults to False.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: Updated (h, e) tensors.
         """
         # Compute the classic attention map
         # h : (bs, n, d)
@@ -409,6 +492,17 @@ class MultiHeadEdgeNode(nn.Module):
         e: torch.Tensor,
         mask: torch.Tensor,
     ):
+        """
+        Forward pass of the MultiHeadEdgeNode layer.
+
+        Args:
+            h (torch.Tensor): Node features of shape (bs, n, d).
+            e (torch.Tensor): Edge features of shape (bs, n, n, de).
+            mask (torch.Tensor): Node mask of shape (bs, n).
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Updated (h, e, mask).
+        """
         if h.is_nested & e.is_nested:
             raise NotImplementedError("Nested tensors not supported yet.")
 
@@ -425,8 +519,15 @@ class MultiHeadEdgeNode(nn.Module):
 
 class AttentionLayer(nn.Module):
     """
-    Class implementing the total attention layer of the model. It consists of a
-    EdgeNode attention layer followed by a ffnNodeEdge layer.
+    Combined attention and feed-forward layer for the Edge-Node model with global updates.
+    This layer applies MultiHeadEdgeNodeWithY followed by FfnNodeEdge.
+
+    Args:
+        d (int): Hidden dimension for node features.
+        de (int): Hidden dimension for edge features.
+        dy (int): Hidden dimension for global features.
+        n_heads (int): Number of attention heads.
+        y_update (bool, optional): Whether to update global features. Defaults to True.
     """
 
     def __init__(
@@ -437,6 +538,16 @@ class AttentionLayer(nn.Module):
         n_heads: int,
         y_update: bool = True,
     ):
+        """
+        Initialize the AttentionLayer.
+
+        Args:
+            d (int): Hidden dimension of the model.
+            de (int): Hidden dimension of the edges.
+            dy (int): Hidden dimension of the global features.
+            n_heads (int): Number of attention heads.
+            y_update (bool, optional): Whether to update global features. Defaults to True.
+        """
         super().__init__()
         self.d = d
         self.de = de
@@ -454,6 +565,18 @@ class AttentionLayer(nn.Module):
         y: torch.Tensor,
         mask: torch.Tensor,
     ):
+        """
+        Forward pass of the AttentionLayer.
+
+        Args:
+            h (torch.Tensor): Node features of shape (bs, n, d).
+            e (torch.Tensor): Edge features of shape (bs, n, n, de).
+            y (torch.Tensor): Global features of shape (bs, dy).
+            mask (torch.Tensor): Node mask of shape (bs, n).
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: Updated (h, e, y, mask).
+        """
         # Compute the attention, make the residual connection
         h_attn, e_attn, y_attn, mask = self.attnEdgeNode(h, e, y, mask)
 
@@ -466,12 +589,30 @@ class AttentionLayer(nn.Module):
 
 
 class AttentionLayerWithoutY(nn.Module):
+    """
+    Combined attention and feed-forward layer for the Edge-Node model without global updates.
+    This layer applies MultiHeadEdgeNode followed by FfnNodeEdge.
+
+    Args:
+        d (int): Hidden dimension for node features.
+        de (int): Hidden dimension for edge features.
+        n_heads (int): Number of attention heads.
+    """
+
     def __init__(
         self,
         d: int,
         de: int,
         n_heads: int,
     ):
+        """
+        Initialize the AttentionLayerWithoutY.
+
+        Args:
+            d (int): Hidden dimension of the model.
+            de (int): Hidden dimension of the edges.
+            n_heads (int): Number of attention heads.
+        """
         super().__init__()
         self.d = d
         self.de = de
@@ -485,6 +626,17 @@ class AttentionLayerWithoutY(nn.Module):
         e: torch.Tensor,
         mask: torch.Tensor,
     ):
+        """
+        Forward pass of the AttentionLayerWithoutY.
+
+        Args:
+            h (torch.Tensor): Node features of shape (bs, n, d).
+            e (torch.Tensor): Edge features of shape (bs, n, n, de).
+            mask (torch.Tensor): Node mask of shape (bs, n).
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Updated (h, e, mask).
+        """
         # Compute the attention, make the residual connection
         h_attn, e_attn, mask = self.attnEdgeNode(h, e, mask)
 

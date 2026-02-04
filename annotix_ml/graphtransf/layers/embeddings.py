@@ -7,9 +7,19 @@ from annotix_ml.graphtransf.layers.mlp import MLP
 
 class EmbeddingLaplacian(nn.Module):
     """
-    Embedding layer for graph like data. It implements two Linear layer for
-    the nodes and the edges of the graph. Another layer is implemented for
-    the projection of the positional embeddings (Laplacian eigenvectors).
+    Embedding layer for graph-structured data.
+
+    This layer implements separate MLPs for embedding node types, edge types,
+    global features, and positional embeddings (e.g., Laplacian eigenvectors).
+
+    Args:
+        d (int): Hidden dimension for node features.
+        de (int): Hidden dimension for edge features.
+        dy (int): Hidden dimension for global features.
+        node_features (int): Dimension of input extra node features.
+        global_features (int): Dimension of input extra global features.
+        natoms (int): Number of node types (e.g., atom types).
+        nbonds (int): Number of edge types (e.g., bond types).
     """
 
     def __init__(
@@ -23,12 +33,16 @@ class EmbeddingLaplacian(nn.Module):
         nbonds: int,
     ):
         """
+        Initialize the EmbeddingLaplacian layer.
+
         Args:
-        - d: int, embedding dimension of the nodes.
-        - de: int, embedding dimension of the edges.
-        - k: int, number of eigenvectors to select.
-        - natoms: int, size of the one-hot encoded nodes.
-        - nbonds: int, size of the one-hot encoded edges.
+            d (int): Hidden dimension for node features.
+            de (int): Hidden dimension for edge features.
+            dy (int): Hidden dimension for global features.
+            node_features (int): Dimension of input extra node features.
+            global_features (int): Dimension of input extra global features.
+            natoms (int): Number of node types.
+            nbonds (int): Number of edge types.
         """
         super().__init__()
         self.d = d
@@ -52,16 +66,21 @@ class EmbeddingLaplacian(nn.Module):
         mask: torch.Tensor,
     ):
         """
+        Forward pass of the EmbeddingLaplacian layer.
+
         Args:
-        - N: torch.Tensor, node matrix (bs, n, natoms)
-        - E: torch.Tensor, adjacency matrix (bs, n, n, nbonds)
-        - global_features_t: torch.Tensor, global extra features (bs, global_features)
-        - node_features_t: torch.Tensor, extra features for the nodes (bs, n, node_features)
-        - mask: torch.Tensor, boolean mask (bs, n)
+            N (torch.Tensor): Node features of shape (bs, n, natoms).
+            E (torch.Tensor): Edge features of shape (bs, n, n, nbonds).
+            global_features_t (torch.Tensor): Global extra features of shape (bs, global_features).
+            node_features_t (torch.Tensor): Extra node features of shape (bs, n, node_features).
+            mask (torch.Tensor): Node mask of shape (bs, n).
 
         Returns:
-        Embedded nodes and edges. The positional embedding is added to the nodes.
-        The mask is also returned unmodified.
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - h (torch.Tensor): Embedded node features of shape (bs, n, d).
+                - e (torch.Tensor): Embedded edge features of shape (bs, n, n, de).
+                - y (torch.Tensor): Embedded global features of shape (bs, dy).
+                - mask (torch.Tensor): The input mask tensor.
         """
         # Calculate the node embedding and add the positional emb
         h = self.EmbeddingNodes(N) + self.LaplacianProjection(
@@ -81,9 +100,14 @@ class EmbeddingLaplacian(nn.Module):
 
 class EmbeddingLaplacianWithoutY(nn.Module):
     """
-    Embedding layer for graph like data. It implements two Linear layer for
-    the nodes and the edges of the graph. Another layer is implemented for
-    the projection of the positional embeddings (Laplacian eigenvectors).
+    Embedding layer for graph-structured data without explicit global features.
+
+    Args:
+        d (int): Hidden dimension for node features.
+        de (int): Hidden dimension for edge features.
+        node_features (int): Dimension of input extra node features.
+        natoms (int): Number of node types.
+        nbonds (int): Number of edge types.
     """
 
     def __init__(
@@ -95,12 +119,14 @@ class EmbeddingLaplacianWithoutY(nn.Module):
         nbonds: int,
     ):
         """
+        Initialize the EmbeddingLaplacianWithoutY layer.
+
         Args:
-        - d: int, embedding dimension of the nodes.
-        - de: int, embedding dimension of the edges.
-        - k: int, number of eigenvectors to select.
-        - natoms: int, size of the one-hot encoded nodes.
-        - nbonds: int, size of the one-hot encoded edges.
+            d (int): Hidden dimension for node features.
+            de (int): Hidden dimension for edge features.
+            node_features (int): Dimension of input extra node features.
+            natoms (int): Number of node types.
+            nbonds (int): Number of edge types.
         """
         super().__init__()
         self.d = d
@@ -120,15 +146,19 @@ class EmbeddingLaplacianWithoutY(nn.Module):
         mask: torch.Tensor,
     ):
         """
+        Forward pass of the EmbeddingLaplacianWithoutY layer.
+
         Args:
-        - N: torch.Tensor, node matrix (bs, n, natoms)
-        - E: torch.Tensor, adjacency matrix (bs, n, n, nbonds)
-        - node_features_t: torch.Tensor, extra features for the nodes (bs, n, node_features)
-        - mask: torch.Tensor, boolean mask (bs, n)
+            N (torch.Tensor): Node features of shape (bs, n, natoms).
+            E (torch.Tensor): Edge features of shape (bs, n, n, nbonds).
+            node_features_t (torch.Tensor): Extra node features of shape (bs, n, node_features).
+            mask (torch.Tensor): Node mask of shape (bs, n).
 
         Returns:
-        Embedded nodes and edges. The positional embedding is added to the nodes.
-        The mask is also returned unmodified.
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - h (torch.Tensor): Embedded node features of shape (bs, n, d).
+                - e (torch.Tensor): Embedded edge features of shape (bs, n, n, de).
+                - mask (torch.Tensor): The input mask tensor.
         """
         # Calculate the node embedding and add the positional emb
         h = self.EmbeddingNodes(N) + self.LaplacianProjection(
@@ -145,19 +175,21 @@ class EmbeddingLaplacianWithoutY(nn.Module):
 
 class Unembedding(nn.Module):
     """
-    Unembedding layer to map the embedding of the transformer layers back to
-    the one-hot encoded space of the nodes and edges.
+    Unembedding layer to map representations back to the one-hot encoded space.
+
+    This layer reuses the weights from an existing EmbeddingLaplacian layer to map
+    node and edge representations back to their original dimensions (natoms/nbonds).
 
     Args:
-    - embedding_layer: EmbeddingLaplacian, the embedding layer of the model,
-    its weights are reused to make the ones of this layer.
+        embedding_layer (EmbeddingLaplacian): The embedding layer whose weights will be reused.
     """
 
     def __init__(self, embedding_layer):
         """
+        Initialize the Unembedding layer.
+
         Args:
-        - embedding_layer: EmbeddingLaplacian, the embedding layer of the model,
-        its weights are reused to make the ones of this layer.
+            embedding_layer (EmbeddingLaplacian): The embedding layer of the model.
         """
         super().__init__()
         self.embedding_layer = embedding_layer  # keep reference
@@ -170,10 +202,20 @@ class Unembedding(nn.Module):
         mask: torch.Tensor,
     ):
         """
+        Forward pass of the Unembedding layer.
+
         Args:
-        - N: torch.Tensor, node matrix (bs, n, d)
-        - E: torch.Tensor, adjacency matrix (bs, n, n, de)
-        - mask: torch.Tensor, boolean mask (bs, n)
+            N (torch.Tensor): Node representations of shape (bs, n, d).
+            E (torch.Tensor): Edge representations of shape (bs, n, n, de).
+            y (torch.Tensor): Global features of shape (bs, dy).
+            mask (torch.Tensor): Node mask of shape (bs, n).
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - N (torch.Tensor): Unembedded node features of shape (bs, n, natoms).
+                - E (torch.Tensor): Unembedded edge features of shape (bs, n, n, nbonds).
+                - y (torch.Tensor): The input global features.
+                - mask (torch.Tensor): The input mask tensor.
         """
 
         Wn = self.embedding_layer.EmbeddingNodes.weight
