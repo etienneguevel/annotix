@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 from omegaconf import OmegaConf
 
-from annotix_ml import BASE_DIR, ROOT
+from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.test_utils import create_random_start
@@ -50,7 +50,7 @@ def test_digress_meta_arch_initialization():
 
 def test_digress_meta_arch_initialization_from_config():
     # Load the arguments from the config file
-    cfg = OmegaConf.load(ROOT / "graphtransf" / "configs" / "default_config.yaml")
+    cfg = OmegaConf.load(BASE_DIR / "configs" / "default_config.yaml")
 
     # init the model from the arguments within
     device = torch.device("cpu")
@@ -117,7 +117,10 @@ def test_compute_extra_features():
     nodes, edges, mask = create_random_start(
         bs, n, len(TYPE_EDGES), len(VALID_ELEMENTS)
     )
-    pos_emb, y = meta_arch.compute_extra_features(nodes, edges, mask, sampled_t)
+
+    batch = {"nodes": nodes, "edges": edges, "mask": mask, "t": sampled_t}
+
+    pos_emb, y = meta_arch.compute_extra_features(batch)
 
     assert pos_emb.shape[0] == bs
     assert pos_emb.shape[-1] == meta_arch.node_features
@@ -161,7 +164,7 @@ def test_forward_backward_with_extra_features():
     N, E, mask = create_random_start(
         bs, n, len(TYPE_EDGES), len(train_dataset.valid_elements)
     )
-    batch = (N, E, mask)
+    batch = {"nodes": N, "edges": E, "mask": mask}
 
     # Test forward_backward
     total_loss, *_ = meta_arch.forward_backward(batch)

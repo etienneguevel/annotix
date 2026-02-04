@@ -22,7 +22,7 @@ def test_collate_MSG():
     for batch in loader:
         break
 
-    N, E, node_mask = batch
+    N, E, node_mask = batch["nodes"], batch["edges"], batch["node_mask"]
 
     assert N.shape[0] == bs
     assert E.shape[0] == bs
