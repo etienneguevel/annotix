@@ -107,6 +107,9 @@ class Spec2MolMetaArch(DigressMetaArch):
             inten_transform (str, optional): Transformation for peak intensities. Defaults to "float".
             no_diffs (bool, optional): If True, do not use mass differences in SpectraEncoder. Defaults to False.
         """
+        # Store info specific to spectra
+        self.morgan_nbits = morgan_nbits
+
         super().__init__(
             d=d,
             de=de,
@@ -127,9 +130,6 @@ class Spec2MolMetaArch(DigressMetaArch):
             last_layer=last_layer,
             max_weight=max_weight,
         )
-
-        # Store info specific to spectra
-        self.morgan_nbits = morgan_nbits
 
         # Build the models for spectra treatment
         self.spectra_encoder = SpectraEncoder(

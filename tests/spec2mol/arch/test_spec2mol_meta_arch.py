@@ -38,6 +38,9 @@ def test_spec2mol_meta_arch_forward_backward():
     # Load config
     cfg = OmegaConf.load(BASE_DIR / "configs" / "default_config.yaml")
 
+    if "spectra_fingerprint" not in cfg.model.extra_features:
+        cfg.model.extra_features.append("spectra_fingerprint")
+
     # Use real dataset paths from config
     data_path = BASE_DIR / cfg.dataset.labels_file
     spec_folder = BASE_DIR / cfg.dataset.spec_folder
