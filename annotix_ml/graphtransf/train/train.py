@@ -46,10 +46,17 @@ def do_eval(
     metrics = defaultdict(list)
     for batch in tqdm(eval_loader, desc="evaluation"):
         # Move the elements to the device of interest
-        batch = tuple(el.to(device) for el in batch)
+        batch = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
 
         # Unpack the elements
-        N, E, mask = batch  # (bs, n, n_atoms), (bs, n, n, n_edges), (bs,)
+        N, E, mask = (
+            batch["nodes"],
+            batch["edges"],
+            batch["node_mask"],
+        )  # (bs, n, n_atoms), (bs, n, n, n_edges), (bs,)
 
         # Compute the predictions
         pN, pE = model.forward(batch)  # (bs, n, n_atoms), (bs, n, n, n_edges)
@@ -298,7 +305,10 @@ def train(cfg):
         digress.diffuser.train()
 
         # Move the batch to the correct device
-        batch = tuple(el.to(device) for el in batch)
+        batch = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
 
         # Do the forward backward loop
         try:
