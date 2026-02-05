@@ -1,0 +1,29 @@
+run:
+  project: annotix_msg
+  name: baseline_no_ms2
+  save_path: runs/msg/baseline_no_ms2
+
+dataset:
+  data_dir: data/msg
+  data_path: data/msg/labels.tsv
+  val_tag:
+  split_file: data/msg/split.tsv
+  spec_folder: data/msg/spec_files
+  subform_folder: data/msg/subformulae/default_subformulae
+
+model:
+  y_update: False
+  no_y: True
+  diffusion_steps: 500
+  noise_strategy: distribution
+  last_layer: mlp
+  num_ev: 2
+  extra_features:
+    - laplacian_embedding
+    - node_cycle
+    - valence_features
+
+train:
+  num_train_steps: 100000
+  save_path: logs/msg/baseline_no_ms2
+  save_steps: 4000
