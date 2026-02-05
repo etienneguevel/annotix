@@ -299,6 +299,10 @@ def train(cfg):
     else:
         scheduler = None
 
+    # Setup for distributed training
+    if cfg.train.get("distributed") is not None:
+        digress._setup_distributed(cfg.train.distributed, cfg.train.num_microbatches)
+
     # Start the training loop
     pbar = tqdm(enumerate(train_loader), desc="Training")
     for i, batch in pbar:
@@ -311,36 +315,57 @@ def train(cfg):
             for k, v in batch.items()
         }
 
-        # Do the forward backward loop
+        # Do the forward and loss computation
         try:
-            loss, epoch_metrics = digress.forward_backward(batch)
+            if digress.schedule:
+                epoch_metrics = {}
+
+                def loss_fn(outputs, target):
+                    loss, m = digress.compute_loss(target, outputs)
+                    nonlocal epoch_metrics
+                    epoch_metrics = m
+                    return loss
+
+                # forward with loss_fn triggers backward in PP
+                loss, _ = digress.forward(batch, loss_fn=loss_fn)
+            else:
+                outputs = digress.forward(batch)
+                loss, epoch_metrics = digress.compute_loss(batch, outputs)
+                loss.backward()
+
         except LinAlgError:
-            print("LinAlgError in forward_backward")
+            print("LinAlgError in forward or compute_loss")
             continue
 
-        for k, v in epoch_metrics.items():
-            if isinstance(v, torch.Tensor):
-                v = v.item()
-            train_metrics[k].append(v)
+        # If loss is None (on non-last ranks in PP), we skip logging but might still step optimizer
+        # usually optimizer is stepped on all ranks in PP
+        if loss is not None:
+            for k, v in epoch_metrics.items():
+                if isinstance(v, torch.Tensor):
+                    v = v.item()
+                train_metrics[k].append(v)
+
+            # Update the progress bar
+            lr = optimizer.param_groups[0]["lr"]
+            pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)  # pyright: ignore[reportArgumentType]
+
+            # Log training metrics to wandb
+            train_log = {
+                "train/loss": loss.item(),
+                "train/learning_rate": lr,
+                "step": i,
+            }
+            for k, v in epoch_metrics.items():
+                train_log[f"train/{k}"] = v
+
+            wandb.log(train_log)
 
         # Update the parameters
-        optimizer.zero_grad()
-        loss.backward()
         optimizer.step()
+        optimizer.zero_grad()
 
         if scheduler is not None:
             scheduler.step()
-
-        # Update the progress bar
-        lr = optimizer.param_groups[0]["lr"]
-        pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)  # pyright: ignore[reportArgumentType]
-
-        # Log training metrics to wandb
-        train_log = {"train/loss": loss.item(), "train/learning_rate": lr, "step": i}
-        for k, v in epoch_metrics.items():
-            train_log[f"train/{k}"] = v
-
-        wandb.log(train_log)
 
         # Start the evaluation
         if i % cfg.valid.num_eval_steps == 0:

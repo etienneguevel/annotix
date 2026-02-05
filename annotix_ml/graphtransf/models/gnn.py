@@ -123,10 +123,6 @@ class GnnNodeEdges(nn.Module):
         node_features = batch["node_features"]
         global_features = batch["global_features"]
 
-        # Capture inputs for residual connection
-        N_in = h.clone()
-        E_in = e.clone()
-
         for layer in self.layers:
             if isinstance(layer, EmbeddingLaplacian):
                 h, e, y, mask = layer(h, e, global_features, node_features, mask)
@@ -138,13 +134,6 @@ class GnnNodeEdges(nn.Module):
 
             # Symmetrize the edges matrices
             e = 1 / 2 * (e + e.transpose(1, 2))
-
-        # Add residual connections (skip connection from input to output)
-        h = h + N_in
-        e = e + E_in
-
-        # Re-symmetrize after adding residual
-        e = 1 / 2 * (e + e.transpose(1, 2))
 
         # Return the batch with updated node and edge features
         batch["nodes"] = h
@@ -263,9 +252,6 @@ class GnnNodeEdgesWithoutY(nn.Module):
         bs = h.shape[0]
         n = h.shape[1]
 
-        # Capture inputs for residual connection
-        N_in = h.clone()
-        E_in = e.clone()
         global_features = global_features.unsqueeze(1).expand((bs, n, -1))
         features = torch.cat([node_features, global_features], dim=-1)
 
@@ -280,13 +266,6 @@ class GnnNodeEdgesWithoutY(nn.Module):
 
             # Symmetrize the edges matrices
             e = 1 / 2 * (e + e.transpose(1, 2))
-
-        # Add residual connections (skip connection from input to output)
-        h = h + N_in
-        e = e + E_in
-
-        # Re-symmetrize after adding residual
-        e = 1 / 2 * (e + e.transpose(1, 2))
 
         # Return the batch with updated node and edge features
         batch["nodes"] = h

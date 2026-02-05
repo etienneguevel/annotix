@@ -166,8 +166,9 @@ def test_forward_backward_with_extra_features():
     )
     batch = {"nodes": N, "edges": E, "mask": mask}
 
-    # Test forward_backward
-    total_loss, *_ = meta_arch.forward_backward(batch)
+    # Test compute_loss
+    outputs = meta_arch.forward(batch)
+    total_loss, *_ = meta_arch.compute_loss(batch, outputs)
 
     assert total_loss is not None
     assert isinstance(total_loss, torch.Tensor)

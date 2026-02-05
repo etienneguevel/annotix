@@ -1,12 +1,14 @@
 import os
-from typing import Literal
+from typing import Any, Literal, Mapping
 
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
+from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
 from tqdm import tqdm
 
+from annotix_ml.distributed import get_global_rank
 from annotix_ml.distributed.pipeline_parallelism import iterative_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -149,6 +151,10 @@ class DigressMetaArch:
         # Make the loss
         self.loss = nn.CrossEntropyLoss()
 
+        # Put some variables in case of distributed training
+        self.rank = -1
+        self.schedule = None
+
     @classmethod
     def init_from_cfg(
         cls,
@@ -277,7 +283,7 @@ class DigressMetaArch:
 
         return node_features
 
-    def compute_extra_features(self, batch: dict):
+    def compute_extra_features(self, batch: Mapping[str, Any]):
         """
         Compute extra node and global features for the current graph state.
 
@@ -352,7 +358,7 @@ class DigressMetaArch:
 
         return pos_emb, y
 
-    def forward(self, batch):
+    def forward(self, batch: Mapping[str, Any], loss_fn: Any = None):
         """
         Run the forward pass: noise the input batch, then predict the clean graph.
         This method first adds noise to the input nodes and edges using `self.noiser`,
@@ -363,48 +369,78 @@ class DigressMetaArch:
                 - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
                 - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
                 - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
+            loss_fn (Callable, optional): Loss function to be used with the pipeline schedule.
+                If provided, `schedule.step` will compute the loss and perform backward pass.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
+        # make a copy of the batch to avoid in-place modification
+        # We prefer to keep the original batch as target if loss_fn is used
+        target = batch
+        batch = batch.copy()
+
         # unpack the elements of the batch
         N = batch["nodes"]
         E = batch["edges"]
         mask = batch["mask"]
 
-        # noise the graph
-        N_noised, E_noised, sampled_t = self.noiser(N, E, mask)
+        if self.schedule is None or self.rank == 0:
+            # noise the graph
+            N_noised, E_noised, sampled_t = self.noiser(N, E, mask)
 
-        # update the batch with noised elements
-        batch["nodes"] = N_noised
-        batch["edges"] = E_noised
-        batch["t"] = sampled_t
+            # update the batch with noised elements
+            batch["nodes"] = N_noised
+            batch["edges"] = E_noised
+            batch["t"] = sampled_t
 
-        # compute the extra features
-        pos_emb, y = self.compute_extra_features(
-            batch
-        )  # (bs, node_features), (bs, global_features)
-        batch["node_features"] = pos_emb
-        batch["global_features"] = y
+            # compute the extra features
+            pos_emb, y = self.compute_extra_features(
+                batch
+            )  # (bs, node_features), (bs, global_features)
+            batch["node_features"] = pos_emb
+            batch["global_features"] = y
 
         # Compute the output of the diffuser
-        batch = self.diffuser(batch)  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        if self.schedule:
+            if self.rank == 0:
+                out = self.schedule.step(batch, target=target, loss_fn=loss_fn)
+            else:
+                out = self.schedule.step(target=None, loss_fn=loss_fn)
+
+            # In PP, only the last stage returns the output
+            if out is None:
+                return None, None
+
+            # If loss_fn is provided, out is the loss
+            if loss_fn is not None:
+                return out, None
+
+            # Otherwise it is the batch
+            batch = out
+
+        else:
+            batch = self.diffuser(batch)  # (bs, n, n_atoms), (bs, n, n, n_edges)
+
         pN = batch["nodes"]
         pE = batch["edges"]
 
         return pN, pE
 
-    def forward_backward(self, batch):
+    def compute_loss(self, batch: Mapping[str, Any], outputs: [torch.Tensor]):
         """
-        Compute the forward pass followed by the loss and metrics computation.
+        Compute the loss and metrics based on the original batch and the model outputs.
 
         Args:
             batch (dict[str, torch.Tensor]): A dictionary containing:
                 - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
                 - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
                 - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
+            outputs (tuple[torch.Tensor, torch.Tensor]): A tuple containing:
+                - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
+                - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
 
         Returns:
             tuple[torch.Tensor, dict]: A tuple containing:
@@ -416,8 +452,8 @@ class DigressMetaArch:
         E = batch["edges"]
         mask = batch["mask"]
 
-        # Compute the output of the diffuser
-        pN, pE = self.forward(batch)  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        # unpack the outputs
+        pN, pE = outputs
 
         # Compute the losses
         # Node loss
@@ -629,9 +665,14 @@ class DigressMetaArch:
 
         raise LinAlgError("Impossible to generate graphs with current model.")
 
-    def _setup_distributed(self, mode: Literal["pipeline", "tensor"]):
+    def _setup_distributed(
+        self, mode: Literal["pipeline", "tensor"], num_microbatches: int
+    ):
         if mode == "pipeline":
-            self.diffuser = iterative_model_split(self.diffuser)
+            stage = iterative_model_split(self.diffuser)
+            self.schedule = ScheduleGPipe(stage, num_microbatches)
+            self.rank = get_global_rank()
+
         elif mode == "tensor":
             pass
         else:

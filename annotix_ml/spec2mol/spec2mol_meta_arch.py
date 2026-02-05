@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal, Mapping
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -258,7 +258,7 @@ class Spec2MolMetaArch(DigressMetaArch):
 
         return node_features
 
-    def compute_extra_features(self, batch: dict):
+    def compute_extra_features(self, batch: Mapping[str, Any]):
         """
         Compute extra node and global features for the current graph state.
 

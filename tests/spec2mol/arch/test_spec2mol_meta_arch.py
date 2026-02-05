@@ -114,8 +114,9 @@ def test_spec2mol_meta_arch_forward_backward():
     assert p_n.shape[-1] == len(dataset.valid_elements)
     assert p_e.shape[-1] == len(TYPE_EDGES)
 
-    # 3. Test forward_backward
-    loss, metrics = model.forward_backward(batch)
+    # 3. Test compute_loss
+    outputs = model.forward(batch)
+    loss, metrics = model.compute_loss(batch, outputs)
 
     assert loss is not None
     assert isinstance(loss, torch.Tensor)
