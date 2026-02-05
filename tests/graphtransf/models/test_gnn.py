@@ -122,4 +122,17 @@ def test_model_forward():
     )
 
     # Test the forward function
-    h, e, mask = model.forward(N, E, pos_emb, y, mask)
+    batch = {
+        "nodes": N,
+        "edges": E,
+        "node_features": pos_emb,
+        "global_features": y,
+        "mask": mask,
+    }
+    batch = model.forward(batch)
+    h, e = batch["nodes"], batch["edges"]
+    mask_out = batch["mask"]
+
+    assert h.shape == (bs, n, natoms)
+    assert e.shape == (bs, n, n, nbonds)
+    assert mask_out.shape == (bs, n)

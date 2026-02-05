@@ -23,6 +23,7 @@ from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import compute_metrics
 from annotix_ml.graphtransf.train.setup import setup
+from annotix_ml.distributed import enable
 
 
 def get_args():
@@ -399,6 +400,7 @@ def train(cfg):
 def main():
     args = get_args()
     cfg = setup(args)
+    enable(overwrite=True)
     train(cfg)
 
 

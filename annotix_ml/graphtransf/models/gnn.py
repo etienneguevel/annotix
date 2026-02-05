@@ -96,45 +96,40 @@ class GnnNodeEdges(nn.Module):
 
     def forward(
         self,
-        N: torch.Tensor,
-        E: torch.Tensor,
-        node_features: torch.Tensor,
-        global_features: torch.Tensor,
-        mask: torch.Tensor,
-    ):
+        batch: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
         """
         Forward pass of the GNN model.
 
         Args:
-            N (torch.Tensor): Node features of shape (bs, n, natoms).
-            E (torch.Tensor): Edge features of shape (bs, n, n, nedges).
-            node_features (torch.Tensor): Extra node features of shape (bs, n, node_features).
-            global_features (torch.Tensor): Extra global features of shape (bs, global_features).
-            mask (torch.Tensor): Mask tensor of shape (bs, n).
+            batch (dict[str, torch.Tensor]): A dictionary containing:
+                - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
+                - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
+                - "node_features" (torch.Tensor): Extra node features of shape (bs, n, node_features).
+                - "global_features" (torch.Tensor): Extra global features of shape (bs, global_features).
+                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
-                - h (torch.Tensor): Updated node features of shape (bs, n, natoms).
-                - e (torch.Tensor): Updated edge features of shape (bs, n, n, nedges).
-                - mask (torch.Tensor): The input mask tensor.
+            dict[str, torch.Tensor]: The input batch dictionary with updated keys:
+                - "nodes" (torch.Tensor): Updated node features of shape (bs, n, d).
+                - "edges" (torch.Tensor): Updated edge features of shape (bs, n, n, de).
         """
         # h -> nodes (bs, n, d)
         # e -> edges (bs, n, n, de)
         # y -> global_features (bs, dy)
-
-        # diag_mask = torch.eye(n)  # (n, n)
-        # diag_mask = ~diag_mask.type_as(E).bool()
-        # diag_mask = (
-        #     diag_mask.unsqueeze(0).unsqueeze(-1).expand((bs, -1, -1, -1))
-        # )  # (bs, n, n, 1)
+        h = batch["nodes"]
+        e = batch["edges"]
+        mask = batch["mask"]
+        node_features = batch["node_features"]
+        global_features = batch["global_features"]
 
         # Capture inputs for residual connection
-        N_in = N
-        E_in = E
+        N_in = h.clone()
+        E_in = e.clone()
 
-        for i, layer in enumerate(self.layers):
-            if i == 0:
-                h, e, y, mask = layer(N, E, global_features, node_features, mask)
+        for layer in self.layers:
+            if isinstance(layer, EmbeddingLaplacian):
+                h, e, y, mask = layer(h, e, global_features, node_features, mask)
                 # Symmetrize edges at the beginning
                 e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
 
@@ -145,15 +140,18 @@ class GnnNodeEdges(nn.Module):
             e = 1 / 2 * (e + e.transpose(1, 2))
 
         # Add residual connections (skip connection from input to output)
-        # Note: This assumes the output dimensions match the input dimensions (natoms/nbonds)
-        # which is true for MLPNodeEdge and Unembedding layers.
         h = h + N_in
         e = e + E_in
 
         # Re-symmetrize after adding residual
         e = 1 / 2 * (e + e.transpose(1, 2))
 
-        return h, e, mask
+        # Return the batch with updated node and edge features
+        batch["nodes"] = h
+        batch["edges"] = e
+        batch["mask"] = mask
+
+        return batch
 
 
 class GnnNodeEdgesWithoutY(nn.Module):
@@ -234,50 +232,46 @@ class GnnNodeEdgesWithoutY(nn.Module):
 
     def forward(
         self,
-        N: torch.Tensor,
-        E: torch.Tensor,
-        node_features: torch.Tensor,
-        global_features: torch.Tensor,
-        mask: torch.Tensor,
-    ):
+        batch: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
         """
         Forward pass of the GNN model without global feature updates.
 
         Args:
-            N (torch.Tensor): Node features of shape (bs, n, natoms).
-            E (torch.Tensor): Edge features of shape (bs, n, n, nedges).
-            node_features (torch.Tensor): Extra node features of shape (bs, n, node_features).
-            global_features (torch.Tensor): Extra global features of shape (bs, global_features).
-            mask (torch.Tensor): Mask tensor of shape (bs, n).
+            batch (dict[str, torch.Tensor]): A dictionary containing:
+                - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
+                - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
+                - "node_features" (torch.Tensor): Extra node features of shape (bs, n, node_features).
+                - "global_features" (torch.Tensor): Extra global features of shape (bs, global_features).
+                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
-                - h (torch.Tensor): Updated node features of shape (bs, n, natoms).
-                - e (torch.Tensor): Updated edge features of shape (bs, n, n, nedges).
-                - mask (torch.Tensor): The input mask tensor.
+            dict[str, torch.Tensor]: The input batch dictionary with updated keys:
+                - "nodes" (torch.Tensor): Updated node features of shape (bs, n, d).
+                - "edges" (torch.Tensor): Updated edge features of shape (bs, n, n, de).
         """
         # h -> nodes (bs, n, d)
         # e -> edges (bs, n, n, de)
         # y -> global_features (bs, dy)
         # node_features -> node_features (bs, n, node_features)
-        bs = N.shape[0]
-        n = N.shape[1]
+        h = batch["nodes"]
+        e = batch["edges"]
+        mask = batch["mask"]
+        node_features = batch["node_features"]
+        global_features = batch["global_features"]
 
-        # diag_mask = torch.eye(n)  # (n, n)
-        # diag_mask = ~diag_mask.type_as(E).bool()
-        # diag_mask = (
-        #     diag_mask.unsqueeze(0).unsqueeze(-1).expand((bs, -1, -1, -1))
-        # )  # (bs, n, n, 1)
+        bs = h.shape[0]
+        n = h.shape[1]
 
         # Capture inputs for residual connection
-        N_in = N
-        E_in = E
+        N_in = h.clone()
+        E_in = e.clone()
         global_features = global_features.unsqueeze(1).expand((bs, n, -1))
         features = torch.cat([node_features, global_features], dim=-1)
 
-        for i, layer in enumerate(self.layers):
-            if i == 0:
-                h, e, mask = layer(N, E, features, mask)
+        for layer in self.layers:
+            if isinstance(layer, EmbeddingLaplacianWithoutY):
+                h, e, mask = layer(h, e, features, mask)
                 # Symmetrize edges at the beginning
                 e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
 
@@ -288,15 +282,18 @@ class GnnNodeEdgesWithoutY(nn.Module):
             e = 1 / 2 * (e + e.transpose(1, 2))
 
         # Add residual connections (skip connection from input to output)
-        # Note: This assumes the output dimensions match the input dimensions (natoms/nbonds)
-        # which is true for MLPNodeEdge and Unembedding layers.
         h = h + N_in
         e = e + E_in
 
         # Re-symmetrize after adding residual
         e = 1 / 2 * (e + e.transpose(1, 2))
 
-        return h, e, mask
+        # Return the batch with updated node and edge features
+        batch["nodes"] = h
+        batch["edges"] = e
+        batch["mask"] = mask
+
+        return batch
 
 
 # Make different size of the model

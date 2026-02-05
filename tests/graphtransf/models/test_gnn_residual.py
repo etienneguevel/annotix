@@ -49,7 +49,15 @@ def test_gnn_residual_connection():
     y = torch.randn(bs, global_features)  # Not used in residual but needed for forward
 
     # Forward pass
-    h_out, e_out, mask_out = model(N, E, pos_emb, y, mask)
+    batch = {
+        "nodes": N,
+        "edges": E,
+        "node_features": pos_emb,
+        "global_features": y,
+        "mask": mask,
+    }
+    batch = model(batch)
+    h_out, e_out = batch["nodes"], batch["edges"]
 
     # Expected output for h is N (since network output is 0)
     # But we need to consider that the network output might be masked?

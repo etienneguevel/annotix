@@ -7,6 +7,7 @@ from omegaconf import DictConfig
 from torch.linalg import LinAlgError
 from tqdm import tqdm
 
+from annotix_ml.distributed.pipeline_parallelism import iterative_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
@@ -385,11 +386,13 @@ class DigressMetaArch:
         pos_emb, y = self.compute_extra_features(
             batch
         )  # (bs, node_features), (bs, global_features)
+        batch["node_features"] = pos_emb
+        batch["global_features"] = y
 
         # Compute the output of the diffuser
-        pN, pE, _ = self.diffuser(
-            batch["nodes"], batch["edges"], pos_emb, y, mask
-        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        batch = self.diffuser(batch)  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        pN = batch["nodes"]
+        pE = batch["edges"]
 
         return pN, pE
 
@@ -578,9 +581,16 @@ class DigressMetaArch:
                     }
                     pos_emb, y = self.compute_extra_features(temp_batch)
 
-                    pN, pE, _ = self.diffuser(
-                        N, E, pos_emb, y, mask
-                    )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                    batch_denoise = {
+                        "nodes": N,
+                        "edges": E,
+                        "node_features": pos_emb,
+                        "global_features": y,
+                        "mask": mask,
+                    }
+                    batch_denoise = self.diffuser(batch_denoise)
+                    pN = batch_denoise["nodes"]
+                    pE = batch_denoise["edges"]
 
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                     pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
@@ -618,3 +628,11 @@ class DigressMetaArch:
                 i += 1
 
         raise LinAlgError("Impossible to generate graphs with current model.")
+
+    def _setup_distributed(self, mode: Literal["pipeline", "tensor"]):
+        if mode == "pipeline":
+            self.diffuser = iterative_model_split(self.diffuser)
+        elif mode == "tensor":
+            pass
+        else:
+            raise ValueError(f"{mode} is not a recognized distributed mode.")
