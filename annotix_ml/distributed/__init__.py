@@ -272,7 +272,12 @@ def enable(
             _check_env_variable(key, value)
         os.environ[key] = value
 
-    dist.init_process_group(backend="nccl")
+    dist.init_process_group(
+        backend="nccl",
+        world_size=torch_env.world_size,
+        rank=torch_env.rank,
+        device_id=torch_env.local_rank,
+    )
     dist.barrier()
 
     # Finalize setup
