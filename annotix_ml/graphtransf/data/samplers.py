@@ -4,7 +4,7 @@ from typing import Any
 import torch
 from torch.utils.data.sampler import Sampler
 
-import annotix_ml.graphtransf.distributed as distributed
+import annotix_ml.distributed as distributed
 
 
 def _get_torch_dtype(size: int) -> Any:
