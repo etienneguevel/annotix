@@ -276,7 +276,7 @@ def enable(
         backend="nccl",
         world_size=torch_env.world_size,
         rank=torch_env.rank,
-        device_id=torch_env.local_rank,
+        device_id=torch.device("cuda", torch_env.local_rank),
     )
     dist.barrier()
 
