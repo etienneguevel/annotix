@@ -5,8 +5,7 @@ run:
 
 dataset:
   data_dir: data/msg
-  data_path: data/msg/labels.tsv
-  val_tag:
+  data_path: data/msg/labels_.csv
   split_file: data/msg/split.tsv
   spec_folder: data/msg/spec_files
   subform_folder: data/msg/subformulae/default_subformulae
