@@ -55,7 +55,7 @@ def do_eval(
         N, E, mask = (
             batch["nodes"],
             batch["edges"],
-            batch["node_mask"],
+            batch["mask"],
         )  # (bs, n, n_atoms), (bs, n, n, n_edges), (bs,)
 
         # Compute the predictions

@@ -50,7 +50,7 @@ def collateGraph(
         [torch.cat([torch.ones(m), torch.zeros(n_batch - m)]) for m in num_atoms]
     )  # (bs, n_batch)
 
-    return {"nodes": N_padded, "edges": E_padded, "node_mask": mask}
+    return {"nodes": N_padded, "edges": E_padded, "mask": mask}
 
 
 def collateGraphJagged(batch: list[tuple[torch.Tensor]]):
