@@ -26,3 +26,5 @@ train:
   num_train_steps: 100000
   save_path: logs/msg/baseline_no_ms2
   save_steps: 4000
+  distributed: "pipeline"
+  num_microbatches: 4
