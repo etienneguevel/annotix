@@ -12,6 +12,7 @@ from torch.linalg import LinAlgError
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import annotix_ml.distributed as dist
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.datacollator import collateGraph
 from annotix_ml.graphtransf.data.data_utils import (
@@ -173,11 +174,13 @@ def generate_samples(
 
 def train(cfg):
     # Initialize wandb
-    wandb.init(
-        project=cfg.run.project,
-        name=cfg.run.name,
-        config=OmegaConf.to_container(cfg, resolve=True),
-    )
+    if dist.is_enabled():
+        if dist.is_main_process():
+            wandb.init(
+                project=cfg.run.project,
+                name=cfg.run.name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+            )
 
     # Select the device for the training
     device = (
