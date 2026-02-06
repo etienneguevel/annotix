@@ -49,6 +49,7 @@ class GraphDatasetFromSMILEs(Dataset):
         split_column: str | None = None,
         valid_elements: list[str] | None = None,
         sanitizer: Callable | None = None,
+        verbose: bool = True,
     ):
         """
         Initialize the GraphDatasetFromSMILEs.
@@ -91,7 +92,7 @@ class GraphDatasetFromSMILEs(Dataset):
         # Get the valid smiles, and compute node / edges distributions -> for noise schedule
         # Get the valid smiles, and compute node / edges distributions -> for noise schedule
         smiles_nodes_edges = []
-        for sm in tqdm(smiles_list, desc="Building graph"):
+        for sm in tqdm(smiles_list, desc="Building graph", disable=not verbose):
             graph = self.smilesToGraph(sm)
             if graph is None:
                 continue

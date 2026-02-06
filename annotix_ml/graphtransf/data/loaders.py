@@ -7,6 +7,7 @@ def make_datasets(
     smile_column: str = "smiles",
     split_column: str = "fold",
     val_tag: str | None = "test",
+    verbose: bool = True,
 ):
     # Make the datasets
     train_dataset = GraphDatasetFromSMILEs(
@@ -15,6 +16,7 @@ def make_datasets(
         split="train",
         split_column=split_column,
         sanitizer=graph_to_smiles_digress,
+        verbose=verbose,
     )
     valid_dataset = GraphDatasetFromSMILEs(
         data=data_path,
@@ -22,6 +24,7 @@ def make_datasets(
         split=val_tag,
         split_column=split_column,
         sanitizer=graph_to_smiles_digress,
+        verbose=verbose,
     )
 
     return train_dataset, valid_dataset

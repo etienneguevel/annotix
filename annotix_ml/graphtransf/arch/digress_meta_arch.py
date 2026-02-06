@@ -1,3 +1,4 @@
+import copy
 import os
 from typing import Any, Literal, Mapping
 
@@ -378,9 +379,7 @@ class DigressMetaArch:
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
         # make a copy of the batch to avoid in-place modification
-        # We prefer to keep the original batch as target if loss_fn is used
-        target = batch
-        batch = batch.copy()
+        batch = copy.deepcopy(batch)
 
         # unpack the elements of the batch
         N = batch["nodes"]
@@ -406,17 +405,9 @@ class DigressMetaArch:
         # Compute the output of the diffuser
         if self.schedule:
             if self.rank == 0:
-                out = self.schedule.step(batch, target=target, loss_fn=loss_fn)
+                out = self.schedule.step(batch)
             else:
-                out = self.schedule.step(target=None, loss_fn=loss_fn)
-
-            # In PP, only the last stage returns the output
-            if out is None:
-                return None, None
-
-            # If loss_fn is provided, out is the loss
-            if loss_fn is not None:
-                return out, None
+                out = self.schedule.step()
 
             # Otherwise it is the batch
             batch = out

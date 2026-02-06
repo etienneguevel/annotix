@@ -174,13 +174,12 @@ def generate_samples(
 
 def train(cfg):
     # Initialize wandb
-    if dist.is_enabled():
-        if dist.is_main_process():
-            wandb.init(
-                project=cfg.run.project,
-                name=cfg.run.name,
-                config=OmegaConf.to_container(cfg, resolve=True),
-            )
+    if dist.is_main_process():
+        wandb.init(
+            project=cfg.run.project,
+            name=cfg.run.name,
+            config=OmegaConf.to_container(cfg, resolve=True),
+        )
 
     # Select the device for the training
     device = (
@@ -197,6 +196,7 @@ def train(cfg):
         cfg.dataset.smile_column,
         cfg.dataset.split_column,
         cfg.dataset.val_tag,
+        verbose=dist.is_main_process(),
     )
 
     # Make the DataLoaders
@@ -307,7 +307,9 @@ def train(cfg):
         digress._setup_distributed(cfg.train.distributed, cfg.train.num_microbatches)
 
     # Start the training loop
-    pbar = tqdm(enumerate(train_loader), desc="Training")
+    pbar = tqdm(
+        enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
+    )
     for i, batch in pbar:
         # Make the model in train mode
         digress.diffuser.train()
@@ -320,21 +322,9 @@ def train(cfg):
 
         # Do the forward and loss computation
         try:
-            if digress.schedule:
-                epoch_metrics = {}
-
-                def loss_fn(outputs, target):
-                    loss, m = digress.compute_loss(target, outputs)
-                    nonlocal epoch_metrics
-                    epoch_metrics = m
-                    return loss
-
-                # forward with loss_fn triggers backward in PP
-                loss, _ = digress.forward(batch, loss_fn=loss_fn)
-            else:
-                outputs = digress.forward(batch)
-                loss, epoch_metrics = digress.compute_loss(batch, outputs)
-                loss.backward()
+            outputs = digress.forward(batch)
+            loss, epoch_metrics = digress.compute_loss(batch, outputs)
+            loss.backward()
 
         except LinAlgError:
             print("LinAlgError in forward or compute_loss")
