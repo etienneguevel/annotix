@@ -1,9 +1,26 @@
-from collections import OrderedDict
-
 import torch
 import torch.nn as nn
 
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
+
+
+class Ffn(nn.Module):
+    def __init__(self, d, dropout=0.1):
+        super().__init__()
+        self.feedforward = nn.ModuleList(
+            [
+                nn.Linear(d, 2 * d),
+                nn.Dropout(dropout),
+                nn.ReLU(),
+                nn.Linear(2 * d, d),
+                nn.Dropout(dropout),
+            ]
+        )
+
+    def forward(self, x):
+        for layer in self.feedforward:
+            x = layer(x)
+        return x
 
 
 class FfnNodeEdge(nn.Module):
@@ -37,30 +54,10 @@ class FfnNodeEdge(nn.Module):
         # Init the FFN for nodes
         self.d = d
         self.de = de
-        self.feedforward_N = nn.Sequential(
-            OrderedDict(
-                [
-                    ("W1", nn.Linear(d, 2 * d)),
-                    ("Dropout1", nn.Dropout(dropout)),
-                    ("ReLU", nn.ReLU()),
-                    ("W2", nn.Linear(2 * d, d)),
-                    ("Dropout2", nn.Dropout(dropout)),
-                ]
-            )
-        )
+        self.feedforward_N = Ffn(d, dropout)
 
         # Init the FFN for edges
-        self.feedforward_E = nn.Sequential(
-            OrderedDict(
-                [
-                    ("W1", nn.Linear(de, 2 * de)),
-                    ("Dropout1", nn.Dropout(dropout)),
-                    ("ReLU", nn.ReLU()),
-                    ("W2", nn.Linear(2 * de, de)),
-                    ("Dropout2", nn.Dropout(dropout)),
-                ]
-            )
-        )
+        self.feedforward_E = Ffn(de, dropout)
 
         # Make the norm layer.
         self.norm_N = nn.LayerNorm(d)
