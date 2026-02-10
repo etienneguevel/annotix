@@ -177,10 +177,12 @@ class GnnNodeEdgesWithoutY(nn.Module):
         )
 
         # Build the attention layers
-        self.layers = [AttentionLayerWithoutY(d, de, n_heads) for _ in range(n_layers)]
+        layers = [AttentionLayerWithoutY(d, de, n_heads) for _ in range(n_layers)]
 
         # Build the last layer
-        self.layers.append(MLPNodeEdgeWithoutY(d, de, natoms, nbonds))
+        layers.append(MLPNodeEdgeWithoutY(d, de, natoms, nbonds))
+
+        self.layers = nn.ModuleList(layers)
 
     def forward(
         self,
