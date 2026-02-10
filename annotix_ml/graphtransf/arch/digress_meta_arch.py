@@ -645,6 +645,7 @@ class DigressMetaArch:
             t = torch.randint(1, self.noiser.T, (bs,), device=self.device).unsqueeze(1)
             pos_emb, y = self.compute_extra_features(N, E, mask, t=t)
             example_input = (N, E, y, pos_emb, mask)
+            example_input = tuple(x.to(self.device) for x in example_input)
 
             stage = iterative_model_split(self.diffuser, example_input)
             self.schedule = ScheduleGPipe(stage, num_microbatches)
