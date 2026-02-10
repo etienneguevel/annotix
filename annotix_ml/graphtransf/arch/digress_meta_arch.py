@@ -640,7 +640,11 @@ class DigressMetaArch:
         self, mode: Literal["pipeline", "tensor"], num_microbatches: int, example_batch
     ):
         if mode == "pipeline":
-            stage = iterative_model_split(self.diffuser, example_batch)
+            N, E, mask = example_batch
+            pos_emb, y = self.compute_extra_features(N, E, mask, t=0)
+            example_input = (N, E, y, pos_emb, mask)
+
+            stage = iterative_model_split(self.diffuser, example_input)
             self.schedule = ScheduleGPipe(stage, num_microbatches)
             self.rank = get_global_rank()
 
