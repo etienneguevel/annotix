@@ -172,20 +172,15 @@ class GnnNodeEdgesWithoutY(nn.Module):
         self.n_layers = n_layers
 
         # Make the Embedding layer
-        layers: list[nn.Module] = [
-            EmbeddingLaplacianWithoutY(
-                d, de, node_features + global_features, natoms, nbonds
-            )
-        ]
+        self.embedding_layer = EmbeddingLaplacianWithoutY(
+            d, de, node_features + global_features, natoms, nbonds
+        )
 
         # Build the attention layers
-        for _ in range(n_layers):
-            layers.append(AttentionLayerWithoutY(d, de, n_heads))
+        self.layers = [AttentionLayerWithoutY(d, de, n_heads) for _ in range(n_layers)]
 
         # Build the last layer
-        layers.append(MLPNodeEdgeWithoutY(d, de, natoms, nbonds))
-
-        self.layers = nn.ModuleList(layers)
+        self.layers.append(MLPNodeEdgeWithoutY(d, de, natoms, nbonds))
 
     def forward(
         self,
@@ -221,12 +216,16 @@ class GnnNodeEdgesWithoutY(nn.Module):
         )
         features = torch.cat([node_features, global_features_expanded], dim=-1)
 
-        for layer in self.layers:
-            if isinstance(layer, EmbeddingLaplacianWithoutY):
-                h, e, mask = layer(h, e, features, mask)
+        h, e, mask = (
+            self.embedding_layer(h, e, features, mask)
+            if self.embedding_layer
+            else (h, e, mask)
+        )
 
-            else:
-                h, e, mask = layer(h, e, mask)
+        e = 1 / 2 * (e + e.transpose(1, 2))
+
+        for layer in self.layers:
+            h, e, mask = layer(h, e, mask)
 
             # Symmetrize the edges matrices
             e = 1 / 2 * (e + e.transpose(1, 2))
