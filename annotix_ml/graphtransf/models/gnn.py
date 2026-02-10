@@ -9,7 +9,6 @@ from annotix_ml.graphtransf.layers import (
     EmbeddingLaplacianWithoutY,
     MLPNodeEdge,
     MLPNodeEdgeWithoutY,
-    Unembedding,
 )
 
 
@@ -31,7 +30,6 @@ class GnnNodeEdges(nn.Module):
         natoms (int): Number of output node types (e.g., atom types).
         nbonds (int): Number of output edge types (e.g., bond types).
         y_update (bool, optional): Whether to update global features in the attention layers. Defaults to True.
-        last_layer (str, optional): Type of the last layer ("mlp" or "unembedding"). Defaults to "mlp".
     """
 
     def __init__(
@@ -46,7 +44,6 @@ class GnnNodeEdges(nn.Module):
         natoms: int,
         nbonds: int,
         y_update: bool = True,
-        last_layer: str = "mlp",
     ):
         """
         Initialize the GnnNodeEdges model.
@@ -62,7 +59,6 @@ class GnnNodeEdges(nn.Module):
             natoms (int): Number of output node types.
             nbonds (int): Number of output edge types.
             y_update (bool, optional): Whether to update global features. Defaults to True.
-            last_layer (str, optional): Type of the last layer ("mlp" or "unembedding"). Defaults to "mlp".
         """
         super().__init__()
         self.d = d
@@ -82,16 +78,8 @@ class GnnNodeEdges(nn.Module):
             layers.append(AttentionLayer(d, de, dy, n_heads, y_update))
 
         # Build the last layer
-        if last_layer == "mlp":
-            layers.append(MLPNodeEdge(d, de, natoms, nbonds))
+        layers.append(MLPNodeEdge(d, de, natoms, nbonds))
 
-        elif last_layer == "unembedding":
-            layers.append(Unembedding(layers[0]))
-
-        else:
-            raise ValueError(f"Unknown last layer: {last_layer}")
-
-        # Build the unembedding layer
         self.layers = nn.ModuleList(layers)
 
     def forward(
@@ -152,7 +140,6 @@ class GnnNodeEdgesWithoutY(nn.Module):
         n_layers (int): Number of attention layers.
         natoms (int): Number of output node types.
         nbonds (int): Number of output edge types.
-        last_layer (str, optional): Type of the last layer ("mlp" or "unembedding"). Defaults to "mlp".
     """
 
     def __init__(
@@ -165,7 +152,6 @@ class GnnNodeEdgesWithoutY(nn.Module):
         n_layers: int,
         natoms: int,
         nbonds: int,
-        last_layer: str = "mlp",
     ):
         """
         Initialize the GnnNodeEdgesWithoutY model.
@@ -179,7 +165,6 @@ class GnnNodeEdgesWithoutY(nn.Module):
             n_layers (int): Number of attention layers.
             natoms (int): Number of output node types.
             nbonds (int): Number of output edge types.
-            last_layer (str, optional): Type of the last layer ("mlp" or "unembedding"). Defaults to "mlp".
         """
         super().__init__()
         self.d = d
@@ -198,16 +183,8 @@ class GnnNodeEdgesWithoutY(nn.Module):
             layers.append(AttentionLayerWithoutY(d, de, n_heads))
 
         # Build the last layer
-        if last_layer == "mlp":
-            layers.append(MLPNodeEdgeWithoutY(d, de, natoms, nbonds))
+        layers.append(MLPNodeEdgeWithoutY(d, de, natoms, nbonds))
 
-        elif last_layer == "unembedding":
-            layers.append(Unembedding(layers[0]))
-
-        else:
-            raise ValueError(f"Unknown last layer: {last_layer}")
-
-        # Build the unembedding layer
         self.layers = nn.ModuleList(layers)
 
     def forward(

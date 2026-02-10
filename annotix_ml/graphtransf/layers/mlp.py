@@ -22,6 +22,9 @@ class MLP(nn.Module):
             d_out (int): Output dimension.
         """
         super().__init__()
+        self.d = d
+        self.d_hidden = d_hidden
+        self.d_out = d_out
         self.net = nn.Sequential(
             nn.Linear(d, d_hidden),
             nn.SiLU(),

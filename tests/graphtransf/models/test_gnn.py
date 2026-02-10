@@ -7,7 +7,6 @@ from annotix_ml.graphtransf.layers import (
     EmbeddingLaplacian,
     FfnNodeEdge,
     MultiHeadEdgeNodeWithY,
-    Unembedding,
     MLPNodeEdge,
 )
 from annotix_ml.graphtransf.math.extra_features import laplacian_embedding, node_cycle
@@ -36,7 +35,6 @@ def test_model_creation():
         n_layers=n_layers,
         natoms=natoms,
         nbonds=nbonds,
-        last_layer="unembedding",
     )
     embedding_layer = model.layers.pop(0)
     unembedding_layer = model.layers.pop(-1)
@@ -44,8 +42,9 @@ def test_model_creation():
     assert type(embedding_layer) is EmbeddingLaplacian
     assert (embedding_layer.d == d) & (embedding_layer.node_features == k)
 
-    assert type(unembedding_layer) is Unembedding
-    assert unembedding_layer.embedding_layer is embedding_layer
+    assert type(unembedding_layer) is MLPNodeEdge
+    assert unembedding_layer.MLPN.d_out == natoms
+    assert unembedding_layer.MLPE.d_out == nbonds
 
     assert len(model.layers) == n_layers
     for layer in model.layers:
@@ -69,7 +68,6 @@ def test_model_creation():
         n_layers=n_layers,
         natoms=natoms,
         nbonds=nbonds,
-        last_layer="mlp",
     )
     assert isinstance(model.layers[-1], MLPNodeEdge)
 

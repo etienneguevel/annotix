@@ -49,7 +49,6 @@ class DigressMetaArch:
         edges_distribution (torch.Tensor | None, optional): Marginal distribution of edge types. Required if noise_strategy is "distribution".
         k (int | None, optional): Number of eigenvectors for Laplacian embedding. Required if "laplacian_embedding" is in `extra_features`.
         extra_features (list[str] | None, optional): List of names of extra features to compute.
-        last_layer (Literal["mlp", "unembedding"], optional): Type of the last layer in the GNN. Defaults to "mlp".
         max_weight (float | None, optional): Maximum molecular weight for normalization. Required if "valence_features" is in `extra_features`.
     """
 
@@ -73,7 +72,6 @@ class DigressMetaArch:
         edges_distribution: torch.Tensor | None = None,
         k: int | None = None,
         extra_features: list[str] | None = None,
-        last_layer: Literal["mlp", "unembedding"] = "mlp",
         max_weight: float | None = None,
     ):
         # Store information
@@ -104,7 +102,6 @@ class DigressMetaArch:
                 n_layers=n_layers,
                 natoms=self.natoms,
                 nbonds=self.nbonds,
-                last_layer=last_layer,
             ).to(device)
 
         else:
@@ -119,7 +116,6 @@ class DigressMetaArch:
                 n_layers=n_layers,
                 natoms=self.natoms,
                 nbonds=self.nbonds,
-                last_layer=last_layer,
             ).to(device)
 
         self.no_y = no_y
@@ -198,7 +194,6 @@ class DigressMetaArch:
             device=device,
             k=cfg.model.num_ev,
             extra_features=cfg.model.extra_features,
-            last_layer=cfg.model.last_layer,
             valid_elements=valid_elements,
             nodes_distribution=nodes_distribution,
             edges_distribution=edges_distribution,
