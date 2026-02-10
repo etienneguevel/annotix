@@ -59,9 +59,20 @@ def test_spec2mol_meta_arch_forward_backward():
 
     # Collate
     loader = DataLoader(dataset, batch_size=2, collate_fn=graph_spec_collate_fn)
-    batch = next(iter(loader))
-    batch["nodes"] = batch["nodes"].float()
-    batch["edges"] = batch["edges"].float()
+    (
+        nodes,
+        edges,
+        mask,
+        num_peaks,
+        types,
+        instruments,
+        ion_vec,
+        form_vec,
+        intens,
+        smiles,
+    ) = next(iter(loader))
+    nodes = nodes.float()
+    edges = edges.float()
 
     # Init model
     device = torch.device("cpu")
@@ -76,23 +87,21 @@ def test_spec2mol_meta_arch_forward_backward():
 
     # 1. Test compute_extra_features
     # We need a timestep 't' in the batch for compute_extra_features
-    batch["t"] = torch.randint(
-        1, cfg.model.diffusion_steps, (batch["nodes"].shape[0], 1)
-    )
+    t = torch.randint(1, cfg.model.diffusion_steps, (nodes.shape[0], 1))
 
     # Ensure all required spectra keys are in batch
-    required_keys = [
-        "num_peaks",
-        "types",
-        "instruments",
-        "ion_vec",
-        "form_vec",
-        "intens",
-    ]
-    for key in required_keys:
-        assert key in batch, f"Missing key {key} in batch"
-
-    pos_emb, y = model.compute_extra_features(batch)
+    pos_emb, y = model.compute_extra_features(
+        nodes=nodes,
+        edges=edges,
+        mask=mask,
+        t=t,
+        num_peaks=num_peaks,
+        types=types,
+        instruments=instruments,
+        ion_vec=ion_vec,
+        form_vec=form_vec,
+        intens=intens,
+    )
 
     assert pos_emb.shape[0] == 2
     assert y.shape[0] == 2
@@ -107,7 +116,17 @@ def test_spec2mol_meta_arch_forward_backward():
     # DigressMetaArch might expect "mask" or something else.
     # Looking at digress_meta_arch.py, it uses batch["mask"]
 
-    p_n, p_e = model.forward(batch)
+    p_n, p_e = model.forward(
+        nodes=nodes,
+        edges=edges,
+        mask=mask,
+        num_peaks=num_peaks,
+        types=types,
+        instruments=instruments,
+        ion_vec=ion_vec,
+        form_vec=form_vec,
+        intens=intens,
+    )
 
     assert p_n.shape[0] == 2
     assert p_e.shape[0] == 2
@@ -115,8 +134,21 @@ def test_spec2mol_meta_arch_forward_backward():
     assert p_e.shape[-1] == len(TYPE_EDGES)
 
     # 3. Test compute_loss
-    outputs = model.forward(batch)
-    loss, metrics = model.compute_loss(batch, outputs)
+    # Reconstruct a batch dictionary for compute_loss which still expects it
+    batch_dict = {"nodes": nodes, "edges": edges, "mask": mask}
+
+    outputs = model.forward(
+        nodes=nodes,
+        edges=edges,
+        mask=mask,
+        num_peaks=num_peaks,
+        types=types,
+        instruments=instruments,
+        ion_vec=ion_vec,
+        form_vec=form_vec,
+        intens=intens,
+    )
+    loss, metrics = model.compute_loss(batch_dict, outputs)
 
     assert loss is not None
     assert isinstance(loss, torch.Tensor)

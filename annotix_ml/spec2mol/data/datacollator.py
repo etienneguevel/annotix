@@ -3,10 +3,13 @@ import torch
 from annotix_ml.spectraencoder.data.featurizers import PeakFormula
 
 
-def graph_spec_collate_fn(batch: List[dict]) -> dict:
+def graph_spec_collate_fn(batch: List[dict]) -> tuple:
     """
     Collate function for GraphSpecDataset.
     Handles graph padding and spectra feature collation.
+
+    Returns:
+        tuple: (nodes, edges, mask, num_peaks, types, instruments, ion_vec, form_vec, intens, smiles)
     """
     # Collate spectra features using PeakFormula.collate_fn logic
     spec_batch = PeakFormula.collate_fn(batch)
@@ -42,9 +45,20 @@ def graph_spec_collate_fn(batch: List[dict]) -> dict:
         mask[:curr_n] = True
         node_masks.append(mask)
 
-    spec_batch["nodes"] = torch.stack(padded_nodes)
-    spec_batch["edges"] = torch.stack(padded_edges)
-    spec_batch["mask"] = torch.stack(node_masks)
-    spec_batch["smiles"] = [d["smiles"] for d in batch]
+    nodes = torch.stack(padded_nodes)
+    edges = torch.stack(padded_edges)
+    mask = torch.stack(node_masks)
+    smiles = [d["smiles"] for d in batch]
 
-    return spec_batch
+    return (
+        nodes,
+        edges,
+        mask,
+        spec_batch["num_peaks"],
+        spec_batch["types"],
+        spec_batch["instruments"],
+        spec_batch["ion_vec"],
+        spec_batch["form_vec"],
+        spec_batch["intens"],
+        smiles,
+    )

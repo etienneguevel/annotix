@@ -1,10 +1,10 @@
 import torch
-import torch.distributed.pipelining as pp
+from torch.distributed.pipelining import pipeline, SplitPoint
 
 from annotix_ml.distributed import get_global_rank, get_global_size
 
 
-def iterative_model_split(model):
+def iterative_model_split(model, example_batch):
     num_stages = get_global_size()
     stage_id = get_global_rank()
     device = torch.device("cuda")
@@ -12,13 +12,16 @@ def iterative_model_split(model):
     num_layers = len(model.layers)
     layers_per_stage = num_layers // num_stages
 
-    start_layer = stage_id * layers_per_stage
-    end_layer = (stage_id + 1) * layers_per_stage
+    split_dict = {
+        f"layers.{i}": SplitPoint.BEGINNING
+        for i in range(layers_per_stage, num_layers, layers_per_stage)
+    }
 
-    if stage_id == num_stages - 1:
-        end_layer = num_layers
+    pipe = pipeline(
+        module=model,
+        mb_args=example_batch,
+        split_spec=split_dict,
+    )
 
-    model.layers = model.layers[start_layer:end_layer]
-
-    stage = pp.PipelineStage(model, stage_id, num_stages, device)
+    stage = pipe.get_stage_module(stage_id)
     return stage

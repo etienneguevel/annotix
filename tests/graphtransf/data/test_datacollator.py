@@ -19,9 +19,7 @@ def test_collate_MSG():
 
     loader = DataLoader(dataset, batch_size=bs, collate_fn=collateGraph)
 
-    batch = next(iter(loader))
-
-    N, E, node_mask = batch["nodes"], batch["edges"], batch["mask"]
+    N, E, node_mask = next(iter(loader))
 
     assert N.shape[0] == bs
     assert E.shape[0] == bs

@@ -48,20 +48,13 @@ def do_eval(
     metrics = defaultdict(list)
     for batch in tqdm(eval_loader, desc="evaluation"):
         # Move the elements to the device of interest
-        batch = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in batch.items()
-        }
+        batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
 
         # Unpack the elements
-        N, E, mask = (
-            batch["nodes"],
-            batch["edges"],
-            batch["mask"],
-        )  # (bs, n, n_atoms), (bs, n, n, n_edges), (bs,)
+        N, E, mask = batch
 
         # Compute the predictions
-        pN, pE = model.forward(batch)  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        pN, pE = model.forward(N, E, mask)  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         # Make the prediction graph
         N_ = torch.nn.functional.one_hot(
@@ -304,7 +297,10 @@ def train(cfg):
 
     # Setup for distributed training
     if cfg.train.get("distributed") is not None:
-        digress._setup_distributed(cfg.train.distributed, cfg.train.num_microbatches)
+        example_batch = next(iter(train_loader))
+        digress._setup_distributed(
+            cfg.train.distributed, cfg.train.num_microbatches, example_batch
+        )
 
     # Start the training loop
     pbar = tqdm(
@@ -315,15 +311,15 @@ def train(cfg):
         digress.diffuser.train()
 
         # Move the batch to the correct device
-        batch = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in batch.items()
-        }
+        batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
+        N, E, mask = batch
 
         # Do the forward and loss computation
         try:
-            outputs = digress.forward(batch)
-            loss, epoch_metrics = digress.compute_loss(batch, outputs)
+            outputs = digress.forward(N, E, mask)
+            loss, epoch_metrics = digress.compute_loss(
+                {"nodes": N, "edges": E, "mask": mask}, outputs
+            )
             loss.backward()
 
         except LinAlgError:

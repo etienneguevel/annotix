@@ -40,22 +40,19 @@ def test_graph_spec_dataset():
 
     # Test Collate
     loader = DataLoader(dataset, batch_size=2, collate_fn=graph_spec_collate_fn)
-    batch = next(iter(loader))
+    (
+        nodes,
+        edges,
+        mask,
+        num_peaks,
+        types,
+        instruments,
+        ion_vec,
+        form_vec,
+        intens,
+        smiles,
+    ) = next(iter(loader))
 
-    expected_batch_keys = [
-        "nodes",
-        "edges",
-        "node_mask",
-        "smiles",
-        "types",
-        "form_vec",
-        "ion_vec",
-        "intens",
-        "num_peaks",
-        "instruments",
-    ]
-    for key in expected_batch_keys:
-        assert key in batch, f"Missing key in batch: {key}"
-
-    assert batch["nodes"].shape[0] == 2
-    assert batch["types"].shape[0] == 2
+    assert nodes.shape[0] == 2
+    assert types.shape[0] == 2
+    assert len(smiles) == 2

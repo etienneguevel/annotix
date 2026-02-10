@@ -118,9 +118,7 @@ def test_compute_extra_features():
         bs, n, len(TYPE_EDGES), len(VALID_ELEMENTS)
     )
 
-    batch = {"nodes": nodes, "edges": edges, "mask": mask, "t": sampled_t}
-
-    pos_emb, y = meta_arch.compute_extra_features(batch)
+    pos_emb, y = meta_arch.compute_extra_features(nodes, edges, mask, sampled_t)
 
     assert pos_emb.shape[0] == bs
     assert pos_emb.shape[-1] == meta_arch.node_features
@@ -167,7 +165,7 @@ def test_forward_backward_with_extra_features():
     batch = {"nodes": N, "edges": E, "mask": mask}
 
     # Test compute_loss
-    outputs = meta_arch.forward(batch)
+    outputs = meta_arch.forward(N, E, mask)
     total_loss, *_ = meta_arch.compute_loss(batch, outputs)
 
     assert total_loss is not None

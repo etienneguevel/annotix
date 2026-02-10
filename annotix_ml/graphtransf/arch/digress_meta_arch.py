@@ -1,4 +1,3 @@
-import copy
 import os
 from typing import Any, Literal, Mapping
 
@@ -9,7 +8,7 @@ from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
 from tqdm import tqdm
 
-from annotix_ml.distributed import get_global_rank
+from annotix_ml.distributed import get_global_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import iterative_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -284,16 +283,23 @@ class DigressMetaArch:
 
         return node_features
 
-    def compute_extra_features(self, batch: Mapping[str, Any]):
+    def compute_extra_features(
+        self,
+        nodes: torch.Tensor,
+        edges: torch.Tensor,
+        mask: torch.Tensor,
+        t: torch.Tensor,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute extra node and global features for the current graph state.
 
         Args:
-            batch (dict): Batch dictionary containing:
-                - "nodes" (torch.Tensor): Node features tensor of shape (bs, n, natoms).
-                - "edges" (torch.Tensor): Edge features tensor of shape (bs, n, n, nedges).
-                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
-                - "t" (torch.Tensor): Timestep tensor of shape (bs, 1).
+            nodes (torch.Tensor): Node features tensor of shape (bs, n, natoms).
+            edges (torch.Tensor): Edge features tensor of shape (bs, n, n, nedges).
+            mask (torch.Tensor): Mask tensor of shape (bs, n).
+            t (torch.Tensor): Timestep tensor of shape (bs, 1).
+            **kwargs: Extra arguments for subclasses (e.g. spectral features).
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -310,23 +316,19 @@ class DigressMetaArch:
                     raise ValueError("k must be specified for laplacian_embedding.")
 
                 node_features, global_features = laplacian_embedding(
-                    batch["edges"], self.num_ev, batch["mask"]
+                    edges, self.num_ev, mask
                 )
 
             elif name == "node_cycle":
-                node_features, global_features = node_cycle(
-                    batch["edges"], batch["mask"]
-                )
+                node_features, global_features = node_cycle(edges, mask)
 
             elif name == "valence_features":
-                node_features_val = valency(batch["edges"], batch["mask"])
+                node_features_val = valency(edges, mask)
 
-                node_features_charge = charge(
-                    batch["nodes"], batch["edges"], batch["mask"], self.valid_elements
-                )
+                node_features_charge = charge(nodes, edges, mask, self.valid_elements)
 
                 global_features_weight = weight(
-                    batch["nodes"],
+                    nodes,
                     self.valid_elements,
                     self.max_weight,
                 )
@@ -353,70 +355,57 @@ class DigressMetaArch:
         y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
 
         # Add the noising step to y
-        t = batch["t"]
         t = t.to(device=y.device, dtype=y.dtype) / self.noiser.T
         y = torch.cat([y, t], dim=-1)
 
         return pos_emb, y
 
-    def forward(self, batch: Mapping[str, Any], loss_fn: Any = None):
+    def forward(
+        self,
+        nodes: torch.Tensor,
+        edges: torch.Tensor,
+        mask: torch.Tensor,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run the forward pass: noise the input batch, then predict the clean graph.
         This method first adds noise to the input nodes and edges using `self.noiser`,
         and then uses `self.diffuser` to predict the clean graph probabilities.
 
         Args:
-            batch (dict[str, torch.Tensor]): A dictionary containing:
-                - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
-                - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
-                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
-            loss_fn (Callable, optional): Loss function to be used with the pipeline schedule.
-                If provided, `schedule.step` will compute the loss and perform backward pass.
+            nodes (torch.Tensor): Node features of shape (bs, n, natoms).
+            edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
+            mask (torch.Tensor): Mask tensor of shape (bs, n).
+            **kwargs: Extra arguments passed to compute_extra_features.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
-        # make a copy of the batch to avoid in-place modification
-        batch = copy.deepcopy(batch)
-
-        # unpack the elements of the batch
-        N = batch["nodes"]
-        E = batch["edges"]
-        mask = batch["mask"]
-
-        if self.schedule is None or self.rank == 0:
+        if is_main_process():
             # noise the graph
-            N_noised, E_noised, sampled_t = self.noiser(N, E, mask)
-
-            # update the batch with noised elements
-            batch["nodes"] = N_noised
-            batch["edges"] = E_noised
-            batch["t"] = sampled_t
+            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
 
             # compute the extra features
             pos_emb, y = self.compute_extra_features(
-                batch
+                N_noised, E_noised, mask, sampled_t, **kwargs
             )  # (bs, node_features), (bs, global_features)
-            batch["node_features"] = pos_emb
-            batch["global_features"] = y
 
         # Compute the output of the diffuser
         if self.schedule:
-            if self.rank == 0:
-                out = self.schedule.step(batch)
+            if is_main_process():
+                input_tuple = (N_noised, E_noised, y, pos_emb, mask)
+                out = self.schedule.step(input_tuple)
             else:
                 out = self.schedule.step()
 
-            # Otherwise it is the batch
-            batch = out
+            if out:
+                pN, pE = out[0], out[1]
 
         else:
-            batch = self.diffuser(batch)  # (bs, n, n_atoms), (bs, n, n, n_edges)
-
-        pN = batch["nodes"]
-        pE = batch["edges"]
+            out = self.diffuser(N_noised, E_noised, y, pos_emb, mask)
+            pN, pE = out[0], out[1]
 
         return pN, pE
 
@@ -503,6 +492,7 @@ class DigressMetaArch:
         min_nodes: int = 1,
         progress_bar=False,
         num_attempts: int = 3,
+        **kwargs,
     ):
         """
         Generate new graphs using the reverse diffusion process.
@@ -523,6 +513,7 @@ class DigressMetaArch:
             min_nodes (int, optional): Minimum number of nodes for the generated graphs. Defaults to 1.
             progress_bar (bool, optional): Whether to show a progress bar during denoising. Defaults to False.
             num_attempts (int, optional): Number of attempts to generate graphs (to handle potential LinAlgError). Defaults to 3.
+            **kwargs: Extra arguments passed to compute_extra_features (e.g. conditioning spectra).
 
         Raises:
             LinAlgError: If generation fails after all attempts due to numerical instability.
@@ -599,25 +590,14 @@ class DigressMetaArch:
                         torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))
                     )  # bs, 1
 
-                    # Create a temporary batch for compute_extra_features
-                    temp_batch = {
-                        "nodes": N,
-                        "edges": E,
-                        "mask": mask,
-                        "t": t_tensor,
-                    }
-                    pos_emb, y = self.compute_extra_features(temp_batch)
+                    # Compute extra features
+                    pos_emb, y = self.compute_extra_features(
+                        N, E, mask, t_tensor, **kwargs
+                    )
 
-                    batch_denoise = {
-                        "nodes": N,
-                        "edges": E,
-                        "node_features": pos_emb,
-                        "global_features": y,
-                        "mask": mask,
-                    }
-                    batch_denoise = self.diffuser(batch_denoise)
-                    pN = batch_denoise["nodes"]
-                    pE = batch_denoise["edges"]
+                    out = self.diffuser(N, E, y, pos_emb, mask)
+
+                    pN, pE = out[0], out[1]
 
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                     pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
@@ -657,10 +637,10 @@ class DigressMetaArch:
         raise LinAlgError("Impossible to generate graphs with current model.")
 
     def _setup_distributed(
-        self, mode: Literal["pipeline", "tensor"], num_microbatches: int
+        self, mode: Literal["pipeline", "tensor"], num_microbatches: int, example_batch
     ):
         if mode == "pipeline":
-            stage = iterative_model_split(self.diffuser)
+            stage = iterative_model_split(self.diffuser, example_batch)
             self.schedule = ScheduleGPipe(stage, num_microbatches)
             self.rank = get_global_rank()
 

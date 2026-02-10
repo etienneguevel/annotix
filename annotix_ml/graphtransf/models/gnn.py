@@ -96,51 +96,42 @@ class GnnNodeEdges(nn.Module):
 
     def forward(
         self,
-        batch: dict[str, torch.Tensor],
-    ) -> dict[str, torch.Tensor]:
+        h: torch.Tensor,
+        e: torch.Tensor,
+        y: torch.Tensor,
+        node_features: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass of the GNN model.
 
         Args:
-            batch (dict[str, torch.Tensor]): A dictionary containing:
-                - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
-                - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
-                - "node_features" (torch.Tensor): Extra node features of shape (bs, n, node_features).
-                - "global_features" (torch.Tensor): Extra global features of shape (bs, global_features).
-                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
+            h (torch.Tensor): Node features of shape (bs, n, natoms).
+            e (torch.Tensor): Edge features of shape (bs, n, n, nedges).
+            y (torch.Tensor): Global features of shape (bs, dy).
+            node_features (torch.Tensor): Extra node features of shape (bs, n, node_features).
+            mask (torch.Tensor): Mask tensor of shape (bs, n).
 
         Returns:
-            dict[str, torch.Tensor]: The input batch dictionary with updated keys:
-                - "nodes" (torch.Tensor): Updated node features of shape (bs, n, d).
-                - "edges" (torch.Tensor): Updated edge features of shape (bs, n, n, de).
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                - h (torch.Tensor): Updated node features of shape (bs, n, d).
+                - e (torch.Tensor): Updated edge features of shape (bs, n, n, de).
+                - y (torch.Tensor): Updated global features of shape (bs, dy).
+                - node_features (torch.Tensor): Extra node features (unchanged).
+                - mask (torch.Tensor): Mask tensor (unchanged).
         """
-        # h -> nodes (bs, n, d)
-        # e -> edges (bs, n, n, de)
-        # y -> global_features (bs, dy)
-        h = batch["nodes"]
-        e = batch["edges"]
-        mask = batch["mask"]
-        node_features = batch["node_features"]
-        global_features = batch["global_features"]
-
+        # y is already computed/provided in this version
         for layer in self.layers:
             if isinstance(layer, EmbeddingLaplacian):
-                h, e, y, mask = layer(h, e, global_features, node_features, mask)
-                # Symmetrize edges at the beginning
-                e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
+                h, e, y, mask = layer(h, e, y, node_features, mask)
 
             else:
                 h, e, y, mask = layer(h, e, y, mask)
 
             # Symmetrize the edges matrices
-            e = 1 / 2 * (e + e.transpose(1, 2))
+            e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
 
-        # Return the batch with updated node and edge features
-        batch["nodes"] = h
-        batch["edges"] = e
-        batch["mask"] = mask
-
-        return batch
+        return h, e, y, node_features, mask
 
 
 class GnnNodeEdgesWithoutY(nn.Module):
@@ -221,45 +212,41 @@ class GnnNodeEdgesWithoutY(nn.Module):
 
     def forward(
         self,
-        batch: dict[str, torch.Tensor],
-    ) -> dict[str, torch.Tensor]:
+        h: torch.Tensor,
+        e: torch.Tensor,
+        global_features: torch.Tensor,
+        node_features: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass of the GNN model without global feature updates.
 
         Args:
-            batch (dict[str, torch.Tensor]): A dictionary containing:
-                - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
-                - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
-                - "node_features" (torch.Tensor): Extra node features of shape (bs, n, node_features).
-                - "global_features" (torch.Tensor): Extra global features of shape (bs, global_features).
-                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
+            h (torch.Tensor): Node features of shape (bs, n, natoms).
+            e (torch.Tensor): Edge features of shape (bs, n, n, nedges).
+            global_features (torch.Tensor): Extra global features of shape (bs, global_features).
+            node_features (torch.Tensor): Extra node features of shape (bs, n, node_features).
+            mask (torch.Tensor): Mask tensor of shape (bs, n).
 
         Returns:
-            dict[str, torch.Tensor]: The input batch dictionary with updated keys:
-                - "nodes" (torch.Tensor): Updated node features of shape (bs, n, d).
-                - "edges" (torch.Tensor): Updated edge features of shape (bs, n, n, de).
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                - h (torch.Tensor): Updated node features of shape (bs, n, d).
+                - e (torch.Tensor): Updated edge features of shape (bs, n, n, de).
+                - global_features (torch.Tensor): Extra global features (unchanged).
+                - node_features (torch.Tensor): Extra node features (unchanged).
+                - mask (torch.Tensor): Mask tensor (unchanged).
         """
-        # h -> nodes (bs, n, d)
-        # e -> edges (bs, n, n, de)
-        # y -> global_features (bs, dy)
-        # node_features -> node_features (bs, n, node_features)
-        h = batch["nodes"]
-        e = batch["edges"]
-        mask = batch["mask"]
-        node_features = batch["node_features"]
-        global_features = batch["global_features"]
-
         bs = h.shape[0]
         n = h.shape[1]
 
-        global_features = global_features.unsqueeze(1).expand((bs, n, -1))
-        features = torch.cat([node_features, global_features], dim=-1)
+        global_features_expanded = (
+            global_features.unsqueeze(1).expand((bs, n, -1)).to(h.dtype)
+        )
+        features = torch.cat([node_features, global_features_expanded], dim=-1)
 
         for layer in self.layers:
             if isinstance(layer, EmbeddingLaplacianWithoutY):
                 h, e, mask = layer(h, e, features, mask)
-                # Symmetrize edges at the beginning
-                e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
 
             else:
                 h, e, mask = layer(h, e, mask)
@@ -267,12 +254,7 @@ class GnnNodeEdgesWithoutY(nn.Module):
             # Symmetrize the edges matrices
             e = 1 / 2 * (e + e.transpose(1, 2))
 
-        # Return the batch with updated node and edge features
-        batch["nodes"] = h
-        batch["edges"] = e
-        batch["mask"] = mask
-
-        return batch
+        return h, e, global_features, node_features, mask
 
 
 # Make different size of the model

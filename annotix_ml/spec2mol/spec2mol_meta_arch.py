@@ -1,4 +1,4 @@
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -258,16 +258,33 @@ class Spec2MolMetaArch(DigressMetaArch):
 
         return node_features
 
-    def compute_extra_features(self, batch: Mapping[str, Any]):
+    def compute_extra_features(
+        self,
+        nodes: torch.Tensor,
+        edges: torch.Tensor,
+        mask: torch.Tensor,
+        t: torch.Tensor,
+        num_peaks: torch.Tensor = None,
+        types: torch.Tensor = None,
+        instruments: torch.Tensor = None,
+        ion_vec: torch.Tensor = None,
+        form_vec: torch.Tensor = None,
+        intens: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute extra node and global features for the current graph state.
 
         Args:
-            batch (dict): Batch dictionary containing:
-                - "nodes" (torch.Tensor): Node features tensor of shape (bs, n, natoms).
-                - "edges" (torch.Tensor): Edge features tensor of shape (bs, n, n, nedges).
-                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
-                - "t" (torch.Tensor): Timestep tensor of shape (bs, 1).
+            nodes (torch.Tensor): Node features tensor of shape (bs, n, natoms).
+            edges (torch.Tensor): Edge features tensor of shape (bs, n, n, nedges).
+            mask (torch.Tensor): Mask tensor of shape (bs, n).
+            t (torch.Tensor): Timestep tensor of shape (bs, 1).
+            num_peaks (torch.Tensor, optional): Number of peaks in each spectrum.
+            types (torch.Tensor, optional): Peak types.
+            instruments (torch.Tensor, optional): Instrument types.
+            ion_vec (torch.Tensor, optional): Ion vectors.
+            form_vec (torch.Tensor, optional): Formula vectors.
+            intens (torch.Tensor, optional): Peak intensities.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -284,23 +301,19 @@ class Spec2MolMetaArch(DigressMetaArch):
                     raise ValueError("k must be specified for laplacian_embedding.")
 
                 node_features, global_features = laplacian_embedding(
-                    batch["edges"], self.num_ev, batch["mask"]
+                    edges, self.num_ev, mask
                 )
 
             elif name == "node_cycle":
-                node_features, global_features = node_cycle(
-                    batch["edges"], batch["mask"]
-                )
+                node_features, global_features = node_cycle(edges, mask)
 
             elif name == "valence_features":
-                node_features_val = valency(batch["edges"], batch["mask"])
+                node_features_val = valency(edges, mask)
 
-                node_features_charge = charge(
-                    batch["nodes"], batch["edges"], batch["mask"], self.valid_elements
-                )
+                node_features_charge = charge(nodes, edges, mask, self.valid_elements)
 
                 global_features_weight = weight(
-                    batch["nodes"],
+                    nodes,
                     self.valid_elements,
                     self.max_weight,
                 )
@@ -313,12 +326,12 @@ class Spec2MolMetaArch(DigressMetaArch):
             elif name == "spectra_fingerprint":
                 node_features = None
                 global_features = spectra_fingerprint(
-                    batch["num_peaks"],
-                    batch["types"],
-                    batch["instruments"],
-                    batch["ion_vec"],
-                    batch["form_vec"],
-                    batch["intens"],
+                    num_peaks,
+                    types,
+                    instruments,
+                    ion_vec,
+                    form_vec,
+                    intens,
                     self.spectra_encoder,
                     self.merge_function,
                 )
@@ -340,8 +353,37 @@ class Spec2MolMetaArch(DigressMetaArch):
         y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
 
         # Add the noising step to y
-        t = batch["t"]
         t = t.to(device=y.device, dtype=y.dtype) / self.noiser.T
         y = torch.cat([y, t], dim=-1)
 
         return pos_emb, y
+
+    def forward(
+        self,
+        nodes: torch.Tensor,
+        edges: torch.Tensor,
+        mask: torch.Tensor,
+        num_peaks: torch.Tensor = None,
+        types: torch.Tensor = None,
+        instruments: torch.Tensor = None,
+        ion_vec: torch.Tensor = None,
+        form_vec: torch.Tensor = None,
+        intens: torch.Tensor = None,
+        loss_fn: Any = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run the forward pass for Spec2MolMetaArch.
+        This provides explicit arguments for spectral features while leveraging DigressMetaArch's noise logic.
+        """
+        return super().forward(
+            nodes=nodes,
+            edges=edges,
+            mask=mask,
+            loss_fn=loss_fn,
+            num_peaks=num_peaks,
+            types=types,
+            instruments=instruments,
+            ion_vec=ion_vec,
+            form_vec=form_vec,
+            intens=intens,
+        )

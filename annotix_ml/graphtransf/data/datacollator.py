@@ -20,8 +20,10 @@ def collateGraph(
     - pos_emb: torch.Tensor, contains pos_emb (n_mol, k)
 
     Returns:
-    The 3 padded stacking of the lists, as well as a mask indicating the padding
-    of each element of the batch.
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+    - nodes: torch.Tensor of shape (bs, n_batch, natoms)
+    - edges: torch.Tensor of shape (bs, n_batch, n_batch, nbonds)
+    - mask: torch.Tensor of shape (bs, n_batch)
     """
     # Unpack the nodes, edges and pos_emb
     # bs = len(batch)
@@ -50,7 +52,7 @@ def collateGraph(
         [torch.cat([torch.ones(m), torch.zeros(n_batch - m)]) for m in num_atoms]
     )  # (bs, n_batch)
 
-    return {"nodes": N_padded, "edges": E_padded, "mask": mask}
+    return N_padded, E_padded, mask
 
 
 def collateGraphJagged(batch: list[tuple[torch.Tensor]]):
