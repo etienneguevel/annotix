@@ -641,7 +641,7 @@ class DigressMetaArch:
     ):
         if mode == "pipeline":
             N, E, mask = example_batch
-            pos_emb, y = self.compute_extra_features(N, E, mask, t=0)
+            pos_emb, y = self.compute_extra_features(N, E, mask, t=torch.tensor([0]))
             example_input = (N, E, y, pos_emb, mask)
 
             stage = iterative_model_split(self.diffuser, example_input)
