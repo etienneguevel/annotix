@@ -19,6 +19,9 @@ def iterative_model_split(model, example_input):
 
     split_dict = {f"layers.{idx}": SplitPoint.BEGINNING for idx in split_indices}
 
+    print("INIT : Distributed Pipeline Parallelism")
+    print(*(f"Shape of input {i}: {inp.shape}" for i, inp in enumerate(example_input)))
+
     pipe = pipeline(
         module=model,
         mb_args=example_input,
