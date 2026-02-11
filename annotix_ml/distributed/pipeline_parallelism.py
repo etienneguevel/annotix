@@ -24,5 +24,5 @@ def iterative_model_split(model, example_input):
         split_spec=split_dict,
     )
 
-    stage = pipe.get_stage_module(stage_id)
+    stage = pipe.build_stage(stage_id)
     return stage
