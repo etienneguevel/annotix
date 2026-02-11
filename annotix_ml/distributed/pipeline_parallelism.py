@@ -4,7 +4,7 @@ from torch.distributed.pipelining import pipeline, SplitPoint
 from annotix_ml.distributed import get_global_rank, get_global_size
 
 
-def iterative_model_split(model, example_input):
+def auto_model_split(model, example_input_kwargs):
     num_stages = get_global_size()
     stage_id = get_global_rank()
 
@@ -20,11 +20,13 @@ def iterative_model_split(model, example_input):
     split_dict = {f"layers.{idx}": SplitPoint.BEGINNING for idx in split_indices}
 
     print("INIT : Distributed Pipeline Parallelism")
-    print(*(f"Shape of input {i}: {inp.shape}" for i, inp in enumerate(example_input)))
+    print(
+        *(f"Shape of input {k}: {inp.shape}" for k, inp in example_input_kwargs.items())
+    )
 
     pipe = pipeline(
         module=model,
-        mb_args=example_input,
+        mb_kwargs=example_input_kwargs,
         split_spec=split_dict,
     )
 

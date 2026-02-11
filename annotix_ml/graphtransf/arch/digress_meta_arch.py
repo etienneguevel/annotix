@@ -9,7 +9,7 @@ from torch.linalg import LinAlgError
 from tqdm import tqdm
 
 from annotix_ml.distributed import get_global_rank
-from annotix_ml.distributed.pipeline_parallelism import iterative_model_split
+from annotix_ml.distributed.pipeline_parallelism import auto_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
@@ -150,6 +150,7 @@ class DigressMetaArch:
         # Put some variables in case of distributed training
         self.rank = -1
         self.schedule = None
+        self.stage = None
 
     @classmethod
     def init_from_cfg(
@@ -651,11 +652,17 @@ class DigressMetaArch:
                 1, self.noiser.T, (mb_size,), device=self.device
             ).unsqueeze(1)
             pos_emb, y = self.compute_extra_features(N_mb, E_mb, mask_mb, t=t)
-            example_input = (N_mb, E_mb, y, pos_emb, mask_mb)
+            example_input = {
+                "h": N_mb,
+                "e": E_mb,
+                "global_features": y,
+                "node_features": pos_emb,
+                "mask": mask_mb,
+            }
 
-            example_input = tuple(x.to(self.device) for x in example_input)
+            example_input = {k: v.to(self.device) for k, v in example_input.items()}
 
-            stage = iterative_model_split(self.diffuser, example_input)
+            stage = auto_model_split(self.diffuser, example_input)
             self.stage = stage
             self.schedule = ScheduleGPipe(stage, num_microbatches)
             self.rank = get_global_rank()
