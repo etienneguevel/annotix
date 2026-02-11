@@ -14,7 +14,8 @@ from tqdm import tqdm
 
 import annotix_ml.distributed as dist
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
-from annotix_ml.graphtransf.data.datacollator import collateGraph
+from annotix_ml.graphtransf.data.datacollator import collateGraph, collateGraphStatic
+from functools import partial
 from annotix_ml.graphtransf.data.data_utils import (
     batch_graph_to_smiles,
     batch_graph_to_smiles_digress,
@@ -205,17 +206,26 @@ def train(cfg):
         advance=advance,
     )
 
+    # Determine the collation function
+    if dist.is_enabled():
+        # Derive n_max from the distribution of number of atoms
+        n_max = len(train_dataset.num_atoms_dist)
+        collate_fn = partial(collateGraphStatic, n_max=n_max)
+        print(f"Using static shape data collator with n_max={n_max}")
+    else:
+        collate_fn = collateGraph
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.train.batch_size,
         sampler=sampler_type,
-        collate_fn=collateGraph,
+        collate_fn=collate_fn,
         num_workers=cfg.train.num_workers,
     )
     valid_loader = DataLoader(
         valid_dataset,
         batch_size=cfg.valid.batch_size,
-        collate_fn=collateGraph,
+        collate_fn=collate_fn,
         shuffle=False,
     )
 

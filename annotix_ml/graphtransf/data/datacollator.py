@@ -84,3 +84,51 @@ def collateGraphJagged(batch: list[tuple[torch.Tensor]]):
     E_jagged = torch.vstack(list_E).unsqueeze(0)  # (1, M, n_nodes)
 
     return N_jagged, E_jagged
+
+
+def collateGraphStatic(
+    batch: list[tuple[torch.Tensor, torch.Tensor]],
+    n_max: int,
+):
+    """
+    Data collate function to transform the outputs of the dataset into batches
+    with a static shape (n_max).
+
+    Args:
+    batch, which is a list of size 2 tuples made of :
+    - N: torch.Tensor, contains node of size (n_mol, natoms)
+    - E: torch.Tensor, contains edge of size (n_mol, n_mol, nbonds)
+    n_max: int, the fixed number of nodes to pad to.
+
+    Returns:
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+    - nodes: torch.Tensor of shape (bs, n_max, natoms)
+    - edges: torch.Tensor of shape (bs, n_max, n_max, nbonds)
+    - mask: torch.Tensor of shape (bs, n_max)
+    """
+    list_N, list_E = zip(*batch)
+
+    # Pad the nodes
+    N_padded = torch.stack(
+        [pad(N, (0, 0, 0, n_max - N.shape[0])).to(torch.float32) for N in list_N]
+    )  # (bs, n_max, natoms)
+
+    # Pad the edges
+    E_padded = torch.stack(
+        [
+            pad(E, (0, 0, 0, n_max - E.shape[0], 0, n_max - E.shape[0])).to(
+                torch.float32
+            )
+            for E in list_E
+        ]
+    )  # (bs, n_max, n_max, nbonds)
+
+    # Make the mask
+    mask = torch.stack(
+        [
+            torch.cat([torch.ones(N.shape[0]), torch.zeros(n_max - N.shape[0])])
+            for N in list_N
+        ]
+    )  # (bs, n_max)
+
+    return N_padded, E_padded, mask
