@@ -165,6 +165,11 @@ class EmbeddingLaplacianWithoutY(nn.Module):
         bs = N.shape[0]
         n = N.shape[1]
 
+        # Compute the edge embedding
+        e = self.EmbeddingEdges(E)  # (bs, n, n, de)
+        e = mask_any_tensor(e, mask)
+
+        # Stack the features
         global_features_expanded = (
             global_features.unsqueeze(1).expand((bs, n, -1)).to(N.dtype)
         )
@@ -173,9 +178,5 @@ class EmbeddingLaplacianWithoutY(nn.Module):
         # Calculate the node embedding and add the positional emb
         h = self.EmbeddingNodes(N) + self.LaplacianProjection(features)  # (bs, n, d)
         h = mask_any_tensor(h, mask)
-
-        # Compute the edge embedding
-        e = self.EmbeddingEdges(E)  # (bs, n, n, de)
-        e = mask_any_tensor(e, mask)
 
         return h, e, mask
