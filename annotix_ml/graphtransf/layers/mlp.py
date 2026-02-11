@@ -92,7 +92,9 @@ class MLPNodeEdge(nn.Module):
                 - y (torch.Tensor): The input global features.
                 - mask (torch.Tensor): The input mask tensor.
         """
-        return self.MLPN(h), self.MLPE(e), y, mask
+        h, e = self.MLPN(h), self.MLPE(e)
+        e = 0.5 * (e + e.transpose(1, 2))
+        return h, e, y, mask
 
 
 class MLPNodeEdgeWithoutY(nn.Module):
@@ -140,4 +142,6 @@ class MLPNodeEdgeWithoutY(nn.Module):
                 - e (torch.Tensor): Processed edge features.
                 - mask (torch.Tensor): The input mask tensor.
         """
-        return self.MLPN(h), self.MLPE(e), mask
+        h, e = self.MLPN(h), self.MLPE(e)
+        e = 0.5 * (e + e.transpose(1, 2))
+        return h, e, mask

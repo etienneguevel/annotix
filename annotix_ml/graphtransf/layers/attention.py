@@ -582,6 +582,10 @@ class AttentionLayer(nn.Module):
 
         # Compute the output of the feedforward network, make residual connections
         h, e, _ = self.ffn(h_attn, e_attn, mask)
+
+        # Symmetrize the edges matrices
+        e = 0.5 * (e + e.transpose(1, 2))
+
         if self.y_update:
             y = self.norm_y(y_attn + self.mlpy(y_attn))
 
@@ -642,5 +646,8 @@ class AttentionLayerWithoutY(nn.Module):
 
         # Compute the output of the feedforward network, make residual connections
         h, e, _ = self.ffn(h_attn, e_attn, mask)
+
+        # Symmetrize the edges matrices
+        e = 0.5 * (e + e.transpose(1, 2))
 
         return h, e, mask

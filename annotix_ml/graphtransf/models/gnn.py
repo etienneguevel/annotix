@@ -116,9 +116,6 @@ class GnnNodeEdges(nn.Module):
             else:
                 h, e, y, mask = layer(h, e, y, mask)
 
-            # Symmetrize the edges matrices
-            e = 1 / 2 * (e + e.transpose(1, 2))  # (bs, n, n, de)
-
         return h, e, y, node_features, mask
 
 
@@ -224,13 +221,8 @@ class GnnNodeEdgesWithoutY(nn.Module):
             else (h, e, mask)
         )
 
-        e = 1 / 2 * (e + e.transpose(1, 2))
-
         for layer in self.layers:
             h, e, mask = layer(h, e, mask)
-
-            # Symmetrize the edges matrices
-            e = 1 / 2 * (e + e.transpose(1, 2))
 
         return h, e, global_features, node_features, mask
 
