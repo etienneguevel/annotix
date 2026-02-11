@@ -26,6 +26,7 @@ def auto_model_split(model, example_input_kwargs):
 
     pipe = pipeline(
         module=model,
+        mb_args=(),
         mb_kwargs=example_input_kwargs,
         split_spec=split_dict,
     )
