@@ -7,20 +7,16 @@ from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 class Ffn(nn.Module):
     def __init__(self, d, dropout=0.1):
         super().__init__()
-        self.feedforward = nn.ModuleList(
-            [
-                nn.Linear(d, 2 * d),
-                nn.Dropout(dropout),
-                nn.ReLU(),
-                nn.Linear(2 * d, d),
-                nn.Dropout(dropout),
-            ]
+        self.feedforward = nn.Sequential(
+            nn.Linear(d, 2 * d),
+            nn.Dropout(dropout),
+            nn.ReLU(),
+            nn.Linear(2 * d, d),
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
-        for layer in self.feedforward:
-            x = layer(x)
-        return x
+        return self.feedforward(x)
 
 
 class FfnNodeEdge(nn.Module):

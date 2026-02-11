@@ -8,12 +8,15 @@ def iterative_model_split(model, example_input):
     stage_id = get_global_rank()
 
     num_layers = len(model.layers)
-    layers_per_stage = num_layers // num_stages
 
-    split_dict = {
-        f"layers.{i}": SplitPoint.BEGINNING
-        for i in range(layers_per_stage, num_layers, layers_per_stage)
-    }
+    # Calculate split points to divide num_layers into num_stages blocks
+    split_indices = []
+    for i in range(1, num_stages):
+        idx = (i * num_layers) // num_stages
+        if 0 < idx < num_layers:
+            split_indices.append(idx)
+
+    split_dict = {f"layers.{idx}": SplitPoint.BEGINNING for idx in split_indices}
 
     pipe = pipeline(
         module=model,
