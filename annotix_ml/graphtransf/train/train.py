@@ -326,11 +326,14 @@ def train(cfg):
 
         # Do the forward and loss computation
         try:
-            outputs = digress.forward(N, E, mask)
-            loss, epoch_metrics = digress.compute_loss(
-                {"nodes": N, "edges": E, "mask": mask}, outputs
-            )
-            loss.backward()
+            pN, pE = digress.forward(N, E, mask)
+            if pN is not None and pE is not None:
+                loss, epoch_metrics = digress.compute_loss(
+                    {"nodes": N, "edges": E, "mask": mask}, (pN, pE)
+                )
+                loss.backward()
+            else:
+                loss = None
 
         except LinAlgError:
             print("LinAlgError in forward or compute_loss")
