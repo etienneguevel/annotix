@@ -49,24 +49,10 @@ def mask_any_tensor(
     - Time/space complexity is linear in the number of elements in ``t``.
 
     """
-    # Assert that the dimensions match
-    mask_dim = mask.shape
-    tensor_dim = t.shape
-    assert mask_dim == tensor_dim[: len(mask_dim)], (
-        "mask dimension doesn't match tensor",
-        mask_dim,
-        tensor_dim,
-    )
-
-    # Expand the mask tensor
-    expand_dims = tensor_dim[len(mask_dim) :]
-    for _ in expand_dims:
+    while mask.dim() < t.dim():
         mask = mask.unsqueeze(-1)
 
-    # Fill where the mask is equal to 0
-    t = t.masked_fill(mask == 0, fill)
-
-    return t
+    return t.masked_fill(~mask.bool(), fill)
 
 
 def mol_to_smiles(mol):

@@ -4,6 +4,18 @@ import torch.nn as nn
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
 
 
+class Ffn(nn.Module):
+    def __init__(self, d, dropout=0.1):
+        super().__init__()
+        self.lin1 = nn.Linear(d, 2 * d)
+        self.lin2 = nn.Linear(2 * d, d)
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        return self.lin2(self.dropout(self.relu(self.lin1(x))))
+
+
 class FfnNodeEdge(nn.Module):
     """
     Feed-forward network for node and edge features.
@@ -35,22 +47,10 @@ class FfnNodeEdge(nn.Module):
         # Init the FFN for nodes
         self.d = d
         self.de = de
-        self.feedforward_N = nn.Sequential(
-            nn.Linear(d, 2 * d),
-            nn.Dropout(dropout),
-            nn.ReLU(),
-            nn.Linear(2 * d, d),
-            nn.Dropout(dropout),
-        )
+        self.feedforward_N = Ffn(d, dropout)
 
         # Init the FFN for edges
-        self.feedforward_E = nn.Sequential(
-            nn.Linear(de, 2 * de),
-            nn.Dropout(dropout),
-            nn.ReLU(),
-            nn.Linear(2 * de, de),
-            nn.Dropout(dropout),
-        )
+        self.feedforward_E = Ffn(de, dropout)
 
         # Make the norm layer.
         self.norm_N = nn.LayerNorm(d)

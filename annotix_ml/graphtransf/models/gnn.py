@@ -215,11 +215,7 @@ class GnnNodeEdgesWithoutY(nn.Module):
         )
         features = torch.cat([node_features, global_features_expanded], dim=-1)
 
-        h, e, mask = (
-            self.embedding_layer(h, e, features, mask)
-            if self.embedding_layer
-            else (h, e, mask)
-        )
+        h, e, mask = self.embedding_layer(h, e, features, mask)
 
         for layer in self.layers:
             h, e, mask = layer(h, e, mask)
