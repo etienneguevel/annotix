@@ -207,15 +207,7 @@ class GnnNodeEdgesWithoutY(nn.Module):
                 - node_features (torch.Tensor): Extra node features (unchanged).
                 - mask (torch.Tensor): Mask tensor (unchanged).
         """
-        bs = h.shape[0]
-        n = h.shape[1]
-
-        global_features_expanded = (
-            global_features.unsqueeze(1).expand((bs, n, -1)).to(h.dtype)
-        )
-        features = torch.cat([node_features, global_features_expanded], dim=-1)
-
-        h, e, mask = self.embedding_layer(h, e, features, mask)
+        h, e, mask = self.embedding_layer(h, e, global_features, node_features, mask)
 
         for layer in self.layers:
             h, e, mask = layer(h, e, mask)

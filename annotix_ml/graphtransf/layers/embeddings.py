@@ -142,7 +142,8 @@ class EmbeddingLaplacianWithoutY(nn.Module):
         self,
         N: torch.Tensor,
         E: torch.Tensor,
-        node_features_t: torch.Tensor,
+        global_features: torch.Tensor,
+        node_features_extra: torch.Tensor,
         mask: torch.Tensor,
     ):
         """
@@ -151,7 +152,8 @@ class EmbeddingLaplacianWithoutY(nn.Module):
         Args:
             N (torch.Tensor): Node features of shape (bs, n, natoms).
             E (torch.Tensor): Edge features of shape (bs, n, n, nbonds).
-            node_features_t (torch.Tensor): Extra node features of shape (bs, n, node_features).
+            global_features (torch.Tensor): Extra global features of shape (bs, global_features).
+            node_features_extra (torch.Tensor): Extra node features of shape (bs, n, node_features).
             mask (torch.Tensor): Node mask of shape (bs, n).
 
         Returns:
@@ -160,10 +162,16 @@ class EmbeddingLaplacianWithoutY(nn.Module):
                 - e (torch.Tensor): Embedded edge features of shape (bs, n, n, de).
                 - mask (torch.Tensor): The input mask tensor.
         """
+        bs = N.shape[0]
+        n = N.shape[1]
+
+        global_features_expanded = (
+            global_features.unsqueeze(1).expand((bs, n, -1)).to(N.dtype)
+        )
+        features = torch.cat([node_features_extra, global_features_expanded], dim=-1)
+
         # Calculate the node embedding and add the positional emb
-        h = self.EmbeddingNodes(N) + self.LaplacianProjection(
-            node_features_t
-        )  # (bs, n, d)
+        h = self.EmbeddingNodes(N) + self.LaplacianProjection(features)  # (bs, n, d)
         h = mask_any_tensor(h, mask)
 
         # Compute the edge embedding
