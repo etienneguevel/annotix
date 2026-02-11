@@ -79,11 +79,11 @@ class DigressMetaArch:
         self.device = device
 
         # Store extra features information
-        self.extra_features = extra_features
+        self.extra_features = extra_features or []
         self.num_ev = k
         self.max_weight = max_weight
 
-        for name in extra_features:
+        for name in self.extra_features:
             if name not in self.known_extra_features:
                 raise ValueError(f"{name} is not a known extra feature.")
 
@@ -346,8 +346,15 @@ class DigressMetaArch:
             global_features = None
             node_features = None
 
-        pos_emb = torch.cat(node_features_list, dim=-1)  # (bs, n, n_features)
-        y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
+        if node_features_list:
+            pos_emb = torch.cat(node_features_list, dim=-1)  # (bs, n, n_features)
+        else:
+            pos_emb = torch.zeros((*nodes.shape[:-1], 0), device=nodes.device)
+
+        if global_features_list:
+            y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
+        else:
+            y = torch.zeros((nodes.shape[0], 0), device=nodes.device)
 
         # Add the noising step to y
         t = t.to(device=y.device, dtype=y.dtype) / self.noiser.T
@@ -635,13 +642,20 @@ class DigressMetaArch:
         self, mode: Literal["pipeline", "tensor"], num_microbatches: int, example_batch
     ):
         if mode == "pipeline":
+            # Slice the example batch to the micro-batch size
             N, E, mask = example_batch
             bs = N.shape[0]
-            t = torch.randint(1, self.noiser.T, (bs,), device=self.device).unsqueeze(1)
-            pos_emb, y = self.compute_extra_features(N, E, mask, t=t)
-            example_input = (N, E, y, pos_emb, mask)
+            mb_size = bs // num_microbatches
 
-            print([inp.shape for inp in example_input])
+            N_mb = N[:mb_size]
+            E_mb = E[:mb_size]
+            mask_mb = mask[:mb_size]
+
+            t = torch.randint(
+                1, self.noiser.T, (mb_size,), device=self.device
+            ).unsqueeze(1)
+            pos_emb, y = self.compute_extra_features(N_mb, E_mb, mask_mb, t=t)
+            example_input = (N_mb, E_mb, y, pos_emb, mask_mb)
 
             example_input = tuple(x.to(self.device) for x in example_input)
 
