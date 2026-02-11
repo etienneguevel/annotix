@@ -403,20 +403,18 @@ class DigressMetaArch:
                     "node_features": pos_emb,
                     "h": N_noised,
                 }
-                self.schedule.step(**input_kwargs)
+                out = self.schedule.step(**input_kwargs)
 
             else:
                 out = self.schedule.step()
 
-                if self.stage.is_last:
-                    pN, pE = out[0], out[1]
-
-                else:
-                    pN, pE = None, None
-
         else:
             out = self.diffuser(N_noised, E_noised, y, pos_emb, mask)
+
+        if out is not None:
             pN, pE = out[0], out[1]
+        else:
+            pN, pE = None, None
 
         return pN, pE
 
