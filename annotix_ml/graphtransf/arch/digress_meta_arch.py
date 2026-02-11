@@ -405,12 +405,14 @@ class DigressMetaArch:
                 }
                 self.schedule.step(**input_kwargs)
 
-            elif self.stage.is_last:
-                out = self.schedule.step()
-                pN, pE = out[0], out[1]
-
             else:
-                self.schedule.step()
+                out = self.schedule.step()
+
+                if self.stage.is_last:
+                    pN, pE = out[0], out[1]
+
+                else:
+                    pN, pE = None, None
 
         else:
             out = self.diffuser(N_noised, E_noised, y, pos_emb, mask)
