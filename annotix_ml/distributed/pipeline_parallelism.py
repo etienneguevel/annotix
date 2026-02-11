@@ -1,3 +1,4 @@
+import torch
 from torch.distributed.pipelining import pipeline, SplitPoint
 
 from annotix_ml.distributed import get_global_rank, get_global_size
@@ -24,5 +25,5 @@ def iterative_model_split(model, example_input):
         split_spec=split_dict,
     )
 
-    stage = pipe.build_stage(stage_id)
+    stage = pipe.build_stage(stage_id, device=torch.device("cuda", stage_id))
     return stage
