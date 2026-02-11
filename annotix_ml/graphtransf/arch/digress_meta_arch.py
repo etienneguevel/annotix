@@ -641,7 +641,7 @@ class DigressMetaArch:
             pos_emb, y = self.compute_extra_features(N, E, mask, t=t)
             example_input = (N, E, y, pos_emb, mask)
 
-            print(inp.shape for inp in example_input)
+            print([inp.shape for inp in example_input])
 
             example_input = tuple(x.to(self.device) for x in example_input)
 
