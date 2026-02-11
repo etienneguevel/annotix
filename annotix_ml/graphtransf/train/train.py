@@ -57,6 +57,9 @@ def do_eval(
         # Compute the predictions
         pN, pE = model.forward(N, E, mask)  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
+        if pN is None or pE is None:
+            return None
+
         # Make the prediction graph
         N_ = torch.nn.functional.one_hot(
             pN.argmax(-1), num_classes=pN.shape[-1]
@@ -370,39 +373,41 @@ def train(cfg):
             scheduler.step()
 
         # Start the evaluation
-        if i % cfg.valid.num_eval_steps == 0:
+        if (i % cfg.valid.num_eval_steps == 0) & (i > 0):
             # Make the model in eval mode
             digress.diffuser.eval()
 
             # Do the evaluation
             with torch.no_grad():
                 eval_metrics = do_eval(digress, valid_loader, device)
-                validity, validity_digress, valid_smiles = generate_samples(
-                    digress, cfg.valid.num_samples, train_dataset.num_atoms_dist
-                )
-                eval_metrics["gen_validity"] = validity
-                eval_metrics["gen_validity_digress"] = validity_digress
-                print(f"Evaluation Metrics: {eval_metrics}")
 
-                for k, v in eval_metrics.items():
-                    metrics[k].append(v)
+                if eval_metrics:
+                    validity, validity_digress, valid_smiles = generate_samples(
+                        digress, cfg.valid.num_samples, train_dataset.num_atoms_dist
+                    )
+                    eval_metrics["gen_validity"] = validity
+                    eval_metrics["gen_validity_digress"] = validity_digress
+                    print(f"Evaluation Metrics: {eval_metrics}")
 
-                # Log evaluation metrics to wandb
-                eval_log = {"step": i}
-                for k, v in eval_metrics.items():
-                    eval_log[f"eval/{k}"] = v
+                    for k, v in eval_metrics.items():
+                        metrics[k].append(v)
 
-                wandb.log(eval_log)
+                    # Log evaluation metrics to wandb
+                    eval_log = {"step": i}
+                    for k, v in eval_metrics.items():
+                        eval_log[f"eval/{k}"] = v
 
-                # Save the valid smiles
-                with open(
-                    os.path.join(cfg.train.save_path, f"valid_smiles_{i}.txt"), "w"
-                ) as f:
-                    for s in valid_smiles:
-                        f.write(f"{s}\n")
+                    wandb.log(eval_log)
+
+                    # Save the valid smiles
+                    with open(
+                        os.path.join(cfg.train.save_path, f"valid_smiles_{i}.txt"), "w"
+                    ) as f:
+                        for s in valid_smiles:
+                            f.write(f"{s}\n")
 
         # Save the model
-        if i % cfg.train.save_steps == 0:
+        if (i % cfg.train.save_steps == 0) & (i > 0):
             torch.save(
                 digress.diffuser.state_dict(),
                 os.path.join(cfg.train.save_path, f"{i}.pt"),
