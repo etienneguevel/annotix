@@ -21,7 +21,11 @@ def auto_model_split(model, example_input_kwargs):
 
     print("INIT : Distributed Pipeline Parallelism")
     print(
-        *(f"Shape of input {k}: {inp.shape}" for k, inp in example_input_kwargs.items())
+        *(
+            f"Shape of input {k}: {inp.shape}"
+            for k, inp in example_input_kwargs.items()
+        ),
+        sep="\n",
     )
 
     pipe = pipeline(
