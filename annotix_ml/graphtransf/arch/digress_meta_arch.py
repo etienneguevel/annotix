@@ -8,7 +8,7 @@ from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
 from tqdm import tqdm
 
-from annotix_ml.distributed import get_global_rank, is_main_process
+from annotix_ml.distributed import get_global_rank
 from annotix_ml.distributed.pipeline_parallelism import iterative_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -378,14 +378,12 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
-        if is_main_process():
-            # noise the graph
-            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
+        N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
 
-            # compute the extra features
-            pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t, **kwargs
-            )  # (bs, node_features), (bs, global_features)
+        # compute the extra features
+        pos_emb, y = self.compute_extra_features(
+            N_noised, E_noised, mask, sampled_t, **kwargs
+        )  # (bs, node_features), (bs, global_features)
 
         # Compute the output of the diffuser
         if self.schedule:
