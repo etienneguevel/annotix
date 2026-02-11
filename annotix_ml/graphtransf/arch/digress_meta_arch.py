@@ -397,11 +397,11 @@ class DigressMetaArch:
         if self.schedule:
             if self.stage.is_first:
                 input_kwargs = {
-                    "h": N_noised,
                     "e": E_noised,
+                    "mask": mask,
                     "global_features": y,
                     "node_features": pos_emb,
-                    "mask": mask,
+                    "h": N_noised,
                 }
                 out = self.schedule.step(**input_kwargs)
             else:
@@ -659,11 +659,11 @@ class DigressMetaArch:
             ).unsqueeze(1)
             pos_emb, y = self.compute_extra_features(N_mb, E_mb, mask_mb, t=t)
             example_input = {
-                "h": N_mb,
                 "e": E_mb,
+                "mask": mask_mb,
                 "global_features": y,
                 "node_features": pos_emb,
-                "mask": mask_mb,
+                "h": N_mb,
             }
 
             example_input = {k: v.to(self.device) for k, v in example_input.items()}
