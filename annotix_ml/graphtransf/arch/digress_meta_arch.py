@@ -389,7 +389,7 @@ class DigressMetaArch:
 
         # Compute the output of the diffuser
         if self.schedule:
-            if is_main_process():
+            if self.stage.is_first:
                 input_tuple = (N_noised, E_noised, y, pos_emb, mask)
                 out = self.schedule.step(input_tuple)
             else:
@@ -646,6 +646,7 @@ class DigressMetaArch:
             example_input = tuple(x.to(self.device) for x in example_input)
 
             stage = iterative_model_split(self.diffuser, example_input)
+            self.stage = stage
             self.schedule = ScheduleGPipe(stage, num_microbatches)
             self.rank = get_global_rank()
 
