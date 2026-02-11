@@ -396,8 +396,14 @@ class DigressMetaArch:
         # Compute the output of the diffuser
         if self.schedule:
             if self.stage.is_first:
-                input_tuple = (N_noised, E_noised, y, pos_emb, mask)
-                out = self.schedule.step(*input_tuple)
+                input_kwargs = {
+                    "h": N_noised,
+                    "e": E_noised,
+                    "global_features": y,
+                    "node_features": pos_emb,
+                    "mask": mask,
+                }
+                out = self.schedule.step(**input_kwargs)
             else:
                 out = self.schedule.step()
 
