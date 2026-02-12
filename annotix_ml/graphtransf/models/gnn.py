@@ -211,4 +211,4 @@ class GnnNodeEdgesWithoutY(nn.Module):
         for layer in self.layers:
             h, e, mask = layer(h, e, mask)
 
-        return h, e, global_features, node_features, mask
+        return e, mask, global_features, node_features, h
