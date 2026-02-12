@@ -417,6 +417,8 @@ class DigressMetaArch:
             else:
                 out = self.schedule.step()
 
+            print(f"Rank {self.rank} executed.")
+
         else:
             out = self.diffuser(**input_kwargs)
             pN, pE = out[0], out[1]
