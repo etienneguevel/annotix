@@ -173,7 +173,7 @@ def generate_samples(
 
 def train(cfg):
     # Initialize wandb
-    if dist.is_main_process():
+    if dist.get_global_rank() == (dist.get_local_size() - 1):
         wandb.init(
             project=cfg.run.project,
             name=cfg.run.name,
