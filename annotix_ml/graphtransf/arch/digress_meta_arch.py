@@ -407,7 +407,7 @@ class DigressMetaArch:
                 losses = []
                 # Make the target -> need to stack to be splitted for mb
                 target = torch.hstack(
-                    [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)], dim=0
+                    [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
                 )  # (bs, n * natoms + n * n * nedges)
 
                 out = self.schedule.step(target=target, losses=losses)
