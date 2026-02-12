@@ -390,7 +390,7 @@ class DigressMetaArch:
             N_noised, E_noised, mask, sampled_t, **kwargs
         )  # (bs, node_features), (bs, global_features)
 
-        input_args = (
+        input_args = tuple(
             E_noised,
             mask,
             y,
@@ -604,7 +604,7 @@ class DigressMetaArch:
             example_input = (E_mb, mask_mb, y, pos_emb, N_mb)
 
             # Move the input to the correct device
-            example_input = (v.to(self.device) for v in example_input)
+            example_input = tuple(v.to(self.device) for v in example_input)
 
             # Split the model in pipeline
             stage = auto_model_split(self.diffuser, example_input)
