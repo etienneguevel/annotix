@@ -12,7 +12,7 @@ from torch.distributed.pipelining import pipeline, SplitPoint
 from annotix_ml.distributed import get_global_rank, get_global_size
 
 
-def auto_model_split(model, example_input_kwargs):
+def auto_model_split(model, example_input_args):
     num_stages = get_global_size()
     stage_id = get_global_rank()
 
@@ -31,14 +31,14 @@ def auto_model_split(model, example_input_kwargs):
     print(
         *(
             f"Shape of input {k}: {inp.shape}"
-            for k, inp in example_input_kwargs.items()
+            for k, inp in enumerate(example_input_args)
         ),
         sep="\n",
     )
 
     pipe = pipeline(
         module=model,
-        mb_args=example_input_kwargs,
+        mb_args=example_input_args,
         split_spec=split_dict,
     )
 
