@@ -400,16 +400,16 @@ class DigressMetaArch:
 
         # Compute the output of the diffuser
         if self.schedule:
+            # Make the target -> need to stack to be splitted for mb
+            target = torch.hstack(
+                [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
+            )  # (bs, n * natoms + n * n * nedges)
+
             if self.stage.is_first:
                 out = self.schedule.step(**input_kwargs)
 
             elif self.stage.is_last:
                 losses = []
-                # Make the target -> need to stack to be splitted for mb
-                target = torch.hstack(
-                    [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
-                )  # (bs, n * natoms + n * n * nedges)
-
                 out = self.schedule.step(target=target, losses=losses)
                 loss = sum(losses)
                 pN, pE = out[0], out[1]
