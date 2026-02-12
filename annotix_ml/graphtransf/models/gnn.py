@@ -207,5 +207,6 @@ class GnnNodeEdgesWithoutY(nn.Module):
 
         for layer in self.layers:
             h, e, mask = layer(h, e, mask)
+            mask = mask.clone()
 
         return e, mask, h
