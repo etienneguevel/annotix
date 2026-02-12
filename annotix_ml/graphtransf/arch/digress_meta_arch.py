@@ -613,7 +613,7 @@ class DigressMetaArch:
             # Make a loss function for the pipeline
             def loss_fn(logits: list[torch.Tensor], target: torch.Tensor):
                 # Unpack the predictions
-                pN, pE, *_, mask = logits
+                pE, mask, pN = logits
 
                 # Remake the nodes and edges
                 _, n, natoms = pN.shape
