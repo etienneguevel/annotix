@@ -88,7 +88,7 @@ class GnnNodeEdges(nn.Module):
         y: torch.Tensor,
         node_features: torch.Tensor,
         mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass of the GNN model.
 
@@ -100,11 +100,10 @@ class GnnNodeEdges(nn.Module):
             mask (torch.Tensor): Mask tensor of shape (bs, n).
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
                 - h (torch.Tensor): Updated node features of shape (bs, n, d).
                 - e (torch.Tensor): Updated edge features of shape (bs, n, n, de).
                 - y (torch.Tensor): Updated global features of shape (bs, dy).
-                - node_features (torch.Tensor): Extra node features (unchanged).
                 - mask (torch.Tensor): Mask tensor (unchanged).
         """
         # y is already computed/provided in this version
@@ -115,7 +114,7 @@ class GnnNodeEdges(nn.Module):
             else:
                 h, e, y, mask = layer(h, e, y, mask)
 
-        return h, e, y, node_features, mask
+        return h, e, y, mask
 
 
 class GnnNodeEdgesWithoutY(nn.Module):
@@ -187,7 +186,7 @@ class GnnNodeEdgesWithoutY(nn.Module):
         global_features: torch.Tensor,
         node_features: torch.Tensor,
         mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass of the GNN model without global feature updates.
 
@@ -199,11 +198,9 @@ class GnnNodeEdgesWithoutY(nn.Module):
             mask (torch.Tensor): Mask tensor of shape (bs, n).
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 - h (torch.Tensor): Updated node features of shape (bs, n, d).
                 - e (torch.Tensor): Updated edge features of shape (bs, n, n, de).
-                - global_features (torch.Tensor): Extra global features (unchanged).
-                - node_features (torch.Tensor): Extra node features (unchanged).
                 - mask (torch.Tensor): Mask tensor (unchanged).
         """
         h, e, mask = self.embedding_layer(h, e, global_features, node_features, mask)
@@ -211,4 +208,4 @@ class GnnNodeEdgesWithoutY(nn.Module):
         for layer in self.layers:
             h, e, mask = layer(h, e, mask)
 
-        return h, e, global_features, node_features, mask
+        return h, e, mask
