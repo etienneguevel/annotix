@@ -406,7 +406,7 @@ class DigressMetaArch:
             elif self.stage.is_last:
                 losses = []
                 # Make the target -> need to stack to be splitted for mb
-                target = torch.stack(
+                target = torch.hstack(
                     [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)], dim=0
                 )  # (bs, n * natoms + n * n * nedges)
 
