@@ -614,7 +614,7 @@ class DigressMetaArch:
             self.stage = stage
 
             # Make a loss function for the pipeline
-            def loss_fn(logits: list(torch.Tensor), target: torch.Tensor):
+            def loss_fn(logits: list[torch.Tensor], target: torch.Tensor):
                 # Unpack the predictions
                 pN, pE, *_, mask = logits
 
