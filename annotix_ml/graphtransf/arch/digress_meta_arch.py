@@ -1,8 +1,7 @@
 import os
-from typing import Any, Literal, Mapping
+from typing import Literal
 
 import torch
-import torch.nn as nn
 from omegaconf import DictConfig
 from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
@@ -21,7 +20,7 @@ from annotix_ml.graphtransf.math.extra_features import (
     charge,
     weight,
 )
-from annotix_ml.graphtransf.math.metrics import compute_accuracy
+from annotix_ml.graphtransf.math.losses import digress_loss
 from annotix_ml.graphtransf.math.noising import sample_discrete_features
 
 
@@ -143,9 +142,6 @@ class DigressMetaArch:
             edges_distribution=edges_distribution,
         )
         self.noiser.move_to(device)
-
-        # Make the loss
-        self.loss = nn.CrossEntropyLoss()
 
         # Put some variables in case of distributed training
         self.rank = -1
@@ -363,7 +359,7 @@ class DigressMetaArch:
 
         return pos_emb, y
 
-    def forward(
+    def forward_backward(
         self,
         nodes: torch.Tensor,
         edges: torch.Tensor,
@@ -386,112 +382,44 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
+        # Noise the graph
         N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
 
         # compute the extra features
         pos_emb, y = self.compute_extra_features(
             N_noised, E_noised, mask, sampled_t, **kwargs
         )  # (bs, node_features), (bs, global_features)
-
+        input_kwargs = {
+            "e": E_noised,
+            "mask": mask,
+            "global_features": y,
+            "node_features": pos_emb,
+            "h": N_noised,
+        }
         # Compute the output of the diffuser
         if self.schedule:
             if self.stage.is_first:
-                input_kwargs = {
-                    "e": E_noised,
-                    "mask": mask,
-                    "global_features": y,
-                    "node_features": pos_emb,
-                    "h": N_noised,
-                }
                 out = self.schedule.step(**input_kwargs)
+
+            elif self.stage.is_last:
+                losses = []
+                out = self.schedule(target=(nodes, edges), losses=losses)
+                loss = sum(losses)
+                pN, pE = out[0], out[1]
 
             else:
                 out = self.schedule.step()
 
         else:
             out = self.diffuser(N_noised, E_noised, y, pos_emb, mask)
-
-        if out is not None:
             pN, pE = out[0], out[1]
-        else:
-            pN, pE = None, None
+            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
+            loss.backward()
 
-        return pN, pE
+        if out is None:
+            pN, pE, loss = None, None, None
 
-    def compute_loss(self, batch: Mapping[str, Any], outputs: [torch.Tensor]):
-        """
-        Compute the loss and metrics based on the original batch and the model outputs.
-
-        Args:
-            batch (dict[str, torch.Tensor]): A dictionary containing:
-                - "nodes" (torch.Tensor): Node features of shape (bs, n, natoms).
-                - "edges" (torch.Tensor): Edge features of shape (bs, n, n, nedges).
-                - "mask" (torch.Tensor): Mask tensor of shape (bs, n).
-            outputs (tuple[torch.Tensor, torch.Tensor]): A tuple containing:
-                - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
-                - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
-
-        Returns:
-            tuple[torch.Tensor, dict]: A tuple containing:
-                - total_loss (torch.Tensor): Scalar loss value.
-                - metrics (dict): Dictionary of computed metrics (accuracy, cross-entropy per atom).
-        """
-        # unpack the elements of the batch
-        N = batch["nodes"]
-        E = batch["edges"]
-        mask = batch["mask"]
-
-        # unpack the outputs
-        pN, pE = outputs
-
-        # Compute the losses
-        # Node loss
-        N_target = N.argmax(-1)  # (bs, n)
-        N_target = mask_any_tensor(
-            N_target, mask, fill=-100
-        )  # -100 is the ignore_index of CrossEntropLoss
-        pN = pN.transpose(1, 2)  # (bs, n_atoms, n)
-
-        Nloss = self.loss(pN, N_target)
-
-        # Edges loss
-        E_target = E.argmax(-1)  # (bs, n, n)
-        E_target = mask_any_tensor(
-            E_target, mask, fill=-100
-        )  # -100 is the ignore_index of CrossEntropLoss
-        pE = pE.permute((0, 3, 1, 2))  # (bs, n_edges, n, n)
-
-        Eloss = self.loss(pE, E_target)
-
-        # Add the losses
-        total_loss = Nloss + (self.loss_ratio * Eloss)
-
-        # Compute the accuracy
-        accuracy = compute_accuracy(
-            pN.transpose(1, 2), pE.permute((0, 2, 3, 1)), N, E, mask
-        )
-
-        # Compute the cross-entropy for each of the atoms
-        metrics = {}
-        for idx, at in enumerate(self.valid_elements):
-            input = pN.transpose(1, 2).softmax(-1)[..., idx]  # (bs, n, 1)
-            target = N[..., idx]
-            mask_bool = mask.bool()
-
-            # input: (bs, n, 1) -> (bs, n)
-            input_masked = input.squeeze(-1)[mask_bool]
-            # target: (bs, n)
-            target_masked = target[mask_bool].float()
-
-            ce = nn.functional.binary_cross_entropy(input_masked, target_masked)
-            metrics[f"ce_{at}"] = ce
-
-        metrics |= {
-            "node_accuracy": torch.tensor(accuracy["node_accuracy"]).mean().item(),
-            "edge_accuracy": torch.tensor(accuracy["edge_accuracy"]).mean().item(),
-        }
-
-        return total_loss, metrics
+        return pN, pE, loss
 
     @torch.no_grad()
     def generate(
@@ -654,10 +582,12 @@ class DigressMetaArch:
             bs = N.shape[0]
             mb_size = bs // num_microbatches
 
+            # Make the example microbatch for the pipeline
             N_mb = N[:mb_size]
             E_mb = E[:mb_size]
             mask_mb = mask[:mb_size]
 
+            # Compute the extra features for the example microbatch
             t = torch.randint(
                 1, self.noiser.T, (mb_size,), device=self.device
             ).unsqueeze(1)
@@ -672,9 +602,19 @@ class DigressMetaArch:
 
             example_input = {k: v.to(self.device) for k, v in example_input.items()}
 
+            # Split the model in pipeline
             stage = auto_model_split(self.diffuser, example_input)
             self.stage = stage
-            self.schedule = ScheduleGPipe(stage, num_microbatches)
+
+            # Make a loss function for the pipeline
+            def loss_fn(logits, target):
+                pN, pE, *_, mask = logits
+                N, E = target
+
+                loss = digress_loss(pN, pE, N, E, mask, self.loss_ratio)
+                return loss
+
+            self.schedule = ScheduleGPipe(stage, num_microbatches, loss_fn=loss_fn)
             self.rank = get_global_rank()
 
         elif mode == "tensor":

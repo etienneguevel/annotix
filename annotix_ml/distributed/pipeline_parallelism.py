@@ -1,4 +1,12 @@
 import torch
+import torch.distributed as dist
+
+from torch.distributed.checkpoint import load, save
+from torch.distributed.checkpoint.state_dict import (
+    get_state_dict,
+    set_state_dict,
+    StateDictOptions,
+)
 from torch.distributed.pipelining import pipeline, SplitPoint
 
 from annotix_ml.distributed import get_global_rank, get_global_size
@@ -37,3 +45,35 @@ def auto_model_split(model, example_input_kwargs):
 
     stage = pipe.build_stage(stage_id, device=torch.device("cuda", stage_id))
     return stage
+
+
+def save_checkpoint(model, optimizer, path):
+    dist.barrier()
+    model_state, optimizer_state = get_state_dict(
+        model, optimizer, options=StateDictOptions(full_state_dict=True)
+    )
+    save(
+        {"model": model_state, "optimizer": optimizer_state},
+        checkpoint_id=path,  # each rank will save its own file
+    )
+    dist.barrier()
+
+
+def load_checkpoint(model, optimizer, path):
+    dist.barrier()
+    model_state, optimizer_state = get_state_dict(
+        model, optimizer, options=StateDictOptions(full_state_dict=True)
+    )
+    load(
+        {"model": model_state, "optimizer": optimizer_state},
+        checkpoint_id=path,  # each rank will save its own file
+    )
+    # necessary if model.load_state_dict() should be called
+    set_state_dict(
+        model,
+        optimizer,
+        model_state_dict=model_state,
+        optim_state_dict=optimizer_state,
+        options=StateDictOptions(broadcast_from_rank0=True, full_state_dict=True),
+    )
+    dist.barrier()

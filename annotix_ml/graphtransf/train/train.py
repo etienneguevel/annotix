@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import annotix_ml.distributed as dist
+from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.datacollator import collateGraph, collateGraphStatic
 from functools import partial
@@ -24,6 +25,7 @@ from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import compute_metrics
+from annotix_ml.graphtransf.math.losses import compute_training_metrics
 from annotix_ml.graphtransf.train.setup import setup
 from annotix_ml.distributed import enable
 
@@ -323,28 +325,28 @@ def train(cfg):
         # Make the model in train mode
         digress.diffuser.train()
 
+        # zero grad before forward pass
+        optimizer.zero_grad()
+
         # Move the batch to the correct device
         batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
         N, E, mask = batch
 
         # Do the forward and loss computation
         try:
-            pN, pE = digress.forward(N, E, mask)
-            if pN is not None and pE is not None:
-                loss, epoch_metrics = digress.compute_loss(
-                    {"nodes": N, "edges": E, "mask": mask}, (pN, pE)
-                )
-                loss.backward()
-            else:
-                loss = None
+            pN, pE, loss = digress.forward_backward(N, E, mask)
 
         except LinAlgError:
-            print("LinAlgError in forward or compute_loss")
+            print("LinAlgError in forward or digress_loss")
             continue
 
         # If loss is None (on non-last ranks in PP), we skip logging but might still step optimizer
         # usually optimizer is stepped on all ranks in PP
         if loss is not None:
+            epoch_metrics = compute_training_metrics(
+                pN, pE, N, E, mask, digress.valid_elements
+            )
+
             for k, v in epoch_metrics.items():
                 if isinstance(v, torch.Tensor):
                     v = v.item()
@@ -352,7 +354,7 @@ def train(cfg):
 
             # Update the progress bar
             lr = optimizer.param_groups[0]["lr"]
-            pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)  # pyright: ignore[reportArgumentType]
+            pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)
 
             # Log training metrics to wandb
             train_log = {
@@ -360,6 +362,7 @@ def train(cfg):
                 "train/learning_rate": lr,
                 "step": i,
             }
+
             for k, v in epoch_metrics.items():
                 train_log[f"train/{k}"] = v
 
@@ -367,7 +370,6 @@ def train(cfg):
 
         # Update the parameters
         optimizer.step()
-        optimizer.zero_grad()
 
         if scheduler is not None:
             scheduler.step()
@@ -408,10 +410,18 @@ def train(cfg):
 
         # Save the model
         if (i % cfg.train.save_steps == 0) & (i > 0):
-            torch.save(
-                digress.diffuser.state_dict(),
-                os.path.join(cfg.train.save_path, f"{i}.pt"),
-            )
+            if cfg.train.get("distributed") == "pp":
+                save_checkpoint(
+                    digress.diffuser,
+                    optimizer,
+                    os.path.join(cfg.train.save_path, f"checkpoint_{i}"),
+                )
+
+            else:
+                torch.save(
+                    digress.diffuser.state_dict(),
+                    os.path.join(cfg.train.save_path, f"{i}.pt"),
+                )
 
         if i >= cfg.train.num_train_steps:
             break

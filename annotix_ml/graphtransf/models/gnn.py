@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.layers import (
     AttentionLayer,
     AttentionLayerWithoutY,
@@ -213,19 +212,3 @@ class GnnNodeEdgesWithoutY(nn.Module):
             h, e, mask = layer(h, e, mask)
 
         return h, e, global_features, node_features, mask
-
-
-# Make different size of the model
-def gnnNodeEdgesBase() -> GnnNodeEdges:
-    model = GnnNodeEdges(
-        d=256,
-        de=64,
-        dy=256,
-        n_heads=8,
-        node_features=13,
-        global_features=14,
-        n_layers=5,
-        natoms=len(VALID_ELEMENTS),
-        nbonds=len(TYPE_EDGES),
-    )
-    return model
