@@ -390,7 +390,7 @@ class DigressMetaArch:
             N_noised, E_noised, mask, sampled_t, **kwargs
         )  # (bs, node_features), (bs, global_features)
 
-        input_args = tuple(
+        input_args = (
             E_noised,
             mask,
             y,
