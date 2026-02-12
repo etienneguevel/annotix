@@ -179,4 +179,4 @@ class EmbeddingLaplacianWithoutY(nn.Module):
         h = self.EmbeddingNodes(N) + self.LaplacianProjection(features)  # (bs, n, d)
         h = mask_any_tensor(h, mask)
 
-        return h, e, mask
+        return h, e, mask.clone()
