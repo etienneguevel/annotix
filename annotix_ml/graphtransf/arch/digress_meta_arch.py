@@ -385,10 +385,11 @@ class DigressMetaArch:
         # Noise the graph
         N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
 
-        # compute the extra features
+        # compute the extra features & make the kwargs
         pos_emb, y = self.compute_extra_features(
             N_noised, E_noised, mask, sampled_t, **kwargs
         )  # (bs, node_features), (bs, global_features)
+
         input_kwargs = {
             "e": E_noised,
             "mask": mask,
@@ -396,6 +397,7 @@ class DigressMetaArch:
             "node_features": pos_emb,
             "h": N_noised,
         }
+
         # Compute the output of the diffuser
         if self.schedule:
             if self.stage.is_first:
@@ -403,7 +405,12 @@ class DigressMetaArch:
 
             elif self.stage.is_last:
                 losses = []
-                out = self.schedule.step(target=(nodes, edges), losses=losses)
+                # Make the target -> need to stack to be splitted for mb
+                target = torch.stack(
+                    [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)], dim=0
+                )  # (bs, n * natoms + n * n * nedges)
+
+                out = self.schedule.step(target=target, losses=losses)
                 loss = sum(losses)
                 pN, pE = out[0], out[1]
 
@@ -411,7 +418,7 @@ class DigressMetaArch:
                 out = self.schedule.step()
 
         else:
-            out = self.diffuser(N_noised, E_noised, y, pos_emb, mask)
+            out = self.diffuser(**input_kwargs)
             pN, pE = out[0], out[1]
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
             loss.backward()
@@ -607,11 +614,18 @@ class DigressMetaArch:
             self.stage = stage
 
             # Make a loss function for the pipeline
-            def loss_fn(logits, target):
+            def loss_fn(logits: list(torch.Tensor), target: torch.Tensor):
+                # Unpack the predictions
                 pN, pE, *_, mask = logits
-                N, E = target
 
-                loss = digress_loss(pN, pE, N, E, mask, self.loss_ratio)
+                # Remake the nodes and edges
+                _, n, natoms = pN.shape
+                *_, nedges = pE.shape
+
+                nodes = target[:, : (n * natoms)].unflatten(-1, (n, natoms))
+                edges = target[:, (n * natoms) :].unflatten(-1, (n, n, nedges))
+
+                loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
                 return loss
 
             self.schedule = ScheduleGPipe(stage, num_microbatches, loss_fn=loss_fn)
