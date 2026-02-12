@@ -210,4 +210,4 @@ class GnnNodeEdgesWithoutY(nn.Module):
             mask = mask.clone()
 
         h = h + mask.sum() * 0.0
-        return e, mask, h
+        return h, e, mask

@@ -412,7 +412,7 @@ class DigressMetaArch:
                 losses = []
                 out = self.schedule.step(target=target, losses=losses)
                 loss = sum(losses)
-                pN, pE = out[0], out[1]
+                pN, pE, _ = out
 
             else:
                 out = self.schedule.step()
@@ -421,7 +421,7 @@ class DigressMetaArch:
 
         else:
             out = self.diffuser(*input_args)
-            pN, pE = out[0], out[1]
+            pN, pE, _ = out
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
             loss.backward()
 
@@ -612,8 +612,8 @@ class DigressMetaArch:
 
             # Make a loss function for the pipeline
             def loss_fn(logits: list[torch.Tensor], target: torch.Tensor):
-                # Unpack the predictions
-                pE, mask, pN = logits
+                # Unpack the predictions in normalized order (h, e, mask)
+                pN, pE, mask = logits
 
                 # Remake the nodes and edges
                 _, n, natoms = pN.shape
