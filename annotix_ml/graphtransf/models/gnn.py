@@ -181,11 +181,11 @@ class GnnNodeEdgesWithoutY(nn.Module):
 
     def forward(
         self,
-        h: torch.Tensor,
         e: torch.Tensor,
+        mask: torch.Tensor,
         global_features: torch.Tensor,
         node_features: torch.Tensor,
-        mask: torch.Tensor,
+        h: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass of the GNN model without global feature updates.
