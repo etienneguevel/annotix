@@ -203,9 +203,12 @@ class GnnNodeEdgesWithoutY(nn.Module):
                 - e (torch.Tensor): Updated edge features of shape (bs, n, n, de).
                 - mask (torch.Tensor): Mask tensor (unchanged).
         """
-        h, e, mask = self.embedding_layer(h, e, global_features, node_features, mask)
+        if self.embedding_layer is not None:
+            h, e, mask = self.embedding_layer(
+                h, e, global_features, node_features, mask
+            )
 
         for layer in self.layers:
             h, e, mask = layer(h, e, mask)
 
-        return h, e, mask
+        return h, e, global_features, node_features, mask

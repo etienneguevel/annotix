@@ -390,13 +390,13 @@ class DigressMetaArch:
             N_noised, E_noised, mask, sampled_t, **kwargs
         )  # (bs, node_features), (bs, global_features)
 
-        input_kwargs = {
-            "e": E_noised,
-            "mask": mask,
-            "global_features": y,
-            "node_features": pos_emb,
-            "h": N_noised,
-        }
+        input_args = (
+            E_noised,
+            mask,
+            y,
+            pos_emb,
+            N_noised,
+        )
 
         # Compute the output of the diffuser
         if self.schedule:
@@ -406,7 +406,7 @@ class DigressMetaArch:
             )  # (bs, n * natoms + n * n * nedges)
 
             if self.stage.is_first:
-                out = self.schedule.step(**input_kwargs)
+                out = self.schedule.step(*input_args)
 
             elif self.stage.is_last:
                 losses = []
@@ -420,7 +420,7 @@ class DigressMetaArch:
             print(f"Rank {self.rank} executed.")
 
         else:
-            out = self.diffuser(**input_kwargs)
+            out = self.diffuser(*input_args)
             pN, pE = out[0], out[1]
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
             loss.backward()
@@ -601,15 +601,10 @@ class DigressMetaArch:
                 1, self.noiser.T, (mb_size,), device=self.device
             ).unsqueeze(1)
             pos_emb, y = self.compute_extra_features(N_mb, E_mb, mask_mb, t=t)
-            example_input = {
-                "e": E_mb,
-                "mask": mask_mb,
-                "global_features": y,
-                "node_features": pos_emb,
-                "h": N_mb,
-            }
+            example_input = (E_mb, mask_mb, y, pos_emb, N_mb)
 
-            example_input = {k: v.to(self.device) for k, v in example_input.items()}
+            # Move the input to the correct device
+            example_input = (v.to(self.device) for v in example_input)
 
             # Split the model in pipeline
             stage = auto_model_split(self.diffuser, example_input)
