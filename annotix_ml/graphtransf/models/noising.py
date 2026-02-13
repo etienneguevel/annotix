@@ -154,18 +154,23 @@ class NoisingModel(nn.Module):
 
     @torch.no_grad
     def forward(
-        self, N: torch.Tensor, E: torch.Tensor, node_mask: torch.Tensor
+        self,
+        N: torch.Tensor,
+        E: torch.Tensor,
+        node_mask: torch.Tensor,
+        t: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Noise the nodes and edges matrices of a given batch.
 
-        A random t is sampled for each graph and the edges and nodes are noised with the
-        corresponding matrices.
+        If t is not provided, a random t is sampled for each graph.
+        The edges and nodes are noised with the corresponding matrices.
 
         Args:
             N (torch.Tensor): The nodes one-hot encoded vector.
             E (torch.Tensor): The edges one-hot encoded vector.
             node_mask (torch.Tensor): The mask vector.
+            t (torch.Tensor, optional): The time step(s) to noise to. Defaults to None.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
@@ -178,7 +183,13 @@ class NoisingModel(nn.Module):
 
         bs = N.shape[0]
         device = N.device
-        sampled_t = torch.randint(1, self.T, (bs,), device=device)
+        if t is None:
+            sampled_t = torch.randint(1, self.T, (bs,), device=device)
+        else:
+            sampled_t = t.to(device)
+            if sampled_t.dim() == 2:
+                sampled_t = sampled_t.squeeze(1)
+
         noised_N, noised_E = self.compute_noised_graph(N, E, sampled_t, node_mask)
 
         return noised_N, noised_E, sampled_t.unsqueeze(1)
