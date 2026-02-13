@@ -412,14 +412,14 @@ class DigressMetaArch:
                 losses = []
                 out = self.schedule.step(target=target, losses=losses)
                 loss = sum(losses)
-                pN, pE, _ = out
+                pN, pE, *_ = out
 
             else:
                 out = self.schedule.step()
 
         else:
             out = self.diffuser(*input_args)
-            pN, pE, _ = out
+            pN, pE, *_ = out
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
             loss.backward()
 
