@@ -14,6 +14,7 @@ import torch.distributed as dist
 
 _LOCAL_RANK = -1
 _LOCAL_WORLD_SIZE = -1
+_MAIN_RANK = 0
 
 
 def is_enabled() -> bool:
@@ -68,7 +69,15 @@ def is_main_process() -> bool:
     Returns:
         True if the current process is the main one.
     """
-    return get_global_rank() == 0
+    return get_global_rank() == _MAIN_RANK
+
+
+def set_main_rank(rank: int) -> None:
+    """
+    Sets the rank that is considered the main process.
+    """
+    global _MAIN_RANK
+    _MAIN_RANK = rank
 
 
 def _restrict_print_to_main_process() -> None:

@@ -36,7 +36,7 @@ def test_model_creation():
         natoms=natoms,
         nbonds=nbonds,
     )
-    embedding_layer = model.layers.pop(0)
+    embedding_layer = model.embedding_layer
     unembedding_layer = model.layers.pop(-1)
 
     assert type(embedding_layer) is EmbeddingLaplacian
@@ -120,9 +120,9 @@ def test_model_forward():
     )
 
     # Test the forward function
-    out = model.forward(N, E, y, pos_emb, mask)
+    out = model.forward(E, mask, y, pos_emb, N)
     h, e = out[0], out[1]
-    mask_out = out[4]
+    mask_out = out[3]
 
     assert h.shape == (bs, n, natoms)
     assert e.shape == (bs, n, n, nbonds)

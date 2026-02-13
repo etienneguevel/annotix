@@ -24,8 +24,10 @@ from annotix_ml.graphtransf.data.data_utils import (
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.loaders import make_datasets
 from annotix_ml.graphtransf.data.samplers import InfiniteSampler
-from annotix_ml.graphtransf.math.metrics import compute_metrics
-from annotix_ml.graphtransf.math.losses import compute_training_metrics
+from annotix_ml.graphtransf.math.metrics import (
+    compute_metrics,
+    compute_training_metrics,
+)
 from annotix_ml.graphtransf.train.setup import setup
 from annotix_ml.distributed import enable
 
@@ -173,7 +175,14 @@ def generate_samples(
 
 def train(cfg):
     # Initialize wandb
-    if dist.get_global_rank() == (dist.get_local_size() - 1):
+    if cfg.train.get("distributed") == "pp":
+        dist.set_main_rank(dist.get_global_size() - 1)
+
+    if dist.is_main_process():
+        # Constrain wandb to only see the current GPU for system metrics
+        if torch.cuda.is_available():
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(dist.get_local_rank())
+
         wandb.init(
             project=cfg.run.project,
             name=cfg.run.name,

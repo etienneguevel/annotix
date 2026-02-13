@@ -417,8 +417,6 @@ class DigressMetaArch:
             else:
                 out = self.schedule.step()
 
-            print(f"Rank {self.rank} executed.")
-
         else:
             out = self.diffuser(*input_args)
             pN, pE, _ = out
@@ -541,7 +539,7 @@ class DigressMetaArch:
                         N, E, mask, t_tensor, **kwargs
                     )
 
-                    out = self.diffuser(N, E, y, pos_emb, mask)
+                    out = self.diffuser(E, mask, y, pos_emb, N)
 
                     pN, pE = out[0], out[1]
 
@@ -630,5 +628,6 @@ class DigressMetaArch:
 
         elif mode == "tensor":
             pass
+
         else:
             raise ValueError(f"{mode} is not a recognized distributed mode.")

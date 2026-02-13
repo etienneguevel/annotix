@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
-from annotix_ml.graphtransf.math.metrics import compute_accuracy
 
 
 def digress_loss(
@@ -50,51 +49,3 @@ def digress_loss(
     total_loss = Nloss + (loss_ratio * Eloss)
 
     return total_loss
-
-
-def compute_training_metrics(
-    pN: torch.Tensor,
-    pE: torch.Tensor,
-    N: torch.Tensor,
-    E: torch.Tensor,
-    mask: torch.Tensor,
-    valid_elements: list[str],
-) -> dict[str, float]:
-    """
-    Compute metrics based on the original batch and the model outputs.
-
-    Args:
-        pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
-        pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
-        N (torch.Tensor): Target node features of shape (bs, n, natoms).
-        E (torch.Tensor): Target edge features of shape (bs, n, n, nedges).
-        mask (torch.Tensor): Mask tensor of shape (bs, n).
-        valid_elements (list[str]): List of valid atomic element symbols.
-
-    Returns:
-        dict: Dictionary of computed metrics (accuracy, cross-entropy per atom).
-    """
-    # Compute the accuracy
-    accuracy = compute_accuracy(pN, pE, N, E, mask)
-
-    # Compute the cross-entropy for each of the atoms
-    metrics = {}
-    for idx, at in enumerate(valid_elements):
-        input = pN.softmax(-1)[..., idx]  # (bs, n)
-        target = N[..., idx]
-        mask_bool = mask.bool()
-
-        # input: (bs, n)
-        input_masked = input[mask_bool]
-        # target: (bs, n)
-        target_masked = target[mask_bool].float()
-
-        ce = nn.functional.binary_cross_entropy(input_masked, target_masked)
-        metrics[f"ce_{at}"] = ce.item()
-
-    metrics |= {
-        "node_accuracy": torch.tensor(accuracy["node_accuracy"]).mean().item(),
-        "edge_accuracy": torch.tensor(accuracy["edge_accuracy"]).mean().item(),
-    }
-
-    return metrics
