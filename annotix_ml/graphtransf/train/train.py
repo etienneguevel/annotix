@@ -56,10 +56,15 @@ def do_eval(
         batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
 
         # Unpack the elements
-        N, E, mask = batch
+        nodes, edges, mask = batch
+
+        # Noise the elements
+        nodes_noised, edges_noised, sampled_t = model.noiser(nodes, edges, mask)
 
         # Compute the predictions
-        pN, pE = model.forward(N, E, mask)  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        pN, pE = model.forward(
+            nodes_noised, edges_noised, mask, sampled_t
+        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
         if pN is None or pE is None:
             return None
@@ -73,7 +78,9 @@ def do_eval(
         )  # (bs, n, n, n_edges)
 
         # Convert the graph to smiles
-        true_smiles = batch_graph_to_smiles(N, E, mask, model.valid_elements)  # (bs,)
+        true_smiles = batch_graph_to_smiles(
+            nodes, edges, mask, model.valid_elements
+        )  # (bs,)
         pred_smiles = batch_graph_to_smiles(N_, E_, mask, model.valid_elements)  # (bs,)
 
         # Compute the metrics
@@ -82,13 +89,13 @@ def do_eval(
             true_smiles,
             pN,
             pE,
-            N,
-            E,
+            nodes,
+            edges,
             mask,
         )
 
         # Compute accuracy per node type
-        target_nodes = N.argmax(-1)
+        target_nodes = nodes.argmax(-1)
         pred_nodes = pN.argmax(-1)
         valid_mask = mask.bool()
 
@@ -102,7 +109,7 @@ def do_eval(
                 batch_metrics[f"accuracy_node_{atom_type}"] = [acc]
 
         # Compute accuracy per edge type
-        target_edges = E.argmax(-1)
+        target_edges = edges.argmax(-1)
         pred_edges = pE.argmax(-1)
         edge_mask = mask.unsqueeze(2) * mask.unsqueeze(1)
         edge_mask = edge_mask.bool()

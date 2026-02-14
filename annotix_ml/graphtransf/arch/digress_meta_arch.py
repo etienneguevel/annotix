@@ -147,7 +147,6 @@ class DigressMetaArch:
         self.rank = -1
         self.schedule = None
         self.stage = None
-        self.loss = digress_loss
 
     @classmethod
     def init_from_cfg(
@@ -385,17 +384,14 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
-        # Noise the graph
-        N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask, t=t)
-
         # compute the extra features & make the kwargs
         pos_emb, y = self.compute_extra_features(
-            N_noised, E_noised, mask, sampled_t, **kwargs
+            nodes, edges, mask, t, **kwargs
         )  # (bs, node_features), (bs, global_features)
 
         # Compute the output of the diffuser
-        out = self.diffuser(E_noised, mask, y, pos_emb, N_noised)
-        pN, pE = out[0], out[1]
+        out = self.diffuser(edges, mask, y, pos_emb, nodes)
+        pN, pE, *_ = out
 
         return pN, pE
 
@@ -458,7 +454,8 @@ class DigressMetaArch:
                 out = self.schedule.step()
 
         else:
-            pN, pE = self.forward(nodes, edges, mask, **kwargs)
+            out = self.diffuser(*input_args)
+            pN, pE, *_ = out
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
             loss.backward()
 
@@ -466,29 +463,6 @@ class DigressMetaArch:
             pN, pE, loss = None, None, None
 
         return pN, pE, loss
-
-    def compute_loss(
-        self, batch: dict[str, torch.Tensor], outputs: tuple[torch.Tensor, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Compute the loss for a given batch and model outputs.
-        This is a convenience wrapper for `digress_loss`.
-
-        Args:
-            batch (dict): Dictionary containing "nodes", "edges", and "mask".
-            outputs (tuple): Tuple containing predicted nodes and edges (pN, pE).
-
-        Returns:
-            tuple: (total_loss, node_loss, edge_loss)
-        """
-        nodes = batch["nodes"]
-        edges = batch["edges"]
-        mask = batch["mask"]
-        pN, pE = outputs
-
-        return digress_loss(
-            pN, pE, nodes, edges, mask, self.loss_ratio, return_all=True
-        )
 
     @torch.no_grad()
     def generate(
@@ -592,19 +566,13 @@ class DigressMetaArch:
                     N = mask_any_tensor(N, mask, fill=0)  # (bs, n, n_atoms)
                     E = mask_any_tensor(E, mask, fill=0)  # (bs, n, n, n_edges)
 
+                    # Make the tensor for timestep
                     t_tensor = (
                         torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))
                     )  # bs, 1
 
-                    # Compute extra features
-                    pos_emb, y = self.compute_extra_features(
-                        N, E, mask, t_tensor, **kwargs
-                    )
-
-                    out = self.diffuser(E, mask, y, pos_emb, N)
-
-                    pN, pE = out[0], out[1]
-
+                    # Forward pass
+                    pN, pE = self.forward(N, E, mask, t_tensor)
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                     pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
 
