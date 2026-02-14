@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 from torch.linalg import LinAlgError
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import time
 
 import annotix_ml.distributed as dist
 from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
@@ -337,7 +338,9 @@ def train(cfg):
     pbar = tqdm(
         enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
     )
+    start_train_time = time.time()
     for i, batch in pbar:
+        batch_start_time = time.time()
         # Make the model in train mode
         digress.diffuser.train()
 
@@ -376,6 +379,8 @@ def train(cfg):
             train_log = {
                 "train/loss": loss.item(),
                 "train/learning_rate": lr,
+                "train/epoch_time": time.time() - batch_start_time,
+                "train/total_time": time.time() - start_train_time,
                 "step": i,
             }
 
