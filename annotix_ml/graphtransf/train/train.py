@@ -183,9 +183,6 @@ def generate_samples(
 
 def train(cfg):
     # Initialize wandb
-    if cfg.train.get("distributed") == "pp":
-        dist.set_main_rank(dist.get_global_size() - 1)
-
     if dist.is_main_process():
         # Constrain wandb to only see the current GPU for system metrics
         if torch.cuda.is_available():
@@ -463,7 +460,14 @@ def train(cfg):
 def main():
     args = get_args()
     cfg = setup(args)
-    enable(overwrite=True)
+
+    if cfg.train.distributed == "pipeline":
+        main_rank = dist.get_global_size() - 1
+
+    else:
+        main_rank = 0
+
+    enable(overwrite=True, main_rank=main_rank)
     train(cfg)
 
 
