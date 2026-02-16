@@ -14,7 +14,9 @@ model:
     - valence_features
 
 train:
+  batch_size: 2048
   num_train_steps: 100000
   save_steps: 4000
   distributed: "pipeline"
   num_microbatches: 4
+  num_workers: 1
