@@ -256,7 +256,7 @@ def enable(
     set_cuda_current_device: bool = True,
     overwrite: bool = False,
     allow_nccl_timeout: bool = False,
-    main_rank: int = 0,
+    main_rank: str = "first",
 ):
     """Enable distributed mode
 
@@ -271,10 +271,6 @@ def enable(
         raise RuntimeError("Distributed mode has already been enabled")
     torch_env = _TorchDistributedEnvironment()
     torch_env.export(overwrite=overwrite)
-
-    # Set the main rank to another one than 0 for printing processeces of other
-    # distributed setups.
-    set_main_rank(main_rank)
 
     if set_cuda_current_device:
         torch.cuda.set_device(torch_env.local_rank)
@@ -293,6 +289,16 @@ def enable(
         device_id=torch.device("cuda", torch_env.local_rank),
     )
     dist.barrier()
+
+    # Set the main rank to another one than 0 for printing processeces of other
+    # distributed setups.
+    if main_rank == "last":
+        main_rank = get_global_size() - 1
+
+    else:
+        main_rank = 0
+
+    set_main_rank(main_rank)
 
     # Finalize setup
     _LOCAL_RANK = torch_env.local_rank
