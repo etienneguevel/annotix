@@ -52,7 +52,9 @@ def do_eval(
 ) -> dict[str, float]:
     DisableLog("rdApp.*")
     metrics = defaultdict(list)
-    for batch in tqdm(eval_loader, desc="evaluation"):
+    for batch in tqdm(
+        eval_loader, desc="evaluation", disable=not dist.is_main_process()
+    ):
         # Move the elements to the device of interest
         batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
 
@@ -407,24 +409,27 @@ def train(cfg):
                     )
                     eval_metrics["gen_validity"] = validity
                     eval_metrics["gen_validity_digress"] = validity_digress
-                    print(f"Evaluation Metrics: {eval_metrics}")
 
                     for k, v in eval_metrics.items():
                         metrics[k].append(v)
 
-                    # Log evaluation metrics to wandb
-                    eval_log = {"step": i}
-                    for k, v in eval_metrics.items():
-                        eval_log[f"eval/{k}"] = v
+                    if dist.is_main_process():
+                        print(f"Evaluation Metrics: {eval_metrics}")
 
-                    wandb.log(eval_log)
+                        # Log evaluation metrics to wandb
+                        eval_log = {"step": i}
+                        for k, v in eval_metrics.items():
+                            eval_log[f"eval/{k}"] = v
 
-                    # Save the valid smiles
-                    with open(
-                        os.path.join(cfg.train.save_path, f"valid_smiles_{i}.txt"), "w"
-                    ) as f:
-                        for s in valid_smiles:
-                            f.write(f"{s}\n")
+                        wandb.log(eval_log)
+
+                        # Save the valid smiles
+                        with open(
+                            os.path.join(cfg.train.save_path, f"valid_smiles_{i}.txt"),
+                            "w",
+                        ) as f:
+                            for s in valid_smiles:
+                                f.write(f"{s}\n")
 
         # Save the model
         if (i % cfg.train.save_steps == 0) & (i > 0):
