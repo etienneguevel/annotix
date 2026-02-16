@@ -395,6 +395,19 @@ def train(cfg):
                 "step": i,
             }
 
+            # Log GPU memory usage for this process
+            if device.type == "cuda":
+                rank = dist.get_global_rank()
+                train_log[f"gpu/rank_{rank}_mem_allocated_MB"] = (
+                    torch.cuda.memory_allocated() / 1e6
+                )
+                train_log[f"gpu/rank_{rank}_mem_reserved_MB"] = (
+                    torch.cuda.memory_reserved() / 1e6
+                )
+                train_log[f"gpu/rank_{rank}_mem_peak_MB"] = (
+                    torch.cuda.max_memory_allocated() / 1e6
+                )
+
             for k, v in epoch_metrics.items():
                 train_log[f"train/{k}"] = v
 
