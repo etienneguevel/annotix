@@ -40,8 +40,16 @@ class InfiniteSampler(Sampler):
         self._sample_count = sample_count
         self._seed = seed
         self._shuffle = shuffle
-        self._start = distributed.get_global_rank() if start is None else start
-        self._step = distributed.get_global_size() if step is None else step
+
+        # If start or step is provided, use it.
+        # Otherwise, fallback to distributed global rank/size for data parallelism.
+        if start is None:
+            start = distributed.get_global_rank()
+        if step is None:
+            step = distributed.get_global_size()
+
+        self._start = start
+        self._step = step
         self._advance = advance
 
     def __iter__(self):

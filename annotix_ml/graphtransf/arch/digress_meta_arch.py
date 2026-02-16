@@ -447,7 +447,7 @@ class DigressMetaArch:
             elif self.stage.is_last:
                 losses = []
                 out = self.schedule.step(target=target, losses=losses)
-                loss = sum(losses)
+                loss = sum(losses) / len(losses)
                 pN, pE, *_ = out
 
             else:

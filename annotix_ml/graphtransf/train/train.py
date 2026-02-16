@@ -213,6 +213,27 @@ def train(cfg):
         verbose=dist.is_main_process(),
     )
 
+    # Determine the collation function and distributed data rank/size
+    data_rank = dist.get_global_rank()
+    data_size = dist.get_global_size()
+
+    if dist.is_enabled():
+        if cfg.train.get("distributed") == "pp":
+            # In Pipeline Parallelism, all ranks in the same pipeline
+            # (which is the whole world here) must see the same data.
+            data_rank = 0
+            data_size = 1
+            print(
+                f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
+            )
+
+        # Derive n_max from the distribution of number of atoms
+        n_max = len(train_dataset.num_atoms_dist)
+        collate_fn = partial(collateGraphStatic, n_max=n_max)
+        print(f"Using static shape data collator with n_max={n_max}")
+    else:
+        collate_fn = collateGraph
+
     # Make the DataLoaders
     sample_count = len(train_dataset)
     shuffle = True
@@ -223,17 +244,10 @@ def train(cfg):
         sample_count=sample_count,
         shuffle=shuffle,
         seed=seed,
+        start=data_rank,
+        step=data_size,
         advance=advance,
     )
-
-    # Determine the collation function
-    if dist.is_enabled():
-        # Derive n_max from the distribution of number of atoms
-        n_max = len(train_dataset.num_atoms_dist)
-        collate_fn = partial(collateGraphStatic, n_max=n_max)
-        print(f"Using static shape data collator with n_max={n_max}")
-    else:
-        collate_fn = collateGraph
 
     train_loader = DataLoader(
         train_dataset,
@@ -308,7 +322,14 @@ def train(cfg):
 
     os.makedirs(save_path)
 
-    # Make the losses and the optimizer
+    # Setup for distributed training
+    if cfg.train.get("distributed") is not None:
+        example_batch = next(iter(train_loader))
+        digress._setup_distributed(
+            cfg.train.distributed, cfg.train.num_microbatches, example_batch
+        )
+
+    # Make the optimizer
     optimizer = torch.optim.AdamW(
         digress.diffuser.parameters(),
         lr=cfg.train.starting_learning_rate,
@@ -324,13 +345,6 @@ def train(cfg):
         )
     else:
         scheduler = None
-
-    # Setup for distributed training
-    if cfg.train.get("distributed") is not None:
-        example_batch = next(iter(train_loader))
-        digress._setup_distributed(
-            cfg.train.distributed, cfg.train.num_microbatches, example_batch
-        )
 
     # Start the training loop
     pbar = tqdm(
@@ -357,8 +371,7 @@ def train(cfg):
             print("LinAlgError in forward or digress_loss")
             continue
 
-        # If loss is None (on non-last ranks in PP), we skip logging but might still step optimizer
-        # usually optimizer is stepped on all ranks in PP
+        # If loss is None (on non-last ranks in PP), we skip logging
         if loss is not None:
             epoch_metrics = compute_training_metrics(
                 pN, pE, N, E, mask, digress.valid_elements
@@ -467,7 +480,7 @@ def main():
 
     if cfg.train.distributed == "pipeline":
         main_rank = "last"
-    
+
     else:
         main_rank = "first"
 
