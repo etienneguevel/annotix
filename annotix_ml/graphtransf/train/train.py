@@ -187,8 +187,7 @@ def train(cfg):
     # Initialize wandb
     if dist.is_main_process():
         # Constrain wandb to only see the current GPU for system metrics
-        if torch.cuda.is_available():
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(dist.get_local_rank())
+        print(dist._MAIN_RANK)
 
         wandb.init(
             project=cfg.run.project,
@@ -467,10 +466,10 @@ def main():
     cfg = setup(args)
 
     if cfg.train.distributed == "pipeline":
-        main_rank = dist.get_global_size() - 1
-
+        main_rank = "last"
+    
     else:
-        main_rank = 0
+        main_rank = "first"
 
     enable(overwrite=True, main_rank=main_rank)
     train(cfg)
