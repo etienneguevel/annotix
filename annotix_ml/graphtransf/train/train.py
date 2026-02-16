@@ -218,7 +218,7 @@ def train(cfg):
     data_size = dist.get_global_size()
 
     if dist.is_enabled():
-        if cfg.train.get("distributed") == "pp":
+        if cfg.train.get("distributed") == "pipeline":
             # In Pipeline Parallelism, all ranks in the same pipeline
             # (which is the whole world here) must see the same data.
             data_rank = 0
@@ -445,7 +445,7 @@ def train(cfg):
 
         # Save the model
         if (i % cfg.train.save_steps == 0) & (i > 0):
-            if cfg.train.get("distributed") == "pp":
+            if cfg.train.get("distributed") == "pipeline":
                 save_checkpoint(
                     digress.diffuser,
                     optimizer,
