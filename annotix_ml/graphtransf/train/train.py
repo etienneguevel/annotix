@@ -354,10 +354,11 @@ def train(cfg):
 
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3),
+        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
         on_trace_ready=torch.profiler.tensorboard_trace_handler(
             cfg.train.save_path + "/log/profile"
         ),
+        profile_memory=True,
         with_stack=True,
     ) as prof:
         with record_function("model_training"):
