@@ -389,9 +389,33 @@ class DigressMetaArch:
             nodes, edges, mask, t, **kwargs
         )  # (bs, node_features), (bs, global_features)
 
+        input_args = (
+            edges,
+            mask,
+            y,
+            pos_emb,
+            nodes,
+        )
+
+        # Use the schedule to make the forward pass if pp distributed
+        if self.schedule:
+            if self.stage.is_first:
+                out = self.schedule.step(*input_args)
+
+            elif self.stage.is_last:
+                out = self.schedule.step()
+                pN, pE, *_ = out
+
+            else:
+                out = self.schedule.step()
+
         # Compute the output of the diffuser
-        out = self.diffuser(edges, mask, y, pos_emb, nodes)
-        pN, pE, *_ = out
+        else:
+            out = self.diffuser(edges, mask, y, pos_emb, nodes)
+            pN, pE, *_ = out
+
+        if not out:
+            pN, pE = None, None
 
         return pN, pE
 
