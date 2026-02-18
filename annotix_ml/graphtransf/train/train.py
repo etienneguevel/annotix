@@ -429,74 +429,86 @@ def train(cfg):
                 # Update the parameters
                 optimizer.step()
 
-            # Step the profiler
-            prof.step()
+                # Step the profiler
+                prof.step()
 
-            # Step the scheduler
-            if scheduler is not None:
-                scheduler.step()
+                # Step the scheduler
+                if scheduler is not None:
+                    scheduler.step()
 
-            # Start the evaluation
-            if (i % cfg.valid.num_eval_steps == 0) & (i > 0):
-                # Make the model in eval mode
-                digress.diffuser.eval()
+                # Start the evaluation
+                if (i % cfg.valid.num_eval_steps == 0) & (i > 0):
+                    # Make the model in eval mode
+                    digress.diffuser.eval()
 
-                # Do the evaluation
-                with torch.no_grad():
-                    eval_metrics = do_eval(digress, valid_loader, device)
+                    # Do the evaluation
+                    with torch.no_grad():
+                        eval_metrics = do_eval(digress, valid_loader, device)
 
-                    if eval_metrics:
-                        validity, validity_digress, valid_smiles = generate_samples(
-                            digress, cfg.valid.num_samples, train_dataset.num_atoms_dist
-                        )
-                        eval_metrics["gen_validity"] = validity
-                        eval_metrics["gen_validity_digress"] = validity_digress
+                        if eval_metrics:
+                            validity, validity_digress, valid_smiles = generate_samples(
+                                digress,
+                                cfg.valid.num_samples,
+                                train_dataset.num_atoms_dist,
+                            )
+                            eval_metrics["gen_validity"] = validity
+                            eval_metrics["gen_validity_digress"] = validity_digress
 
-                        for k, v in eval_metrics.items():
-                            metrics[k].append(v)
-
-                        if dist.is_main_process():
-                            print(f"Evaluation Metrics: {eval_metrics}")
-
-                            # Log evaluation metrics to wandb
-                            eval_log = {"step": i}
                             for k, v in eval_metrics.items():
-                                eval_log[f"eval/{k}"] = v
+                                metrics[k].append(v)
 
-                            wandb.log(eval_log)
+                            if dist.is_main_process():
+                                print(f"Evaluation Metrics: {eval_metrics}")
 
-                            # Save the valid smiles
-                            with open(
-                                os.path.join(
-                                    cfg.train.save_path, f"valid_smiles_{i}.txt"
-                                ),
-                                "w",
-                            ) as f:
-                                for s in valid_smiles:
-                                    f.write(f"{s}\n")
+                                # Log evaluation metrics to wandb
+                                eval_log = {"step": i}
+                                for k, v in eval_metrics.items():
+                                    eval_log[f"eval/{k}"] = v
 
-            # Save the model
-            if (i % cfg.train.save_steps == 0) & (i > 0):
-                if cfg.train.get("distributed") == "pipeline":
-                    save_checkpoint(
-                        digress.diffuser,
-                        optimizer,
-                        os.path.join(cfg.train.save_path, f"checkpoint_{i}"),
-                    )
+                                wandb.log(eval_log)
 
-                else:
-                    torch.save(
-                        digress.diffuser.state_dict(),
-                        os.path.join(cfg.train.save_path, f"{i}.pt"),
-                    )
+                                # Save the valid smiles
+                                with open(
+                                    os.path.join(
+                                        cfg.train.save_path, f"valid_smiles_{i}.txt"
+                                    ),
+                                    "w",
+                                ) as f:
+                                    for s in valid_smiles:
+                                        f.write(f"{s}\n")
 
-            if i >= cfg.train.num_train_steps:
-                break
+                # Save the model
+                if (i % cfg.train.save_steps == 0) & (i > 0):
+                    if cfg.train.get("distributed") == "pipeline":
+                        save_checkpoint(
+                            digress.diffuser,
+                            optimizer,
+                            os.path.join(cfg.train.save_path, f"checkpoint_{i}"),
+                        )
+
+                    else:
+                        torch.save(
+                            digress.diffuser.state_dict(),
+                            os.path.join(cfg.train.save_path, f"{i}.pt"),
+                        )
+
+                # Stop the training when the desired number of steps has been reached
+                if i >= cfg.train.num_train_steps:
+                    break
 
     # Save the final model
-    torch.save(
-        digress.diffuser.state_dict(), os.path.join(cfg.train.save_path, "final.pt")
-    )
+    if cfg.train.get("distributed") == "pipeline":
+        save_checkpoint(
+            digress.diffuser,
+            optimizer,
+            os.path.join(cfg.train.save_path, "final"),
+        )
+
+    else:
+        torch.save(
+            digress.diffuser.state_dict(),
+            os.path.join(cfg.train.save_path, "final.pt"),
+        )
 
     # Save the metrics
     with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
