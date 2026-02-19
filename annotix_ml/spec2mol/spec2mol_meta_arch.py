@@ -1,16 +1,9 @@
-from typing import Any, Literal
+from typing import Literal
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
-from annotix_ml.graphtransf.math.extra_features import (
-    laplacian_embedding,
-    node_cycle,
-    valency,
-    charge,
-    weight,
-)
 from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoder
 from annotix_ml.spec2mol.extra_features import spectra_fingerprint
 
@@ -52,7 +45,6 @@ class Spec2MolMetaArch(DigressMetaArch):
         edges_distribution: torch.Tensor | None = None,
         k: int | None = None,
         extra_features: list[str] | None = None,
-        last_layer: Literal["mlp", "unembedding"] = "mlp",
         max_weight: float | None = None,
         morgan_nbits: int = 2048,
         # SpectraEncoder args
@@ -70,44 +62,7 @@ class Spec2MolMetaArch(DigressMetaArch):
         inten_transform: str = "float",
         no_diffs: bool = False,
     ):
-        """
-        Initialize the Spec2MolMetaArch model.
-
-        Args:
-            d (int): Hidden dimension for node features.
-            de (int): Hidden dimension for edge features.
-            dy (int): Hidden dimension for global features.
-            n_heads (int): Number of attention heads.
-            n_layers (int): Number of GNN layers.
-            noise_strategy (Literal["uniform", "distribution"]): Strategy for the noise distribution.
-            diffusion_steps (int): Total number of diffusion steps.
-            loss_ratio (float): Weight of the edge loss in the total loss.
-            device (torch.device): Device on which the model is initialized.
-            valid_elements (list[str]): List of valid atomic element symbols.
-            y_update (bool, optional): Whether to update global features in the diffusion model. Defaults to True.
-            no_y (bool, optional): If True, use a model without global feature updates. Defaults to False.
-            nodes_distribution (torch.Tensor | None, optional): Marginal distribution of node types. Defaults to None.
-            edges_distribution (torch.Tensor | None, optional): Marginal distribution of edge types. Defaults to None.
-            k (int | None, optional): Number of eigenvectors for Laplacian embedding. Defaults to None.
-            extra_features (list[str] | None, optional): List of names of extra features to compute. Defaults to None.
-            last_layer (Literal["mlp", "unembedding"], optional): Type of the last layer in the GNN. Defaults to "mlp".
-            max_weight (float | None, optional): Maximum molecular weight for normalization. Defaults to None.
-            morgan_nbits (int, optional): Size of the Morgan fingerprint (used in merging). Defaults to 2048.
-            form_embedder (str, optional): Type of formula embedder for SpectraEncoder. Defaults to "float".
-            output_size (int, optional): Output size of the SpectraEncoder. Defaults to 4096.
-            hidden_size (int, optional): Hidden size for SpectraEncoder layers. Defaults to 50.
-            spectra_dropout (float, optional): Dropout rate for SpectraEncoder. Defaults to 0.0.
-            top_layers (int, optional): Number of top layers in SpectraEncoder. Defaults to 1.
-            magma_modulo (int, optional): Modulo for MAGMA-style embedding. Defaults to 2048.
-            peak_attn_layers (int, optional): Number of attention layers for peaks. Defaults to 2.
-            set_pooling (str, optional): Pooling strategy for peak features. Defaults to "intensity".
-            pairwise_featurization (bool, optional): Whether to use pairwise peak featurization. Defaults to False.
-            num_heads (int, optional): Number of heads in SpectraEncoder attention. Defaults to 8.
-            embed_instrument (bool, optional): Whether to embed instrument information. Defaults to False.
-            inten_transform (str, optional): Transformation for peak intensities. Defaults to "float".
-            no_diffs (bool, optional): If True, do not use mass differences in SpectraEncoder. Defaults to False.
-        """
-        # Store info specific to spectra
+        # Store info specific to spectra before super().__init__ (which calls properties)
         self.morgan_nbits = morgan_nbits
 
         super().__init__(
@@ -127,7 +82,6 @@ class Spec2MolMetaArch(DigressMetaArch):
             edges_distribution=edges_distribution,
             k=k,
             extra_features=extra_features,
-            last_layer=last_layer,
             max_weight=max_weight,
         )
 
@@ -160,20 +114,6 @@ class Spec2MolMetaArch(DigressMetaArch):
         edges_distribution: torch.Tensor | None,
         max_weight: float | None = None,
     ):
-        """
-        Initialize the Spec2MolMetaArch model from a configuration object.
-
-        Args:
-            cfg (DictConfig): Configuration object containing model and training parameters.
-            device (torch.device): Device on which the model should be initialized.
-            valid_elements (list[str] | None): List of valid atomic element symbols.
-            nodes_distribution (torch.Tensor | None): Marginal distribution of node types.
-            edges_distribution (torch.Tensor | None): Marginal distribution of edge types.
-            max_weight (float | None, optional): Maximum molecular weight for normalization. Defaults to None.
-
-        Returns:
-            Spec2MolMetaArch: Initialized model instance.
-        """
         return cls(
             d=cfg.model.d,
             de=cfg.model.de,
@@ -191,7 +131,6 @@ class Spec2MolMetaArch(DigressMetaArch):
             edges_distribution=edges_distribution,
             k=cfg.model.num_ev,
             extra_features=list(cfg.model.extra_features),
-            last_layer=cfg.model.last_layer,
             max_weight=max_weight,
             morgan_nbits=cfg.dataset.morgan_nbits,
             # SpectraEncoder args
@@ -212,53 +151,12 @@ class Spec2MolMetaArch(DigressMetaArch):
 
     @property
     def global_features(self) -> int:
-        """
-        Total number of global features, including the noising step and extra features.
+        gf = super().global_features
+        if "spectra_fingerprint" in self.extra_features:
+            gf += self.morgan_nbits
+        return gf
 
-        Returns:
-            int: The dimension of the global features tensor.
-        """
-        # noising step is always a parameter
-        global_features = 1
-        for name in self.extra_features:
-            if name == "laplacian_embedding":
-                global_features += (
-                    self.num_ev + 1
-                )  # eigvalues + num_connected_components
-
-            elif name == "node_cycle":
-                global_features += 4
-
-            elif name == "valence_features":
-                global_features += 1
-
-            elif name == "spectra_fingerprint":
-                global_features += self.morgan_nbits
-
-        return global_features
-
-    @property
-    def node_features(self) -> int:
-        """
-        Total number of extra node features.
-
-        Returns:
-            int: The dimension of the extra node features tensor.
-        """
-        node_features = 0
-        for name in self.extra_features:
-            if name == "laplacian_embedding":
-                node_features += self.num_ev + 1  # eigvalues + num_connected_components
-
-            elif name == "node_cycle":
-                node_features += 3
-
-            elif name == "valence_features":
-                node_features += 2
-
-        return node_features
-
-    def compute_extra_features(
+    def forward(
         self,
         nodes: torch.Tensor,
         edges: torch.Tensor,
@@ -272,114 +170,15 @@ class Spec2MolMetaArch(DigressMetaArch):
         intens: torch.Tensor = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Compute extra node and global features for the current graph state.
-
-        Args:
-            nodes (torch.Tensor): Node features tensor of shape (bs, n, natoms).
-            edges (torch.Tensor): Edge features tensor of shape (bs, n, n, nedges).
-            mask (torch.Tensor): Mask tensor of shape (bs, n).
-            t (torch.Tensor): Timestep tensor of shape (bs, 1).
-            num_peaks (torch.Tensor, optional): Number of peaks in each spectrum.
-            types (torch.Tensor, optional): Peak types.
-            instruments (torch.Tensor, optional): Instrument types.
-            ion_vec (torch.Tensor, optional): Ion vectors.
-            form_vec (torch.Tensor, optional): Formula vectors.
-            intens (torch.Tensor, optional): Peak intensities.
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor]: A tuple containing:
-                - node_features (torch.Tensor): Computed node features of shape (bs, n, node_features).
-                - global_features (torch.Tensor): Computed global features of shape (bs, global_features).
-        """
-        # Init the list of node and global_features
-        node_features_list = []
-        global_features_list = []
-
-        for name in self.extra_features:
-            if name == "laplacian_embedding":
-                if self.num_ev is None:
-                    raise ValueError("k must be specified for laplacian_embedding.")
-
-                node_features, global_features = laplacian_embedding(
-                    edges, self.num_ev, mask
-                )
-
-            elif name == "node_cycle":
-                node_features, global_features = node_cycle(edges, mask)
-
-            elif name == "valence_features":
-                node_features_val = valency(edges, mask)
-
-                node_features_charge = charge(nodes, edges, mask, self.valid_elements)
-
-                global_features_weight = weight(
-                    nodes,
-                    self.valid_elements,
-                    self.max_weight,
-                )
-
-                node_features = torch.cat(
-                    [node_features_val, node_features_charge], dim=-1
-                )
-                global_features = global_features_weight
-
-            elif name == "spectra_fingerprint":
-                node_features = None
-                global_features = spectra_fingerprint(
-                    num_peaks,
-                    types,
-                    instruments,
-                    ion_vec,
-                    form_vec,
-                    intens,
-                    self.spectra_encoder,
-                    self.merge_function,
-                )
-
-            else:
-                raise ValueError(f"{name} is not a recognized extra feature.")
-
-            # Unpack for cases with global and local outputs
-            if node_features is not None:
-                node_features_list.append(node_features)
-
-            if global_features is not None:
-                global_features_list.append(global_features)
-
-            global_features = None
-            node_features = None
-
-        pos_emb = torch.cat(node_features_list, dim=-1)  # (bs, n, n_features)
-        y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
-
-        # Add the noising step to y
-        t = t.to(device=y.device, dtype=y.dtype) / self.noiser.T
-        y = torch.cat([y, t], dim=-1)
-
-        return pos_emb, y
-
-    def forward(
-        self,
-        nodes: torch.Tensor,
-        edges: torch.Tensor,
-        mask: torch.Tensor,
-        num_peaks: torch.Tensor = None,
-        types: torch.Tensor = None,
-        instruments: torch.Tensor = None,
-        ion_vec: torch.Tensor = None,
-        form_vec: torch.Tensor = None,
-        intens: torch.Tensor = None,
-        loss_fn: Any = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
         Run the forward pass for Spec2MolMetaArch.
-        This provides explicit arguments for spectral features while leveraging DigressMetaArch's noise logic.
+        This provides explicit arguments for spectral features while leveraging
+        DigressMetaArch's noise logic.
         """
         return super().forward(
             nodes=nodes,
             edges=edges,
             mask=mask,
-            loss_fn=loss_fn,
+            t=t,
             num_peaks=num_peaks,
             types=types,
             instruments=instruments,
@@ -387,3 +186,43 @@ class Spec2MolMetaArch(DigressMetaArch):
             form_vec=form_vec,
             intens=intens,
         )
+
+    def compute_extra_features(
+        self,
+        nodes: torch.Tensor,
+        edges: torch.Tensor,
+        mask: torch.Tensor,
+        t: torch.Tensor,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute extra node and global features for the current graph state.
+
+        Delegates standard features (laplacian, node_cycle, valence) to the parent,
+        then appends the spectra fingerprint if configured.
+        """
+        # Temporarily hide spectra_fingerprint so the parent doesn't hit ValueError
+        all_features = self.extra_features
+        self.extra_features = [
+            f for f in all_features if f in DigressMetaArch.known_extra_features
+        ]
+
+        pos_emb, y = super().compute_extra_features(nodes, edges, mask, t)
+
+        # Restore full feature list
+        self.extra_features = all_features
+
+        if "spectra_fingerprint" in all_features:
+            fp = spectra_fingerprint(
+                kwargs["num_peaks"],
+                kwargs["types"],
+                kwargs["instruments"],
+                kwargs["ion_vec"],
+                kwargs["form_vec"],
+                kwargs["intens"],
+                self.spectra_encoder,
+                self.merge_function,
+            )
+            y = torch.cat([y, fp], dim=-1)
+
+        return pos_emb, y
