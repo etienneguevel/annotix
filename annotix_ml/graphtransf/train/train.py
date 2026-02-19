@@ -352,8 +352,14 @@ def train(cfg):
         enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
     )
 
-    # Setup per-layer memory tracking on each process
-    mem_tracker = LayerMemoryTracker(digress.diffuser, device)
+    # Setup per-layer memory tracking on each process.
+    # In pipeline parallelism the original model is split into stages;
+    # the actual modules executed on this rank live under stage.submod.
+    if digress.stage is not None:
+        tracked_module = digress.stage.submod
+    else:
+        tracked_module = digress.diffuser
+    mem_tracker = LayerMemoryTracker(tracked_module, device)
 
     start_train_time = time.time()
     for i, batch in pbar:

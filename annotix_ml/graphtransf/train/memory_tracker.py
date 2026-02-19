@@ -8,12 +8,21 @@ import annotix_ml.distributed as dist
 class LayerMemoryTracker:
     """Track CUDA memory usage per layer using forward hooks.
 
-    Registers pre- and post-forward hooks on each direct child module of a model.
-    At each forward pass, records the memory allocated before and after each layer,
-    computing the delta. Results are tagged with the current process rank.
+    Registers pre- and post-forward hooks on modules that are actually called
+    during the forward pass. For ModuleList containers (which are iterated over,
+    not called directly), hooks are placed on each child instead.
+
+    In pipeline parallelism, hooks must be registered on the stage's submodule
+    (``stage.submod``), not on the original model, since the pipeline stage
+    owns the modules that are actually executed on each rank.
 
     Usage:
+        # Single-GPU or DDP
         tracker = LayerMemoryTracker(model, device)
+
+        # Pipeline parallelism — pass the stage's submodule
+        tracker = LayerMemoryTracker(digress.stage.submod, device)
+
         # ... run forward pass ...
         mem_log = tracker.get_metrics()  # dict ready for wandb.log
         tracker.reset()
@@ -30,24 +39,35 @@ class LayerMemoryTracker:
 
     def _register_hooks(self, model: nn.Module):
         for name, module in model.named_children():
-            # Pre-forward: snapshot memory before layer
-            def pre_hook(mod, inp, layer_name=name):
-                if self.device.type == "cuda":
-                    torch.cuda.synchronize(self.device)
-                    self._pre_mem[layer_name] = torch.cuda.memory_allocated(self.device)
+            # ModuleList is never __call__'d — the training loop iterates
+            # over it and calls each child individually, so we must hook
+            # the children instead.
+            if isinstance(module, nn.ModuleList):
+                for idx, child in enumerate(module):
+                    layer_name = f"{name}.{idx}"
+                    self._add_hook_pair(child, layer_name)
+            else:
+                self._add_hook_pair(module, name)
 
-            # Post-forward: compute delta
-            def post_hook(mod, inp, out, layer_name=name):
-                if self.device.type == "cuda":
-                    torch.cuda.synchronize(self.device)
-                    post_mem = torch.cuda.memory_allocated(self.device)
-                    pre_mem = self._pre_mem.pop(layer_name, post_mem)
-                    delta_mb = (post_mem - pre_mem) / 1e6
-                    self._metrics[layer_name].append(delta_mb)
+    def _add_hook_pair(self, module: nn.Module, layer_name: str):
+        """Register a pre/post forward hook pair on *module*."""
 
-            h1 = module.register_forward_pre_hook(pre_hook)
-            h2 = module.register_forward_hook(post_hook)
-            self._hooks.extend([h1, h2])
+        def pre_hook(mod, inp, _name=layer_name):
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+                self._pre_mem[_name] = torch.cuda.memory_allocated(self.device)
+
+        def post_hook(mod, inp, out, _name=layer_name):
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+                post_mem = torch.cuda.memory_allocated(self.device)
+                pre_mem = self._pre_mem.pop(_name, post_mem)
+                delta_mb = (post_mem - pre_mem) / 1e6
+                self._metrics[_name].append(delta_mb)
+
+        h1 = module.register_forward_pre_hook(pre_hook)
+        h2 = module.register_forward_hook(post_hook)
+        self._hooks.extend([h1, h2])
 
     def get_metrics(self) -> dict[str, float]:
         """Return a flat dict of per-layer memory deltas (MB) for the last forward pass.
