@@ -147,7 +147,8 @@ class DigressMetaArch:
         self.rank = -1
         self.train_schedule = None
         self.eval_schedule = None
-        self.stage = None
+        self.train_stage = None
+        self.eval_stage = None
 
     @classmethod
     def init_from_cfg(
@@ -400,10 +401,10 @@ class DigressMetaArch:
 
         # Use the schedule to make the forward pass if pp distributed
         if self.eval_schedule:
-            if self.stage.is_first:
+            if self.eval_stage.is_first:
                 out = self.eval_schedule.step(*input_args)
 
-            elif self.stage.is_last:
+            elif self.eval_stage.is_last:
                 out = self.eval_schedule.step()
                 pN, pE, *_ = out
 
@@ -466,10 +467,10 @@ class DigressMetaArch:
                 [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
             )  # (bs, n * natoms + n * n * nedges)
 
-            if self.stage.is_first:
+            if self.train_stage.is_first:
                 out = self.train_schedule.step(*input_args)
 
-            elif self.stage.is_last:
+            elif self.train_stage.is_last:
                 losses = []
                 out = self.train_schedule.step(target=target, losses=losses)
                 loss = sum(losses) / len(losses)
@@ -597,7 +598,7 @@ class DigressMetaArch:
                     )  # bs, 1
 
                     # Forward pass
-                    pN, pE = self.forward(N, E, mask, t_tensor)
+                    pN, pE = self.forward(N, E, mask, t_tensor, **kwargs)
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                     pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
 
@@ -660,8 +661,9 @@ class DigressMetaArch:
             example_input = tuple(v.to(self.device) for v in example_input)
 
             # Split the model in pipeline
-            stage = auto_model_split(self.diffuser, example_input)
-            self.stage = stage
+            train_stage, eval_stage = auto_model_split(self.diffuser, example_input)
+            self.train_stage = train_stage
+            self.eval_stage = eval_stage
 
             # Make a loss function for the pipeline
             def loss_fn(logits: list[torch.Tensor], target: torch.Tensor):
@@ -679,9 +681,9 @@ class DigressMetaArch:
                 return loss
 
             self.train_schedule = ScheduleGPipe(
-                stage, num_microbatches, loss_fn=loss_fn
+                train_stage, num_microbatches, loss_fn=loss_fn
             )
-            self.eval_schedule = ScheduleGPipe(stage, num_microbatches)
+            self.eval_schedule = ScheduleGPipe(eval_stage, num_microbatches)
             self.rank = get_global_rank()
 
         elif mode == "tensor":

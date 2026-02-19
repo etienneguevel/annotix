@@ -355,8 +355,8 @@ def train(cfg):
     # Setup per-layer memory tracking on each process.
     # In pipeline parallelism the original model is split into stages;
     # the actual modules executed on this rank live under stage.submod.
-    if digress.stage is not None:
-        tracked_module = digress.stage.submod
+    if digress.train_stage is not None:
+        tracked_module = digress.train_stage.submod
     else:
         tracked_module = digress.diffuser
     mem_tracker = LayerMemoryTracker(tracked_module, device)

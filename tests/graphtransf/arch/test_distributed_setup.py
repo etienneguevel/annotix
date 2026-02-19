@@ -9,7 +9,7 @@ from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 def test_setup_distributed_microbatch_slicing(mock_get_rank, mock_schedule, mock_split):
     # Setup mocks
     mock_get_rank.return_value = 0
-    mock_split.return_value = MagicMock()
+    mock_split.return_value = (MagicMock(), MagicMock())
 
     # Initialize DigressMetaArch with dummy values
     # We mock everything that's not needed for _setup_distributed

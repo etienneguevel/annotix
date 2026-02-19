@@ -42,8 +42,10 @@ def auto_model_split(model, example_input_args):
         split_spec=split_dict,
     )
 
-    stage = pipe.build_stage(stage_id, device=torch.device("cuda", stage_id))
-    return stage
+    device = torch.device("cuda", stage_id)
+    train_stage = pipe.build_stage(stage_id, device=device)
+    eval_stage = pipe.build_stage(stage_id, device=device)
+    return train_stage, eval_stage
 
 
 def save_checkpoint(model, optimizer, path):

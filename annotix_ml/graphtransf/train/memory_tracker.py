@@ -21,7 +21,7 @@ class LayerMemoryTracker:
         tracker = LayerMemoryTracker(model, device)
 
         # Pipeline parallelism — pass the stage's submodule
-        tracker = LayerMemoryTracker(digress.stage.submod, device)
+        tracker = LayerMemoryTracker(digress.train_stage.submod, device)
 
         # ... run forward pass ...
         mem_log = tracker.get_metrics()  # dict ready for wandb.log
