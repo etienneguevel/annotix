@@ -9,7 +9,7 @@ import wandb
 from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
 from omegaconf import OmegaConf
 from torch.linalg import LinAlgError
-from torch.profiler import profile, ProfilerActivity, record_function
+from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import time
@@ -352,150 +352,133 @@ def train(cfg):
         enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
     )
 
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler(
-            cfg.train.save_path + "/log/profile"
-        ),
-        profile_memory=True,
-        with_stack=False,
-    ) as prof:
-        with record_function("model_training"):
-            start_train_time = time.time()
-            for i, batch in pbar:
-                batch_start_time = time.time()
-                # Make the model in train mode
-                digress.diffuser.train()
+    # Setup per-layer memory tracking on each process
+    mem_tracker = LayerMemoryTracker(digress.diffuser, device)
 
-                # zero grad before forward pass
-                optimizer.zero_grad()
+    start_train_time = time.time()
+    for i, batch in pbar:
+        batch_start_time = time.time()
+        # Make the model in train mode
+        digress.diffuser.train()
 
-                # Move the batch to the correct device
-                batch = [
-                    v.to(device) if isinstance(v, torch.Tensor) else v for v in batch
-                ]
-                N, E, mask = batch
+        # zero grad before forward pass
+        optimizer.zero_grad()
 
-                # Do the forward and loss computation
-                try:
-                    pN, pE, loss = digress.forward_backward(N, E, mask)
+        # Reset memory tracker for this step
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(device)
+        mem_tracker.reset()
 
-                except LinAlgError:
-                    print("LinAlgError in forward or digress_loss")
-                    continue
+        # Move the batch to the correct device
+        batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
+        N, E, mask = batch
 
-                # If loss is None (on non-last ranks in PP), we skip logging
-                if loss is not None:
-                    epoch_metrics = compute_training_metrics(
-                        pN, pE, N, E, mask, digress.valid_elements
+        # Do the forward and loss computation
+        try:
+            pN, pE, loss = digress.forward_backward(N, E, mask)
+
+        except LinAlgError:
+            print("LinAlgError in forward or digress_loss")
+            continue
+
+        # If loss is None (on non-last ranks in PP), we skip logging
+        if loss is not None:
+            epoch_metrics = compute_training_metrics(
+                pN, pE, N, E, mask, digress.valid_elements
+            )
+
+            for k, v in epoch_metrics.items():
+                if isinstance(v, torch.Tensor):
+                    v = v.item()
+                train_metrics[k].append(v)
+
+            # Update the progress bar
+            lr = optimizer.param_groups[0]["lr"]
+            pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)
+
+            # Log training metrics to wandb
+            train_log = {
+                "train/loss": loss.item(),
+                "train/learning_rate": lr,
+                "train/epoch_time": time.time() - batch_start_time,
+                "train/total_time": time.time() - start_train_time,
+                "step": i,
+            }
+
+            # Log per-layer memory metrics from hooks
+            train_log.update(mem_tracker.get_metrics())
+
+            for k, v in epoch_metrics.items():
+                train_log[f"train/{k}"] = v
+
+            wandb.log(train_log)
+
+        # Update the parameters
+        optimizer.step()
+
+        # Step the scheduler
+        if scheduler is not None:
+            scheduler.step()
+
+        # Start the evaluation
+        if (i % cfg.valid.num_eval_steps == 0) & (i > 0):
+            # Make the model in eval mode
+            digress.diffuser.eval()
+
+            # Do the evaluation
+            with torch.no_grad():
+                eval_metrics = do_eval(digress, valid_loader, device)
+
+                if eval_metrics:
+                    validity, validity_digress, valid_smiles = generate_samples(
+                        digress,
+                        cfg.valid.num_samples,
+                        train_dataset.num_atoms_dist,
                     )
+                    eval_metrics["gen_validity"] = validity
+                    eval_metrics["gen_validity_digress"] = validity_digress
 
-                    for k, v in epoch_metrics.items():
-                        if isinstance(v, torch.Tensor):
-                            v = v.item()
-                        train_metrics[k].append(v)
+                    for k, v in eval_metrics.items():
+                        metrics[k].append(v)
 
-                    # Update the progress bar
-                    lr = optimizer.param_groups[0]["lr"]
-                    pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)
+                    if dist.is_main_process():
+                        print(f"Evaluation Metrics: {eval_metrics}")
 
-                    # Log training metrics to wandb
-                    train_log = {
-                        "train/loss": loss.item(),
-                        "train/learning_rate": lr,
-                        "train/epoch_time": time.time() - batch_start_time,
-                        "train/total_time": time.time() - start_train_time,
-                        "step": i,
-                    }
+                        # Log evaluation metrics to wandb
+                        eval_log = {"step": i}
+                        for k, v in eval_metrics.items():
+                            eval_log[f"eval/{k}"] = v
 
-                    # Log GPU memory usage for this process
-                    if device.type == "cuda":
-                        rank = dist.get_global_rank()
-                        train_log[f"gpu/rank_{rank}_mem_allocated_MB"] = (
-                            torch.cuda.memory_allocated() / 1e6
-                        )
-                        train_log[f"gpu/rank_{rank}_mem_reserved_MB"] = (
-                            torch.cuda.memory_reserved() / 1e6
-                        )
-                        train_log[f"gpu/rank_{rank}_mem_peak_MB"] = (
-                            torch.cuda.max_memory_allocated() / 1e6
-                        )
+                        wandb.log(eval_log)
 
-                    for k, v in epoch_metrics.items():
-                        train_log[f"train/{k}"] = v
+                        # Save the valid smiles
+                        with open(
+                            os.path.join(cfg.train.save_path, f"valid_smiles_{i}.txt"),
+                            "w",
+                        ) as f:
+                            for s in valid_smiles:
+                                f.write(f"{s}\n")
 
-                    wandb.log(train_log)
+        # Save the model
+        if (i % cfg.train.save_steps == 0) & (i > 0):
+            if cfg.train.get("distributed") == "pipeline":
+                save_checkpoint(
+                    digress.diffuser,
+                    optimizer,
+                    os.path.join(cfg.train.save_path, f"checkpoint_{i}"),
+                )
 
-                # Update the parameters
-                optimizer.step()
+            else:
+                torch.save(
+                    digress.diffuser.state_dict(),
+                    os.path.join(cfg.train.save_path, f"{i}.pt"),
+                )
 
-                # Step the profiler
-                prof.step()
+        # Stop the training when the desired number of steps has been reached
+        if i >= cfg.train.num_train_steps:
+            break
 
-                # Step the scheduler
-                if scheduler is not None:
-                    scheduler.step()
-
-                # Start the evaluation
-                if (i % cfg.valid.num_eval_steps == 0) & (i > 0):
-                    # Make the model in eval mode
-                    digress.diffuser.eval()
-
-                    # Do the evaluation
-                    with torch.no_grad():
-                        eval_metrics = do_eval(digress, valid_loader, device)
-
-                        if eval_metrics:
-                            validity, validity_digress, valid_smiles = generate_samples(
-                                digress,
-                                cfg.valid.num_samples,
-                                train_dataset.num_atoms_dist,
-                            )
-                            eval_metrics["gen_validity"] = validity
-                            eval_metrics["gen_validity_digress"] = validity_digress
-
-                            for k, v in eval_metrics.items():
-                                metrics[k].append(v)
-
-                            if dist.is_main_process():
-                                print(f"Evaluation Metrics: {eval_metrics}")
-
-                                # Log evaluation metrics to wandb
-                                eval_log = {"step": i}
-                                for k, v in eval_metrics.items():
-                                    eval_log[f"eval/{k}"] = v
-
-                                wandb.log(eval_log)
-
-                                # Save the valid smiles
-                                with open(
-                                    os.path.join(
-                                        cfg.train.save_path, f"valid_smiles_{i}.txt"
-                                    ),
-                                    "w",
-                                ) as f:
-                                    for s in valid_smiles:
-                                        f.write(f"{s}\n")
-
-                # Save the model
-                if (i % cfg.train.save_steps == 0) & (i > 0):
-                    if cfg.train.get("distributed") == "pipeline":
-                        save_checkpoint(
-                            digress.diffuser,
-                            optimizer,
-                            os.path.join(cfg.train.save_path, f"checkpoint_{i}"),
-                        )
-
-                    else:
-                        torch.save(
-                            digress.diffuser.state_dict(),
-                            os.path.join(cfg.train.save_path, f"{i}.pt"),
-                        )
-
-                # Stop the training when the desired number of steps has been reached
-                if i >= cfg.train.num_train_steps:
-                    break
+    mem_tracker.remove_hooks()
 
     # Save the final model
     if cfg.train.get("distributed") == "pipeline":
