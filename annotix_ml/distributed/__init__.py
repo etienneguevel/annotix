@@ -172,16 +172,15 @@ class _TorchDistributedEnvironment:
         self.local_rank = -1
         self.local_world_size = -1
 
-        if _is_slurm_job_process():
-            return self._set_from_slurm_env()
-
         env_vars = _collect_env_vars()
-        if not env_vars:
+        if len(env_vars) == len(_TORCH_DISTRIBUTED_ENV_VARS):
+            # Environment is fully set (e.g. by torchrun) — takes priority over Slurm
+            return self._set_from_preset_env()
+        elif _is_slurm_job_process():
+            return self._set_from_slurm_env()
+        elif not env_vars:
             # Environment is not set
             pass
-        elif len(env_vars) == len(_TORCH_DISTRIBUTED_ENV_VARS):
-            # Environment is fully set
-            return self._set_from_preset_env()
         else:
             # Environment is partially set
             collected_env_vars = ", ".join(env_vars.keys())
