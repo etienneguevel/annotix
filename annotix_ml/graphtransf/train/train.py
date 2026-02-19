@@ -359,7 +359,7 @@ def train(cfg):
             cfg.train.save_path + "/log/profile"
         ),
         profile_memory=True,
-        with_stack=True,
+        with_stack=False,
     ) as prof:
         with record_function("model_training"):
             start_train_time = time.time()
