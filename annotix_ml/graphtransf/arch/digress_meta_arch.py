@@ -145,7 +145,8 @@ class DigressMetaArch:
 
         # Put some variables in case of distributed training
         self.rank = -1
-        self.schedule = None
+        self.train_schedule = None
+        self.eval_schedule = None
         self.stage = None
 
     @classmethod
@@ -398,16 +399,16 @@ class DigressMetaArch:
         )
 
         # Use the schedule to make the forward pass if pp distributed
-        if self.schedule:
+        if self.eval_schedule:
             if self.stage.is_first:
-                out = self.schedule.step(*input_args)
+                out = self.eval_schedule.step(*input_args)
 
             elif self.stage.is_last:
-                out = self.schedule.step()
+                out = self.eval_schedule.step()
                 pN, pE, *_ = out
 
             else:
-                out = self.schedule.step()
+                out = self.eval_schedule.step()
 
         # Compute the output of the diffuser
         else:
@@ -459,23 +460,23 @@ class DigressMetaArch:
         )
 
         # Compute the output of the diffuser
-        if self.schedule:
+        if self.train_schedule:
             # Make the target -> need to stack to be splitted for mb
             target = torch.hstack(
                 [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
             )  # (bs, n * natoms + n * n * nedges)
 
             if self.stage.is_first:
-                out = self.schedule.step(*input_args)
+                out = self.train_schedule.step(*input_args)
 
             elif self.stage.is_last:
                 losses = []
-                out = self.schedule.step(target=target, losses=losses)
+                out = self.train_schedule.step(target=target, losses=losses)
                 loss = sum(losses) / len(losses)
                 pN, pE, *_ = out
 
             else:
-                out = self.schedule.step()
+                out = self.train_schedule.step()
 
         else:
             out = self.diffuser(*input_args)
@@ -677,7 +678,10 @@ class DigressMetaArch:
                 loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
                 return loss
 
-            self.schedule = ScheduleGPipe(stage, num_microbatches, loss_fn=loss_fn)
+            self.train_schedule = ScheduleGPipe(
+                stage, num_microbatches, loss_fn=loss_fn
+            )
+            self.eval_schedule = ScheduleGPipe(stage, num_microbatches)
             self.rank = get_global_rank()
 
         elif mode == "tensor":

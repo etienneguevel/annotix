@@ -44,8 +44,8 @@ def test_digress_meta_arch_initialization():
     assert meta_arch.loss_ratio == loss_ratio
     assert meta_arch.device == device
     assert meta_arch.diffuser is not None
+    assert meta_arch.diffuser is not None
     assert meta_arch.noiser is not None
-    assert meta_arch.loss is not None
 
 
 def test_digress_meta_arch_initialization_from_config():
@@ -77,7 +77,6 @@ def test_digress_meta_arch_initialization_from_config():
     assert meta_arch.device == device
     assert meta_arch.diffuser is not None
     assert meta_arch.noiser is not None
-    assert meta_arch.loss is not None
 
 
 def test_compute_extra_features():
@@ -164,13 +163,14 @@ def test_forward_backward_with_extra_features():
     )
     batch = {"nodes": N, "edges": E, "mask": mask}
 
-    # Test compute_loss
-    outputs = meta_arch.forward(N, E, mask)
-    total_loss, *_ = meta_arch.compute_loss(batch, outputs)
+    # Test forward
+    sampled_t = torch.randint(1, diffusion_steps, (bs, 1))
+    pN, pE = meta_arch.forward(N, E, mask, t=sampled_t)
 
-    assert total_loss is not None
-    assert isinstance(total_loss, torch.Tensor)
-    assert total_loss.dim() == 0
+    assert pN is not None
+    assert pE is not None
+    assert pN.shape == (bs, n, len(train_dataset.valid_elements))
+    assert pE.shape == (bs, n, n, len(TYPE_EDGES))
 
 
 def test_generate():

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 
 
-@patch("annotix_ml.graphtransf.arch.digress_meta_arch.iterative_model_split")
+@patch("annotix_ml.graphtransf.arch.digress_meta_arch.auto_model_split")
 @patch("annotix_ml.graphtransf.arch.digress_meta_arch.ScheduleGPipe")
 @patch("annotix_ml.graphtransf.arch.digress_meta_arch.get_global_rank")
 def test_setup_distributed_microbatch_slicing(mock_get_rank, mock_schedule, mock_split):
@@ -73,8 +73,14 @@ def test_setup_distributed_microbatch_slicing(mock_get_rank, mock_schedule, mock
     assert y.shape[0] == mb_size
     assert pos_emb.shape[0] == mb_size
 
-    # Verify ScheduleGPipe was called with correct num_microbatches
-    mock_schedule.assert_called_once_with(mock_split.return_value, num_microbatches)
+    # Verify ScheduleGPipe was called for both train and eval schedules
+    assert mock_schedule.call_count == 2
+
+    # First call: train_schedule (with loss_fn)
+    # Second call: eval_schedule (without loss_fn)
+    calls = mock_schedule.call_args_list
+    assert "loss_fn" in calls[0][1]
+    assert "loss_fn" not in calls[1][1]
 
 
 if __name__ == "__main__":
