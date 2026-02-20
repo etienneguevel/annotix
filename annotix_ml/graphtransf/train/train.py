@@ -157,39 +157,60 @@ def do_eval(
 
 
 def generate_samples(
-    model: DigressMetaArch, num_samples: int, num_nodes_dist: torch.Tensor
+    model: DigressMetaArch,
+    num_samples: int,
+    num_nodes_dist: torch.Tensor,
+    batch_size: int,
 ) -> tuple[float, float, list[str]]:
-    # Sample from the distribution
-    n = (
-        num_nodes_dist.unsqueeze(0).expand((num_samples, -1)).multinomial(1).squeeze(-1)
-        + 1
-    )
-
     # Generate the graphs
-    print("Generating graphs for validity computation...")
-    try:
-        gen_N, gen_E, gen_mask = model.generate(
-            num_samples=n, max_nodes=n.max(), progress_bar=True
+    print(f"Generating {num_samples} graphs in batches of {batch_size}...")
+    all_gen_smiles = []
+    all_gen_smiles_digress = []
+    samples_generated = 0
+
+    while samples_generated < num_samples:
+        # Sample from the distribution
+        n = (
+            num_nodes_dist.unsqueeze(0)
+            .expand((batch_size, -1))
+            .multinomial(1)
+            .squeeze(-1)
+            + 1
         )
 
-        # Convert to smiles
-        gen_smiles = batch_graph_to_smiles(gen_N, gen_E, gen_mask, model.valid_elements)
-        valid_smiles = [s for s in gen_smiles if s]
+        try:
+            gen_N, gen_E, gen_mask = model.generate(
+                num_samples=n, max_nodes=n.max(), progress_bar=True
+            )
 
-        # Convert to smiles with Digress method
-        gen_smiles_digress = batch_graph_to_smiles_digress(
-            gen_N, gen_E, gen_mask, model.valid_elements
-        )
-        valid_smiles_digress = [s for s in gen_smiles_digress if s]
+            # Convert to smiles
+            gen_smiles = batch_graph_to_smiles(
+                gen_N, gen_E, gen_mask, model.valid_elements
+            )
+            all_gen_smiles.extend(gen_smiles)
 
-        # Compute the validity
-        validity = len(valid_smiles) / len(gen_smiles)
-        validity_digress = len(valid_smiles_digress) / len(gen_smiles)
+            # Convert to smiles with Digress method
+            gen_smiles_digress = batch_graph_to_smiles_digress(
+                gen_N, gen_E, gen_mask, model.valid_elements
+            )
+            all_gen_smiles_digress.extend(gen_smiles_digress)
 
-    except LinAlgError:
-        validity = 0
-        validity_digress = 0
-        valid_smiles = []
+        except LinAlgError:
+            print("LinAlgError during generation batch, skipping batch...")
+            continue
+
+        samples_generated += batch_size
+
+    valid_smiles = [s for s in all_gen_smiles if s]
+    valid_smiles_digress = [s for s in all_gen_smiles_digress if s]
+
+    # Compute the validity
+    validity = len(valid_smiles) / len(all_gen_smiles) if all_gen_smiles else 0
+    validity_digress = (
+        len(valid_smiles_digress) / len(all_gen_smiles_digress)
+        if all_gen_smiles_digress
+        else 0
+    )
 
     return validity, validity_digress, valid_smiles
 
@@ -457,6 +478,7 @@ def train(cfg):
                     digress,
                     cfg.valid.num_samples,
                     train_dataset.num_atoms_dist,
+                    cfg.valid.batch_size,
                 )
 
                 if eval_metrics:
