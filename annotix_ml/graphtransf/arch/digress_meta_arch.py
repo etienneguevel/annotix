@@ -603,7 +603,7 @@ class DigressMetaArch:
 
                     # Non-last ranks in pipeline parallelism get None outputs;
                     # they must keep looping so every rank calls schedule.step().
-                    if not pN or not pE:
+                    if pN is None or pE is None:
                         continue
 
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
