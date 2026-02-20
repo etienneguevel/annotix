@@ -7,7 +7,7 @@ from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
 from tqdm import tqdm
 
-from annotix_ml.distributed import get_global_rank
+from annotix_ml.distributed import get_global_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -579,6 +579,7 @@ class DigressMetaArch:
                         reversed(range(0, self.noiser.T)),
                         total=self.noiser.T,
                         desc="Denoising",
+                        disable=not is_main_process(),
                     )
                 else:
                     t_range = reversed(range(0, self.noiser.T))
@@ -599,6 +600,12 @@ class DigressMetaArch:
 
                     # Forward pass
                     pN, pE = self.forward(N, E, mask, t_tensor, **kwargs)
+
+                    # Non-last ranks in pipeline parallelism get None outputs;
+                    # they must keep looping so every rank calls schedule.step().
+                    if not pN or not pE:
+                        continue
+
                     pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                     pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
 
