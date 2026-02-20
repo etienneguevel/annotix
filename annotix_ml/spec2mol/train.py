@@ -122,8 +122,10 @@ def do_eval(
             intens=intens,
         )
 
+        # Non-last ranks in pipeline parallelism get None outputs;
+        # they must keep looping so every rank calls schedule.step().
         if pN is None or pE is None:
-            return None
+            continue
 
         # Make the prediction graph
         N_ = torch.nn.functional.one_hot(pN.argmax(-1), num_classes=pN.shape[-1])
@@ -474,12 +476,14 @@ def train(cfg):
             with torch.no_grad():
                 eval_metrics = do_eval(spec2mol, valid_loader, device)
 
+                # All ranks must participate in generation (forward calls need all stages)
+                validity, validity_digress, valid_smiles = generate_samples(
+                    spec2mol,
+                    cfg.valid.num_samples,
+                    train_dataset.num_atoms_dist,
+                )
+
                 if eval_metrics:
-                    validity, validity_digress, valid_smiles = generate_samples(
-                        spec2mol,
-                        cfg.valid.num_samples,
-                        train_dataset.num_atoms_dist,
-                    )
                     eval_metrics["gen_validity"] = validity
                     eval_metrics["gen_validity_digress"] = validity_digress
 

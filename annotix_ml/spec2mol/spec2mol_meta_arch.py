@@ -187,6 +187,51 @@ class Spec2MolMetaArch(DigressMetaArch):
             intens=intens,
         )
 
+    def forward_backward(
+        self,
+        nodes: torch.Tensor,
+        edges: torch.Tensor,
+        mask: torch.Tensor,
+        num_peaks: torch.Tensor = None,
+        types: torch.Tensor = None,
+        instruments: torch.Tensor = None,
+        ion_vec: torch.Tensor = None,
+        form_vec: torch.Tensor = None,
+        intens: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Noise the input batch, predict the clean graph, compute loss and backpropagate.
+
+        Wraps DigressMetaArch.forward_backward with explicit spectral arguments
+        that are forwarded to compute_extra_features for spectra fingerprinting.
+
+        Args:
+            nodes: Node features of shape (bs, n, natoms).
+            edges: Edge features of shape (bs, n, n, nedges).
+            mask: Mask tensor of shape (bs, n).
+            num_peaks: Number of peaks per spectrum.
+            types: Peak type tensors.
+            instruments: Instrument identifiers.
+            ion_vec: Ion vector representation.
+            form_vec: Formula vector representation.
+            intens: Peak intensity tensors.
+
+        Returns:
+            tuple: (pN, pE, loss) — predicted node/edge probabilities and scalar loss.
+                All may be None on non-last ranks in pipeline parallelism.
+        """
+        return super().forward_backward(
+            nodes=nodes,
+            edges=edges,
+            mask=mask,
+            num_peaks=num_peaks,
+            types=types,
+            instruments=instruments,
+            ion_vec=ion_vec,
+            form_vec=form_vec,
+            intens=intens,
+        )
+
     def compute_extra_features(
         self,
         nodes: torch.Tensor,
