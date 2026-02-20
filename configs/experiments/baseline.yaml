@@ -9,7 +9,6 @@ model:
   no_y: True
   diffusion_steps: 500
   noise_strategy: distribution
-  last_layer: mlp
   num_ev: 2
   extra_features:
     - laplacian_embedding

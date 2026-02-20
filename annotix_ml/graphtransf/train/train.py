@@ -42,6 +42,7 @@ def get_args():
     parser.add_argument("--extra-features", type=str, required=False)
     parser.add_argument("--batch-size", type=int, required=False)
     parser.add_argument("--num-train-steps", type=int, required=False)
+    parser.add_argument("--num-diffusion-steps", type=int, required=False)
 
     return parser.parse_args()
 
@@ -249,6 +250,11 @@ def train(cfg):
     shuffle = True
     seed = cfg.train.seed
     advance = 0
+
+    # If the training is pipeline dist -> train and valid bs need to be =
+    # TODO : find a way to rm that dependency
+    if cfg.train.get("distributed") == "pipeline":
+        cfg.valid.batch_size = cfg.train.batch_size
 
     sampler_type = InfiniteSampler(
         sample_count=sample_count,

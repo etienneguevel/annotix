@@ -30,4 +30,7 @@ def setup(args):
     if args.project_name:
         cfg.run.name = args.project_name
 
+    if args.num_diffusion_steps:
+        cfg.model.diffusion_steps = args.num_diffusion_steps
+
     return cfg

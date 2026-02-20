@@ -1,0 +1,28 @@
+run:
+  project: annotix_ml_moses
+  name: digress_medium_long
+
+dataset:
+  data_path: data/moses.csv
+  smile_column: SMILES
+  split_column: SPLIT
+
+model:
+  d: 256
+  de: 64
+  dy: 64
+  n_heads: 8
+  n_layers: 12
+  diffusion_steps: 500
+  noise_strategy: distribution
+  num_ev: 5
+  extra_features:
+    - laplacian_embedding
+    - node_cycle
+    - valence_features
+
+train:
+  batch_size: 2048
+  num_train_steps: 100000
+  save_path: logs/moses_medium_long
+  distributed: "pipeline"
