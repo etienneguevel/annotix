@@ -85,6 +85,6 @@ train:
   seed: 24
 
 valid:
-  batch_size: 1024
+  batch_size: 512
   num_samples: 1024
   num_eval_steps: 4000

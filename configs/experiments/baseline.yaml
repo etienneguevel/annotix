@@ -1,6 +1,9 @@
 run:
   name: test_pp
 
+dataset:
+  val_tag: val
+
 model:
   y_update: False
   no_y: True
