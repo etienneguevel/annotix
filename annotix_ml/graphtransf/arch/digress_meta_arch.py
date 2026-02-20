@@ -636,6 +636,7 @@ class DigressMetaArch:
 
         raise LinAlgError("Impossible to generate graphs with current model.")
 
+    # TODO: error when valid bs != train bs -> put an example_batch for eval_stage would fix that but make code longer.
     def _setup_distributed(
         self, mode: Literal["pipeline", "tensor"], num_microbatches: int, example_batch
     ):

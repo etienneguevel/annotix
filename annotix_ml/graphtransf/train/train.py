@@ -1,24 +1,24 @@
 import json
 import os
 import shutil
+import time
 from argparse import ArgumentParser
 from collections import defaultdict
+from functools import partial
 
 import torch
 import wandb
 from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
 from omegaconf import OmegaConf
 from torch.linalg import LinAlgError
-from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import time
 
 import annotix_ml.distributed as dist
 from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.datacollator import collateGraph, collateGraphStatic
-from functools import partial
+from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker
 from annotix_ml.graphtransf.data.data_utils import (
     batch_graph_to_smiles,
     batch_graph_to_smiles_digress,
@@ -50,6 +50,7 @@ def do_eval(
     model: DigressMetaArch,
     eval_loader: DataLoader,
     device: torch.device,
+    expected_bs: int | None = None,
 ) -> dict[str, float]:
     DisableLog("rdApp.*")
     metrics = defaultdict(list)
@@ -62,6 +63,12 @@ def do_eval(
         # Unpack the elements
         nodes, edges, mask = batch
 
+        # If last batch, then size will be < to the one planned by schedule
+        # To avoid error -> skip it when there is a schedule (ie pp)
+        if model.eval_schedule:
+            if nodes.shape[0] != expected_bs:
+                continue
+
         # Noise the elements
         nodes_noised, edges_noised, sampled_t = model.noiser(nodes, edges, mask)
 
@@ -70,8 +77,10 @@ def do_eval(
             nodes_noised, edges_noised, mask, sampled_t
         )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
+        # Non-last ranks in pipeline parallelism get None outputs;
+        # they must keep looping so every rank calls schedule.step().
         if pN is None or pE is None:
-            return None
+            continue
 
         # Make the prediction graph
         N_ = torch.nn.functional.one_hot(
@@ -427,20 +436,24 @@ def train(cfg):
             scheduler.step()
 
         # Start the evaluation
-        if (i % cfg.valid.num_eval_steps == 0) & (i > 0):
+        if i % cfg.valid.num_eval_steps == 0:
             # Make the model in eval mode
             digress.diffuser.eval()
 
-            # Do the evaluation
+            # Do the evaluation — all ranks must participate for pipeline parallelism
             with torch.no_grad():
-                eval_metrics = do_eval(digress, valid_loader, device)
+                eval_metrics = do_eval(
+                    digress, valid_loader, device, cfg.valid.batch_size
+                )
+
+                # All ranks must participate in generation (forward calls need all stages)
+                validity, validity_digress, valid_smiles = generate_samples(
+                    digress,
+                    cfg.valid.num_samples,
+                    train_dataset.num_atoms_dist,
+                )
 
                 if eval_metrics:
-                    validity, validity_digress, valid_smiles = generate_samples(
-                        digress,
-                        cfg.valid.num_samples,
-                        train_dataset.num_atoms_dist,
-                    )
                     eval_metrics["gen_validity"] = validity
                     eval_metrics["gen_validity_digress"] = validity_digress
 
