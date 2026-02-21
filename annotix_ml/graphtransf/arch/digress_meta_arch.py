@@ -607,46 +607,61 @@ class DigressMetaArch:
                     # Forward pass — all ranks must call this to drive the pipeline.
                     pN, pE = self.forward(N, E, mask, t_tensor, **kwargs)
 
+                    # Track whether this denoising step succeeded. In pipeline mode
+                    # this flag is broadcast from the last rank so every rank takes
+                    # the same code path on numerical failure.
+                    step_ok = torch.ones(1, dtype=torch.bool, device=self.device)
+
                     # Only the last pipeline rank gets valid predictions.
                     if pN is not None and pE is not None:
-                        pN = pN.softmax(-1)  #  (bs, n, n_atoms)
-                        pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
+                        try:
+                            pN = pN.softmax(-1)  #  (bs, n, n_atoms)
+                            pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
 
-                        # Compute the posterior distribution
-                        post_N, post_E = self.noiser.get_posterior(
-                            N, E, t
-                        )  # (bs, n, n_atoms, n_atoms), (bs, n, n, n_edges, n_edges)
+                            # Compute the posterior distribution
+                            post_N, post_E = self.noiser.get_posterior(
+                                N, E, t
+                            )  # (bs, n, n_atoms, n_atoms), (bs, n, n, n_edges, n_edges)
 
-                        # Compute the combined distribution -> element-wise multiplication
-                        # Then sum over all the possible starting values (dim -2)
-                        probN = (post_N * pN.unsqueeze(-1)).sum(
-                            dim=-2
-                        )  # (bs, n, n_atoms)
-                        probE = (post_E * pE.unsqueeze(-1)).sum(
-                            dim=-2
-                        )  # (bs, n, n, n_edges)
+                            # Compute the combined distribution -> element-wise multiplication
+                            # Then sum over all the possible starting values (dim -2)
+                            probN = (post_N * pN.unsqueeze(-1)).sum(
+                                dim=-2
+                            )  # (bs, n, n_atoms)
+                            probE = (post_E * pE.unsqueeze(-1)).sum(
+                                dim=-2
+                            )  # (bs, n, n, n_edges)
 
-                        # Normalize with epsilon to prevent division by zero
-                        eps = 1e-6
-                        probN = probN / (
-                            probN.sum(dim=-1, keepdim=True) + eps
-                        )  # (bs, n, n_atoms)
-                        probE = probE / (
-                            probE.sum(dim=-1, keepdim=True) + eps
-                        )  # (bs, n, n, n_edges)
+                            # Normalize with epsilon to prevent division by zero
+                            eps = 1e-6
+                            probN = probN / (
+                                probN.sum(dim=-1, keepdim=True) + eps
+                            )  # (bs, n, n_atoms)
+                            probE = probE / (
+                                probE.sum(dim=-1, keepdim=True) + eps
+                            )  # (bs, n, n, n_edges)
 
-                        # Sample from the combined distribution
-                        N, E = sample_discrete_features(
-                            probN, probE, mask
-                        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                            # Sample from the combined distribution
+                            N, E = sample_discrete_features(
+                                probN, probE, mask
+                            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                        except LinAlgError:
+                            step_ok[0] = False
 
                     # In pipeline parallelism, broadcast the updated N, E from the
                     # last rank to all other ranks so every rank starts the next
                     # timestep with consistent graph state.
                     if self.eval_schedule:
                         last_rank = get_global_size() - 1
+                        # Sync the success flag from last rank to all ranks *before*
+                        # broadcasting N/E so every rank takes the same retry path.
+                        tdist.broadcast(step_ok, src=last_rank)
+                        if not step_ok[0]:
+                            raise LinAlgError("Numerical error in denoising step")
                         tdist.broadcast(N, src=last_rank)
                         tdist.broadcast(E, src=last_rank)
+                    elif not step_ok[0]:
+                        raise LinAlgError("Numerical error in denoising step")
 
                 return N, E, mask
 
