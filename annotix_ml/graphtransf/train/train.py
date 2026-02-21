@@ -201,6 +201,10 @@ def generate_samples(
 
         samples_generated += batch_size
 
+    # Trim to exactly num_samples to avoid overshoot bias in validity metrics.
+    all_gen_smiles = all_gen_smiles[:num_samples]
+    all_gen_smiles_digress = all_gen_smiles_digress[:num_samples]
+
     valid_smiles = [s for s in all_gen_smiles if s]
     valid_smiles_digress = [s for s in all_gen_smiles_digress if s]
 

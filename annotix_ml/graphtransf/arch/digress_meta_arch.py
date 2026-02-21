@@ -2,12 +2,13 @@ import os
 from typing import Literal
 
 import torch
+import torch.distributed as tdist
 from omegaconf import DictConfig
 from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
 from tqdm import tqdm
 
-from annotix_ml.distributed import get_global_rank, is_main_process
+from annotix_ml.distributed import get_global_rank, get_global_size, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -416,7 +417,7 @@ class DigressMetaArch:
             out = self.diffuser(edges, mask, y, pos_emb, nodes)
             pN, pE, *_ = out
 
-        if not out:
+        if out is None:
             pN, pE = None, None
 
         return pN, pE
@@ -530,19 +531,24 @@ class DigressMetaArch:
                 - E (torch.Tensor): Generated edge features of shape (bs, n, n, nedges).
                 - mask (torch.Tensor): Generated masks of shape (bs, n).
         """
+        # Preserve the original tensor so retry iterations don't see mutated int.
+        if isinstance(num_samples, torch.Tensor):
+            assert len(num_samples.shape) == 1, (
+                f"Wrong shape for num_samples: {num_samples.shape}"
+            )
+            n_sizes = num_samples
+            num_samples = n_sizes.shape[0]
+        else:
+            n_sizes = None
+
         i = 0
         while i < num_attempts:
             try:
                 # sample random n
-                if isinstance(num_samples, int):
+                if n_sizes is not None:
+                    n = n_sizes
+                else:
                     n = torch.randint(min_nodes, max_nodes, (num_samples,))
-
-                elif isinstance(num_samples, torch.Tensor):
-                    n = num_samples
-                    assert len(num_samples.shape) == 1, (
-                        f"Wrong shape for num_samples: {num_samples.shape}"
-                    )
-                    num_samples = n.shape[0]
 
                 # Make the mask
                 mask = torch.stack(
@@ -576,13 +582,13 @@ class DigressMetaArch:
 
                 if progress_bar:
                     t_range = tqdm(
-                        reversed(range(0, self.noiser.T)),
-                        total=self.noiser.T,
+                        reversed(range(1, self.noiser.T)),
+                        total=self.noiser.T - 1,
                         desc="Denoising",
                         disable=not is_main_process(),
                     )
                 else:
-                    t_range = reversed(range(0, self.noiser.T))
+                    t_range = reversed(range(1, self.noiser.T))
 
                 for t in t_range:
                     # Convert to float for compatibility with noising model
@@ -598,42 +604,49 @@ class DigressMetaArch:
                         torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))
                     )  # bs, 1
 
-                    # Forward pass
+                    # Forward pass — all ranks must call this to drive the pipeline.
                     pN, pE = self.forward(N, E, mask, t_tensor, **kwargs)
 
-                    # Non-last ranks in pipeline parallelism get None outputs;
-                    # they must keep looping so every rank calls schedule.step().
-                    if pN is None or pE is None:
-                        continue
+                    # Only the last pipeline rank gets valid predictions.
+                    if pN is not None and pE is not None:
+                        pN = pN.softmax(-1)  #  (bs, n, n_atoms)
+                        pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
 
-                    pN = pN.softmax(-1)  #  (bs, n, n_atoms)
-                    pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
+                        # Compute the posterior distribution
+                        post_N, post_E = self.noiser.get_posterior(
+                            N, E, t
+                        )  # (bs, n, n_atoms, n_atoms), (bs, n, n, n_edges, n_edges)
 
-                    # Compute the posterior distribution
-                    post_N, post_E = self.noiser.get_posterior(
-                        N, E, t
-                    )  # (bs, n, n_atoms, n_atoms), (bs, n, n, n_edges, n_edges)
+                        # Compute the combined distribution -> element-wise multiplication
+                        # Then sum over all the possible starting values (dim -2)
+                        probN = (post_N * pN.unsqueeze(-1)).sum(
+                            dim=-2
+                        )  # (bs, n, n_atoms)
+                        probE = (post_E * pE.unsqueeze(-1)).sum(
+                            dim=-2
+                        )  # (bs, n, n, n_edges)
 
-                    # Compute the combined distribution -> element-wise multiplication
-                    # Then sum over all the possible starting values (dim -2)
-                    probN = (post_N * pN.unsqueeze(-1)).sum(dim=-2)  # (bs, n, n_atoms)
-                    probE = (post_E * pE.unsqueeze(-1)).sum(
-                        dim=-2
-                    )  # (bs, n, n, n_edges)
+                        # Normalize with epsilon to prevent division by zero
+                        eps = 1e-6
+                        probN = probN / (
+                            probN.sum(dim=-1, keepdim=True) + eps
+                        )  # (bs, n, n_atoms)
+                        probE = probE / (
+                            probE.sum(dim=-1, keepdim=True) + eps
+                        )  # (bs, n, n, n_edges)
 
-                    # Normalize with epsilon to prevent division by zero
-                    eps = 1e-6
-                    probN = probN / (
-                        probN.sum(dim=-1, keepdim=True) + eps
-                    )  # (bs, n, n_atoms)
-                    probE = probE / (
-                        probE.sum(dim=-1, keepdim=True) + eps
-                    )  # (bs, n, n, n_edges)
+                        # Sample from the combined distribution
+                        N, E = sample_discrete_features(
+                            probN, probE, mask
+                        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
-                    # Sample from the combined distribution
-                    N, E = sample_discrete_features(
-                        probN, probE, mask
-                    )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+                    # In pipeline parallelism, broadcast the updated N, E from the
+                    # last rank to all other ranks so every rank starts the next
+                    # timestep with consistent graph state.
+                    if self.eval_schedule:
+                        last_rank = get_global_size() - 1
+                        tdist.broadcast(N, src=last_rank)
+                        tdist.broadcast(E, src=last_rank)
 
                 return N, E, mask
 
