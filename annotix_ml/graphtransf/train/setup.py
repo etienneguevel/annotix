@@ -33,4 +33,7 @@ def setup(args):
     if args.num_diffusion_steps:
         cfg.model.diffusion_steps = args.num_diffusion_steps
 
+    if args.distributed_strat:
+        cfg.train.distributed = args.distributed_strat
+
     return cfg

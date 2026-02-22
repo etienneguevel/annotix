@@ -43,6 +43,7 @@ def get_args():
     parser.add_argument("--batch-size", type=int, required=False)
     parser.add_argument("--num-train-steps", type=int, required=False)
     parser.add_argument("--num-diffusion-steps", type=int, required=False)
+    parser.add_argument("--distributed-strat", type=str, required=False)
 
     return parser.parse_args()
 
