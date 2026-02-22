@@ -358,10 +358,12 @@ def train(cfg):
 
     # Prepare the save path
     save_path = cfg.train.save_path
-    if os.path.isdir(save_path):
-        shutil.rmtree(save_path)
-
-    os.makedirs(save_path)
+    if dist.is_main_process():
+        if os.path.isdir(save_path):
+            shutil.rmtree(save_path)
+        os.makedirs(save_path)
+    if dist.is_enabled():
+        torch.distributed.barrier()
 
     # Setup for distributed training
     if cfg.train.get("distributed") is not None:
@@ -412,10 +414,30 @@ def train(cfg):
         # Do the forward and loss computation
         try:
             pN, pE, loss = digress.forward_backward(N, E, mask)
-
+            skip = torch.zeros(1, device=device)
         except LinAlgError:
             print("LinAlgError in forward or digress_loss")
+            pN, pE, loss = None, None, None
+            skip = torch.ones(1, device=device)
+
+        if dist.is_enabled():
+            torch.distributed.all_reduce(skip, op=torch.distributed.ReduceOp.MAX)
+        if skip.item():
+            optimizer.zero_grad()
             continue
+
+        # All-reduce loss scalar so the logged value is the global average (DDP only)
+        loss_for_log = loss
+        if (
+            loss is not None
+            and dist.is_enabled()
+            and digress.train_model is not None
+            and digress.train_schedule is None
+        ):
+            loss_for_log = loss.detach().clone()
+            torch.distributed.all_reduce(
+                loss_for_log, op=torch.distributed.ReduceOp.AVG
+            )
 
         # If loss is None (on non-last ranks in PP), we skip logging
         if loss is not None:
@@ -430,11 +452,11 @@ def train(cfg):
 
             # Update the progress bar
             lr = optimizer.param_groups[0]["lr"]
-            pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)
+            pbar.set_postfix(loss=loss_for_log.item(), lr=lr, **epoch_metrics)
 
             # Log training metrics to wandb
             train_log = {
-                "train/loss": loss.item(),
+                "train/loss": loss_for_log.item(),
                 "train/learning_rate": lr,
                 "train/epoch_time": time.time() - batch_start_time,
                 "train/total_time": time.time() - start_train_time,
@@ -465,13 +487,20 @@ def train(cfg):
                     digress, valid_loader, device, cfg.valid.batch_size
                 )
 
-                # All ranks must participate in generation (forward calls need all stages)
-                validity, validity_digress, valid_smiles = generate_samples(
-                    digress,
-                    cfg.valid.num_samples,
-                    train_dataset.num_atoms_dist,
-                    cfg.valid.batch_size,
-                )
+                # Pipeline: all ranks must participate; DDP: only main rank needs to run
+                if (
+                    not dist.is_enabled()
+                    or digress.eval_schedule
+                    or dist.is_main_process()
+                ):
+                    validity, validity_digress, valid_smiles = generate_samples(
+                        digress,
+                        cfg.valid.num_samples,
+                        train_dataset.num_atoms_dist,
+                        cfg.valid.batch_size,
+                    )
+                else:
+                    validity, validity_digress, valid_smiles = 0.0, 0.0, []
 
                 if eval_metrics:
                     eval_metrics["gen_validity"] = validity
@@ -533,12 +562,13 @@ def train(cfg):
                 os.path.join(cfg.train.save_path, "final.pt"),
             )
 
-    # Save the metrics
-    with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
-        json.dump(metrics, f)
+    # Save the metrics (main rank only to avoid concurrent write corruption)
+    if dist.is_main_process():
+        with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
+            json.dump(metrics, f)
 
-    with open(os.path.join(cfg.train.save_path, "train_metrics.json"), "w") as f:
-        json.dump(train_metrics, f)
+        with open(os.path.join(cfg.train.save_path, "train_metrics.json"), "w") as f:
+            json.dump(train_metrics, f)
 
 
 def main():

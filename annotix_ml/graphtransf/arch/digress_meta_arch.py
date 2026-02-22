@@ -713,7 +713,11 @@ class DigressMetaArch:
             self.eval_schedule = ScheduleGPipe(eval_model, num_microbatches)
 
         elif mode == "data":
-            self.train_model = DDP(self.diffuser, device_ids=[get_local_rank()])
+            self.train_model = DDP(
+                self.diffuser,
+                device_ids=[get_local_rank()],
+                find_unused_parameters=True,
+            )
 
         elif mode == "tensor":
             pass
