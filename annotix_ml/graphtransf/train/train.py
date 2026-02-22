@@ -18,7 +18,6 @@ import annotix_ml.distributed as dist
 from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.graphtransf.data.datacollator import collateGraph, collateGraphStatic
-from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker
 from annotix_ml.graphtransf.data.data_utils import (
     batch_graph_to_smiles,
     batch_graph_to_smiles_digress,
@@ -393,15 +392,6 @@ def train(cfg):
         enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
     )
 
-    # Setup per-layer memory tracking on each process.
-    # In pipeline parallelism the original model is split into stages;
-    # the actual modules executed on this rank live under stage.submod.
-    if digress.train_model is not None:
-        tracked_module = digress.train_model.submod
-    else:
-        tracked_module = digress.diffuser
-    mem_tracker = LayerMemoryTracker(tracked_module, device)
-
     start_train_time = time.time()
     for i, batch in pbar:
         batch_start_time = time.time()
@@ -414,7 +404,6 @@ def train(cfg):
         # Reset memory tracker for this step
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
-        mem_tracker.reset()
 
         # Move the batch to the correct device
         batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
@@ -451,9 +440,6 @@ def train(cfg):
                 "train/total_time": time.time() - start_train_time,
                 "step": i,
             }
-
-            # Log per-layer memory metrics from hooks
-            train_log.update(mem_tracker.get_metrics())
 
             for k, v in epoch_metrics.items():
                 train_log[f"train/{k}"] = v
@@ -530,8 +516,6 @@ def train(cfg):
         # Stop the training when the desired number of steps has been reached
         if i >= cfg.train.num_train_steps:
             break
-
-    mem_tracker.remove_hooks()
 
     # Save the final model
     if cfg.train.get("distributed") == "pipeline":
