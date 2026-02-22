@@ -395,8 +395,8 @@ def train(cfg):
     # Setup per-layer memory tracking on each process.
     # In pipeline parallelism the original model is split into stages;
     # the actual modules executed on this rank live under stage.submod.
-    if digress.train_stage is not None:
-        tracked_module = digress.train_stage.submod
+    if digress.train_model is not None:
+        tracked_module = digress.train_model.submod
     else:
         tracked_module = digress.diffuser
     mem_tracker = LayerMemoryTracker(tracked_module, device)
@@ -520,10 +520,11 @@ def train(cfg):
                 )
 
             else:
-                torch.save(
-                    digress.diffuser.state_dict(),
-                    os.path.join(cfg.train.save_path, f"{i}.pt"),
-                )
+                if dist.is_main_process():
+                    torch.save(
+                        digress.diffuser.state_dict(),
+                        os.path.join(cfg.train.save_path, f"{i}.pt"),
+                    )
 
         # Stop the training when the desired number of steps has been reached
         if i >= cfg.train.num_train_steps:
@@ -540,10 +541,11 @@ def train(cfg):
         )
 
     else:
-        torch.save(
-            digress.diffuser.state_dict(),
-            os.path.join(cfg.train.save_path, "final.pt"),
-        )
+        if dist.is_main_process():
+            torch.save(
+                digress.diffuser.state_dict(),
+                os.path.join(cfg.train.save_path, "final.pt"),
+            )
 
     # Save the metrics
     with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
@@ -557,7 +559,7 @@ def main():
     args = get_args()
     cfg = setup(args)
 
-    if cfg.train.distributed == "pipeline":
+    if cfg.train.get("distributed") == "pipeline":
         main_rank = "last"
 
     else:

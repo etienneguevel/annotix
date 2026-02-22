@@ -2,13 +2,13 @@ import os
 from typing import Literal
 
 import torch
-import torch.distributed as tdist
 from omegaconf import DictConfig
 from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
+from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
-from annotix_ml.distributed import get_global_rank, get_global_size, is_main_process
+from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
@@ -148,8 +148,8 @@ class DigressMetaArch:
         self.rank = -1
         self.train_schedule = None
         self.eval_schedule = None
-        self.train_stage = None
-        self.eval_stage = None
+        self.train_model = None
+        self.eval_model = None
 
     @classmethod
     def init_from_cfg(
@@ -389,7 +389,7 @@ class DigressMetaArch:
         """
         # Use the schedule to make the forward pass if pp distributed
         if self.eval_schedule:
-            if self.eval_stage.is_first:
+            if self.eval_model.is_first:
                 # Only the first stage needs the extra features; non-first stages
                 # receive intermediate activations from the previous stage via P2P.
                 pos_emb, y = self.compute_extra_features(
@@ -398,14 +398,16 @@ class DigressMetaArch:
                 input_args = (edges, mask, y, pos_emb, nodes)
                 out = self.eval_schedule.step(*input_args)
 
-            elif self.eval_stage.is_last:
+            elif self.eval_model.is_last:
                 out = self.eval_schedule.step()
                 pN, pE, *_ = out
 
             else:
                 out = self.eval_schedule.step()
 
-        # Compute the output of the diffuser
+        # For data parallelism (DDP), forward() is only called under torch.no_grad()
+        # during eval/generation, so calling self.diffuser directly is correct —
+        # no gradient sync is needed.
         else:
             pos_emb, y = self.compute_extra_features(
                 nodes, edges, mask, t, **kwargs
@@ -448,7 +450,7 @@ class DigressMetaArch:
                 [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
             )  # (bs, n * natoms + n * n * nedges)
 
-            if self.train_stage.is_first:
+            if self.train_model.is_first:
                 # Only the first stage needs noised inputs and extra features;
                 # non-first stages receive intermediate activations via P2P.
                 N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
@@ -458,7 +460,7 @@ class DigressMetaArch:
                 input_args = (E_noised, mask, y, pos_emb, N_noised)
                 out = self.train_schedule.step(*input_args)
 
-            elif self.train_stage.is_last:
+            elif self.train_model.is_last:
                 losses = []
                 out = self.train_schedule.step(target=target, losses=losses)
                 loss = sum(losses) / len(losses)
@@ -467,8 +469,20 @@ class DigressMetaArch:
             else:
                 out = self.train_schedule.step()
 
+        elif self.train_model is not None:
+            # Data parallelism: call through the DDP wrapper so that loss.backward()
+            # triggers the all-reduce gradient synchronisation across ranks.
+            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
+            pos_emb, y = self.compute_extra_features(
+                N_noised, E_noised, mask, sampled_t, **kwargs
+            )  # (bs, node_features), (bs, global_features)
+            out = self.train_model(E_noised, mask, y, pos_emb, N_noised)
+            pN, pE, *_ = out
+            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
+            loss.backward()
+
         else:
-            # Noise the graph
+            # No distributed training
             N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
             pos_emb, y = self.compute_extra_features(
                 N_noised, E_noised, mask, sampled_t, **kwargs
@@ -574,13 +588,6 @@ class DigressMetaArch:
             N = N.float().to(self.device)
             E = E.float().to(self.device)
 
-            # Synchronize the initial state across all pipeline ranks so every
-            # stage starts the denoising loop from the same graph and mask.
-            if self.eval_schedule:
-                tdist.broadcast(mask, src=0)
-                tdist.broadcast(N, src=0)
-                tdist.broadcast(E, src=0)
-
             # Denoise the graph
             self.diffuser.eval()
 
@@ -608,11 +615,6 @@ class DigressMetaArch:
                     t_tensor = (
                         torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))
                     )  # bs, 1
-
-                    # Track whether this denoising step succeeded. In pipeline mode
-                    # this flag is broadcast from the last rank so every rank takes
-                    # the same code path on numerical failure.
-                    step_ok = torch.ones(1, dtype=torch.bool, device=self.device)
 
                     # Forward pass — all ranks must call this to drive th   e pipeline.
                     pN, pE = self.forward(N, E, mask, t_tensor, **kwargs)
@@ -650,37 +652,20 @@ class DigressMetaArch:
                             probN, probE, mask
                         )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
-                    # In pipeline parallelism, broadcast the updated N, E from the
-                    # last rank to all other ranks so every rank starts the next
-                    # timestep with consistent graph state.
-                    if self.eval_schedule:
-                        last_rank = get_global_size() - 1
-                        # Sync the success flag from last rank to all ranks *before*
-                        # broadcasting N/E so every rank takes the same retry path.
-                        tdist.broadcast(step_ok, src=last_rank)
-                        if not step_ok[0]:
-                            raise LinAlgError("Numerical error in denoising step")
-                        tdist.broadcast(N, src=last_rank)
-                        tdist.broadcast(E, src=last_rank)
-
-                    elif not step_ok[0]:
-                        raise LinAlgError("Numerical error in denoising step")
-
                 return N, E, mask
 
-            except Exception as e:
+            except LinAlgError as e:
                 print(
                     f"Generation failed, attempt {i + 1} / {num_attempts}: "
                     f"{type(e).__name__}: {e}"
                 )
                 i += 1
 
-        raise LinAlgError("Impossible to generate graphs with current model.")
-
-    # TODO: error when valid bs != train bs -> put an example_batch for eval_stage would fix that but make code longer.
+    # TODO: error when valid bs != train bs -> put an example_batch for eval_model would fix that but make code longer.
     def _setup_distributed(
         self, mode: Literal["pipeline", "tensor"], num_microbatches: int, example_batch
     ):
+        self.rank = get_global_rank()
         if mode == "pipeline":
             # Slice the example batch to the micro-batch size
             N, E, mask = example_batch
@@ -703,9 +688,9 @@ class DigressMetaArch:
             example_input = tuple(v.to(self.device) for v in example_input)
 
             # Split the model in pipeline
-            train_stage, eval_stage = auto_model_split(self.diffuser, example_input)
-            self.train_stage = train_stage
-            self.eval_stage = eval_stage
+            train_model, eval_model = auto_model_split(self.diffuser, example_input)
+            self.train_model = train_model
+            self.eval_model = eval_model
 
             # Make a loss function for the pipeline
             def loss_fn(logits: list[torch.Tensor], target: torch.Tensor):
@@ -723,10 +708,12 @@ class DigressMetaArch:
                 return loss
 
             self.train_schedule = ScheduleGPipe(
-                train_stage, num_microbatches, loss_fn=loss_fn
+                train_model, num_microbatches, loss_fn=loss_fn
             )
-            self.eval_schedule = ScheduleGPipe(eval_stage, num_microbatches)
-            self.rank = get_global_rank()
+            self.eval_schedule = ScheduleGPipe(eval_model, num_microbatches)
+
+        elif mode == "data":
+            self.train_model = DDP(self.diffuser, device_ids=[get_local_rank()])
 
         elif mode == "tensor":
             pass
