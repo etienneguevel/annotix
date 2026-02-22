@@ -387,22 +387,15 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
-        # compute the extra features & make the kwargs
-        pos_emb, y = self.compute_extra_features(
-            nodes, edges, mask, t, **kwargs
-        )  # (bs, node_features), (bs, global_features)
-
-        input_args = (
-            edges,
-            mask,
-            y,
-            pos_emb,
-            nodes,
-        )
-
         # Use the schedule to make the forward pass if pp distributed
         if self.eval_schedule:
             if self.eval_stage.is_first:
+                # Only the first stage needs the extra features; non-first stages
+                # receive intermediate activations from the previous stage via P2P.
+                pos_emb, y = self.compute_extra_features(
+                    nodes, edges, mask, t, **kwargs
+                )  # (bs, node_features), (bs, global_features)
+                input_args = (edges, mask, y, pos_emb, nodes)
                 out = self.eval_schedule.step(*input_args)
 
             elif self.eval_stage.is_last:
@@ -414,6 +407,9 @@ class DigressMetaArch:
 
         # Compute the output of the diffuser
         else:
+            pos_emb, y = self.compute_extra_features(
+                nodes, edges, mask, t, **kwargs
+            )  # (bs, node_features), (bs, global_features)
             out = self.diffuser(edges, mask, y, pos_emb, nodes)
             pN, pE, *_ = out
 
@@ -445,22 +441,6 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
-        # Noise the graph
-        N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
-
-        # compute the extra features & make the kwargs
-        pos_emb, y = self.compute_extra_features(
-            N_noised, E_noised, mask, sampled_t, **kwargs
-        )  # (bs, node_features), (bs, global_features)
-
-        input_args = (
-            E_noised,
-            mask,
-            y,
-            pos_emb,
-            N_noised,
-        )
-
         # Compute the output of the diffuser
         if self.train_schedule:
             # Make the target -> need to stack to be splitted for mb
@@ -469,6 +449,13 @@ class DigressMetaArch:
             )  # (bs, n * natoms + n * n * nedges)
 
             if self.train_stage.is_first:
+                # Only the first stage needs noised inputs and extra features;
+                # non-first stages receive intermediate activations via P2P.
+                N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
+                pos_emb, y = self.compute_extra_features(
+                    N_noised, E_noised, mask, sampled_t, **kwargs
+                )  # (bs, node_features), (bs, global_features)
+                input_args = (E_noised, mask, y, pos_emb, N_noised)
                 out = self.train_schedule.step(*input_args)
 
             elif self.train_stage.is_last:
@@ -481,6 +468,12 @@ class DigressMetaArch:
                 out = self.train_schedule.step()
 
         else:
+            # Noise the graph
+            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
+            pos_emb, y = self.compute_extra_features(
+                N_noised, E_noised, mask, sampled_t, **kwargs
+            )  # (bs, node_features), (bs, global_features)
+            input_args = (E_noised, mask, y, pos_emb, N_noised)
             out = self.diffuser(*input_args)
             pN, pE, *_ = out
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
@@ -577,6 +570,13 @@ class DigressMetaArch:
                     N_dist, E_dist, mask
                 )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
+                # Synchronize the initial state across all pipeline ranks so every
+                # stage starts the denoising loop from the same graph and mask.
+                if self.eval_schedule:
+                    tdist.broadcast(mask, src=0)
+                    tdist.broadcast(N, src=0)
+                    tdist.broadcast(E, src=0)
+
                 # Denoise the graph
                 self.diffuser.eval()
 
@@ -645,7 +645,7 @@ class DigressMetaArch:
                             N, E = sample_discrete_features(
                                 probN, probE, mask
                             )  # (bs, n, n_atoms), (bs, n, n, n_edges)
-                        except LinAlgError:
+                        except Exception:
                             step_ok[0] = False
 
                     # In pipeline parallelism, broadcast the updated N, E from the
