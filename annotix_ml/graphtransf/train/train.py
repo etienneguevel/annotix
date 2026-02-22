@@ -223,7 +223,7 @@ def train(cfg):
     # Initialize wandb
     if dist.is_main_process():
         # Constrain wandb to only see the current GPU for system metrics
-        print(dist._MAIN_RANK)
+        print(f"Logging with main rank as : {dist._MAIN_RANK}")
 
         wandb.init(
             project=cfg.run.project,
@@ -444,7 +444,8 @@ def train(cfg):
             for k, v in epoch_metrics.items():
                 train_log[f"train/{k}"] = v
 
-            wandb.log(train_log)
+            if dist.is_main_process():
+                wandb.log(train_log)
 
         # Update the parameters
         optimizer.step()
