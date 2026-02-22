@@ -570,6 +570,11 @@ class DigressMetaArch:
                     N_dist, E_dist, mask
                 )  # (bs, n, n_atoms), (bs, n, n, n_edges)
 
+                # NCCL requires all broadcast tensors to be on a CUDA device; move
+                # N and E to device before the collective calls.
+                N = N.float().to(self.device)
+                E = E.float().to(self.device)
+
                 # Synchronize the initial state across all pipeline ranks so every
                 # stage starts the denoising loop from the same graph and mask.
                 if self.eval_schedule:
