@@ -26,3 +26,4 @@ train:
   num_train_steps: 100000
   save_path: logs/moses_medium_long
   distributed: "pipeline"
+  num_microbatches: 4

@@ -45,7 +45,7 @@ model:
   dy: 64
   n_heads: 8
   n_layers: 5
-  y_update: True
+  y_update: False
   no_y: False
   diffusion_steps: 500
   noise_strategy: distribution
@@ -81,6 +81,8 @@ train:
   save_path: logs/qm9_experiment
   save_steps: 1000
   num_workers: 4
+  distributed:
+  num_microbatches:
   seed: 24
 
 valid:

@@ -2,7 +2,7 @@ run:
   name: test_pp
 
 dataset:
-  val_tag: val
+  val_tag: test
 
 model:
   y_update: False
