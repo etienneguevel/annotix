@@ -668,8 +668,11 @@ class DigressMetaArch:
 
                 return N, E, mask
 
-            except LinAlgError:
-                print(f"Generation failed, attempt {i + 1} / {num_attempts}")
+            except Exception as e:
+                print(
+                    f"Generation failed, attempt {i + 1} / {num_attempts}: "
+                    f"{type(e).__name__}: {e}"
+                )
                 i += 1
 
         raise LinAlgError("Impossible to generate graphs with current model.")
