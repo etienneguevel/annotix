@@ -351,7 +351,15 @@ def train(cfg):
     print(f"Valid elements: {train_dataset.valid_elements}")
     print(f"Node distribution: {train_dataset.nodes_distribution.tolist()}")
     print(f"Edge distribution: {train_dataset.edges_distribution.tolist()}")
-    print(f"Number of atoms distribution: {train_dataset.num_atoms_dist.tolist()}")
+    num_atoms_dist = train_dataset.num_atoms_dist.tolist()
+    bar_width = 30
+    max_prob = max(num_atoms_dist) if num_atoms_dist else 1.0
+    print("Number of atoms distribution:")
+    for idx, prob in enumerate(num_atoms_dist):
+        n_atoms = idx + 1
+        bar_len = int(prob / max_prob * bar_width)
+        bar = "#" * bar_len
+        print(f"  {n_atoms:3d} atoms | {bar:<{bar_width}} {prob:.4f}")
     print(f"Max weight in dataset: {train_dataset.max_weight}")
     print("=" * 50 + "\n")
 
