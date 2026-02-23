@@ -3,7 +3,7 @@
   "checkpoint_id": "bc48fbe64a84",
   "strategy": "manual-commit",
   "branch": "graphtransf",
-  "checkpoints_count": 7,
+  "checkpoints_count": 8,
   "files_touched": [
     ".claude/settings.json",
     ".claude/settings.local.json",
@@ -14,6 +14,7 @@
     "DGX_3414028.1771406943238638142.pt.trace.json",
     "DGX_3414030.1771406940283257045.pt.trace.json",
     "DGX_3414031.1771406941823820683.pt.trace.json",
+    "annotix_ml/distributed/__init__.py",
     "annotix_ml/distributed/pipeline_parallelism.py",
     "annotix_ml/graphtransf/arch/digress_meta_arch.py",
     "annotix_ml/graphtransf/data/dataset.py",
@@ -66,13 +67,20 @@
       "context": "/bc/48fbe64a84/2/context.md",
       "content_hash": "/bc/48fbe64a84/2/content_hash.txt",
       "prompt": "/bc/48fbe64a84/2/prompt.txt"
+    },
+    {
+      "metadata": "/bc/48fbe64a84/3/metadata.json",
+      "transcript": "/bc/48fbe64a84/3/full.jsonl",
+      "context": "/bc/48fbe64a84/3/context.md",
+      "content_hash": "/bc/48fbe64a84/3/content_hash.txt",
+      "prompt": "/bc/48fbe64a84/3/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 72,
-    "cache_creation_tokens": 181065,
-    "cache_read_tokens": 2412164,
-    "output_tokens": 10400,
-    "api_call_count": 58
+    "input_tokens": 78,
+    "cache_creation_tokens": 196694,
+    "cache_read_tokens": 2509708,
+    "output_tokens": 10422,
+    "api_call_count": 62
   }
 }

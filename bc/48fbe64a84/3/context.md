@@ -1,0 +1,8 @@
+# Session Context
+
+## User Prompts
+
+### Prompt 1
+
+I have access via slurm to a gpu node with 4 gpus on it, when i run torchrun --standalone --nproc_per_node=4 annotix_ml/graphtransf/train/train.py --config configs/experiments/baseline.yaml --project-name test_hacienda it launches each node as if they were all alone in their world, how can I fix that
+
