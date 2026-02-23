@@ -1,0 +1,151 @@
+Implement the following plan:
+
+# Plan: Fill DDP TODOs and Fix Incomplete Implementations
+
+## Context
+
+The user added a `"data"` parallelism branch to `_setup_distributed` (wrapping `self.diffuser` with `DDP`),
+and left two `# TODO` markers in `forward` and `forward_backward` for data-parallel redefinition.
+The goal is to fill those TODOs and fix any other incomplete or incorrect implementations found during review.
+
+---
+
+## Issues Found
+
+### 1. `forward_backward` — critical DDP bug (line 472)
+Currently the `else:` branch is reached for both "no distributed" and "data parallel" cases, and
+calls `self.diffuser(...)` directly. For DDP this bypasses the DDP wrapper entirely — no gradient
+all-reduce happens, so each rank trains an independent copy of the model.
+
+**Fix:** Add an `elif self.train_model is not None:` branch that calls `self.train_model(...)` (the
+DDP wrapper), which registers the backward hook that triggers all-reduce on `loss.backward()`.
+
+```
+if self.train_schedule:          # pipeline parallelism — existing
+    ...
+elif self.train_model is not None:   # NEW: data parallelism
+    N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
+    pos_emb, y = self.compute_extra_features(N_noised, E_noised, mask, sampled_t, **kwargs)
+    out = self.train_model(E_noised, mask, y, pos_emb, N_noised)
+    pN, pE, *_ = out
+    loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
+    loss.backward()
+else:                            # no distributed — existing
+    ...
+```
+
+### 2. `forward` — TODO can be removed (line 408)
+`forward()` is only called during eval / generation (`torch.no_grad()`). For DDP, calling
+`self.diffuser` directly is correct — no gradient sync is needed. The `else:` branch already
+handles DP correctly. The TODO comment should be removed (or replaced with a clarifying comment).
+
+### 3. `_setup_distributed` — wrong `device_ids` for DDP (line 706)
+```python
+self.train_model = DDP(self.diffuser, device_ids=[self.rank])
+```
+`self.rank` is the **global** rank. `device_ids` must be **local** GPU IDs. On a 2-node × 2-GPU
+setup, rank 2 has local_rank=0 (GPU 0), but `device_ids=[2]` would crash or target the wrong GPU.
+
+**Fix:** Use `get_local_rank()` (already available from `annotix_ml.distributed`).
+
+```python
+from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
+...
+self.train_model = DDP(self.diffuser, device_ids=[get_local_rank()])
+```
+
+### 4. `train.py:main()` — direct attribute access (line 561)
+```python
+if cfg.train.distributed == "pipeline":
+```
+If `distributed` is absent from the config, OmegaConf raises `ConfigAttributeError`. Every other
+access in the file uses `cfg.train.get("distributed")`. Fix to be consistent.
+
+**Fix:**
+```python
+if cfg.train.get("distributed") == "pipeline":
+```
+
+### 5. `train.py` — missing `is_main_process()` check on final model save (line 544)
+The intermediate checkpoint save (line 523) correctly wraps `torch.save` in `dist.is_main_process()`,
+but the **final** save does not. In DP mode all ranks race to write `final.pt`.
+
+**Fix:** Add the guard:
+```python
+else:
+    if dist.is_main_process():
+        torch.save(
+            digress.diffuser.state_dict(),
+            os.path.join(cfg.train.save_path, "final.pt"),
+        )
+```
+
+---
+
+## Files to Modify
+
+| File | Lines | Change |
+|------|-------|--------|
+| `annotix_ml/graphtransf/arch/digress_meta_arch.py` | 11 | Add `get_local_rank` to import |
+| `annotix_ml/graphtransf/arch/digress_meta_arch.py` | 405-419 | Remove TODO in `forward`, keep `else:` as-is |
+| `annotix_ml/graphtransf/arch/digress_meta_arch.py` | 472-484 | Add `elif self.train_model is not None:` in `forward_backward` |
+| `annotix_ml/graphtransf/arch/digress_meta_arch.py` | 706 | `device_ids=[get_local_rank()]` |
+| `annotix_ml/graphtransf/train/train.py` | 561 | `.get("distributed")` |
+| `annotix_ml/graphtransf/train/train.py` | 544 | Add `if dist.is_main_process():` guard |
+
+---
+
+## Out of Scope (not addressed here)
+
+- Tensor parallelism (`mode == "tensor"`) — `pass` stub, not requested.
+- `data/dataset.py:186` bond symmetry TODO — unrelated to DDP.
+- DP validation efficiency (distributed sampler for valid_loader) — larger change, not asked.
+- `noise_strategy == "distribution"` `pass` — correct behaviour; distributions are passed in.
+
+---
+
+## Verification
+
+After implementation, test with 2 GPU torchrun:
+
+```bash
+torchrun --nproc_per_node 2 -m annotix_ml.graphtransf.train.train \
+  --config configs/experiments/baseline.yaml \
+  train.distributed=data train.num_train_steps=10
+
+# Confirm:
+# 1. Both ranks print "Using device: cuda"
+# 2. Loss values converge (not diverge), indicating gradient sync is working
+# 3. final.pt exists and is written once (check file timestamps)
+```
+
+Single-GPU sanity check (no regression):
+```bash
+python -m annotix_ml.graphtransf.train.train --config configs/experiments/baseline.yaml
+```
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl
+
+---
+
+the train loss for logging is made only on main rank, propose changes to sync the loss on each process. Check if there are other parts of the train loop that could make it fail for none main ranks
+
+---
+
+Implement these changes, further your analysis taking into account that the current code failed on the generate part with following message for each rank : RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one. This error indic
+ates that your module has parameters that were not used in producing loss. You can enable unused parameter detection by passi
+ng the keyword argument `find_unused_parameters=True` to `torch.nn.parallel.DistributedDataParallel`, and by 
+[rank1]: making sure all `forward` function outputs participate in calculating loss. 
+[rank1]: If you already have done the above, then the distributed data parallel module wasn't able to locate the output tenso
+rs in the return value of your module's `forward` function. Please include the loss function and the structure of the return 
+value of `forward` of your module when reporting this issue (e.g. list, dict, iterable).
+[rank1]: Parameter indices which did not receive grad for rank 1: 32 33 34 35 36 37 38 39 52 53 54 55 56 57 74 75 76 77 78 79
+ 80 81 94 95 96 97 98 99 116 117 118 119 120 121 122 123 136 137 138 139 140 141 158 159 160 161 162 163 164 165 178 179 180 
+181 182 183 200 201 202 203 204 205 206 207 220 221 222 223 224 225
+[rank1]:  In addition, you can set the environment variable TORCH_DISTRIBUTED_DEBUG to either INFO or DETAIL to print out inf
+ormation about which particular parameters did not receive gradient on this rank as part of this error
+
+---
+
+[Request interrupted by user for tool use]
