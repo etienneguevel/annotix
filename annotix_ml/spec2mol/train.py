@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-from argparse import ArgumentParser
 from collections import defaultdict
 
 import pandas as pd
@@ -29,7 +28,6 @@ from annotix_ml.graphtransf.math.metrics import (
     compute_training_metrics,
 )
 from annotix_ml.graphtransf.train.train import get_args
-from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker
 from annotix_ml.graphtransf.train.setup import setup
 from annotix_ml.spec2mol.data.datacollator import graph_spec_collate_fn
 from annotix_ml.spec2mol.data.dataset import GraphSpecDataset
@@ -371,6 +369,17 @@ def train(cfg):
     print(f"Node distribution: {train_dataset.nodes_distribution.tolist()}")
     print(f"Edge distribution: {train_dataset.edges_distribution.tolist()}")
     print(f"Number of atoms distribution: {train_dataset.num_atoms_dist.tolist()}")
+    print("Number of atoms distribution:")
+    num_atoms_dist = train_dataset.num_atoms_dist.tolist()
+    bar_width = 30
+    max_prob = max(num_atoms_dist) if num_atoms_dist else 1.0
+    for idx, prob in enumerate(num_atoms_dist):
+        n_atoms = idx + 1
+        bar_len = int(prob / max_prob * bar_width)
+        bar = "#" * bar_len
+        print(f"  {n_atoms:3d} atoms | {bar:<{bar_width}} {prob:.4f}")
+    print(f"Max weight in dataset: {train_dataset.max_weight}")
+    print("=" * 50 + "\n")
     print(f"Max weight in dataset: {train_dataset.max_weight}")
     print("=" * 50 + "\n")
 
