@@ -1,3 +1,4 @@
+import os
 from collections import Counter
 from typing import Callable
 from pathlib import PosixPath
@@ -50,6 +51,8 @@ class GraphDatasetFromSMILEs(Dataset):
         valid_elements: list[str] | None = None,
         sanitizer: Callable | None = None,
         verbose: bool = True,
+        cache_path: str | None = None,
+        save_cache: bool = True,
     ):
         """
         Initialize the GraphDatasetFromSMILEs.
@@ -63,6 +66,10 @@ class GraphDatasetFromSMILEs(Dataset):
                 are automatically extracted from the dataset.
             sanitizer (Callable, optional): A function to further filter molecules based on
                 their graph representation.
+            cache_path (str, optional): Path to a .pt cache file. If the file exists it is
+                loaded directly; otherwise the dataset is built and saved there.
+            save_cache (bool): Whether to write the cache file after building. Set to False
+                on non-main ranks in distributed training to avoid concurrent writes.
         """
         super().__init__()
         if isinstance(data, (str, PosixPath)):
@@ -82,6 +89,46 @@ class GraphDatasetFromSMILEs(Dataset):
         # Extract SMILES list
         smiles_list = data[smile_column].to_list()
 
+        # Try to load from cache if a cache path is provided
+        if cache_path is not None and os.path.isfile(cache_path):
+            if verbose:
+                print(f"Loading dataset from cache: {cache_path}")
+            cache = torch.load(cache_path, weights_only=False)
+            self.smiles = cache["smiles"]
+            self.valid_elements = cache["valid_elements"]
+            self.nodes_distribution = cache["nodes_distribution"]
+            self.edges_distribution = cache["edges_distribution"]
+            self.num_atoms_dist = cache["num_atoms_dist"]
+            self.max_weight = cache["max_weight"]
+            return
+
+        self._build(smiles_list, valid_elements, sanitizer, verbose)
+
+        # Save to cache (only if requested, e.g. main rank in distributed mode)
+        if cache_path is not None and save_cache:
+            os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
+            if verbose:
+                print(f"Saving dataset cache to: {cache_path}")
+            torch.save(
+                {
+                    "smiles": self.smiles,
+                    "valid_elements": self.valid_elements,
+                    "nodes_distribution": self.nodes_distribution,
+                    "edges_distribution": self.edges_distribution,
+                    "num_atoms_dist": self.num_atoms_dist,
+                    "max_weight": self.max_weight,
+                },
+                cache_path,
+            )
+
+    def _build(
+        self,
+        smiles_list: list[str],
+        valid_elements: list[str] | None,
+        sanitizer: Callable | None,
+        verbose: bool,
+    ) -> None:
+        """Build graph representations and statistics from a list of SMILES strings."""
         # Determine valid elements to use
         if valid_elements is None:
             # Auto-detect atoms from the dataset
@@ -89,7 +136,6 @@ class GraphDatasetFromSMILEs(Dataset):
         else:
             self.valid_elements = valid_elements
 
-        # Get the valid smiles, and compute node / edges distributions -> for noise schedule
         # Get the valid smiles, and compute node / edges distributions -> for noise schedule
         smiles_nodes_edges = []
         for sm in tqdm(smiles_list, desc="Building graph", disable=not verbose):

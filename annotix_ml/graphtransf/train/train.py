@@ -247,6 +247,8 @@ def train(cfg):
         cfg.dataset.split_column,
         cfg.dataset.val_tag,
         verbose=dist.is_main_process(),
+        cache_path=cfg.dataset.get("cache_path"),
+        save_cache=dist.is_main_process(),
     )
 
     # Determine the collation function and distributed data rank/size
@@ -349,6 +351,7 @@ def train(cfg):
     print(f"Valid elements: {train_dataset.valid_elements}")
     print(f"Node distribution: {train_dataset.nodes_distribution.tolist()}")
     print(f"Edge distribution: {train_dataset.edges_distribution.tolist()}")
+    print(f"Number of atoms distribution: {train_dataset.num_atoms_dist.tolist()}")
     print(f"Max weight in dataset: {train_dataset.max_weight}")
     print("=" * 50 + "\n")
 
