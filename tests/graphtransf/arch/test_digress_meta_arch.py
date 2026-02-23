@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import torch
 from omegaconf import OmegaConf
@@ -9,7 +11,14 @@ from annotix_ml.graphtransf.test_utils import create_random_start
 from annotix_ml.graphtransf.data.dataset import GraphDatasetFromSMILEs
 
 
-df = pd.read_csv(BASE_DIR / "data" / "MassSpecGym.csv")
+if os.path.exists(BASE_DIR / "data" / "MassSpecGym.csv"):
+    df = pd.read_csv(BASE_DIR / "data" / "MassSpecGym.csv")
+
+else:
+    df = pd.read_csv(
+        "hf://datasets/roman-bushuiev/MassSpecGym/data/MassSpecGym.tsv", sep="\t"
+    )
+
 df = df[df.fold == "train"].sample(1000)
 train_dataset = GraphDatasetFromSMILEs(df)
 

@@ -58,7 +58,7 @@ def mask_any_tensor(
 def mol_to_smiles(mol):
     try:
         Chem.SanitizeMol(mol)
-    except ValueError:
+    except (ValueError, RuntimeError):
         return None
     return Chem.MolToSmiles(mol)
 
@@ -154,16 +154,24 @@ def graph_to_smiles(
     mol = graph_to_mol(nodes, edges, valid_elements)
 
     # Sanitize the molecule
+    smiles = None
     try:
+        Chem.SanitizeMol(mol)
         smiles = Chem.MolToSmiles(mol)
     except Exception:
-        smiles = Chem.MolToSmiles(mol, kekulize=False)
+        try:
+            Chem.SanitizeMol(
+                mol,
+                Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_KEKULIZE,
+            )
+            smiles = Chem.MolToSmiles(mol)
+        except Exception:
+            pass
 
-    try:
-        mol = Chem.MolFromSmiles(smiles)
+    if smiles is None:
+        return None
 
-    except Exception:
-        mol = None
+    mol = Chem.MolFromSmiles(smiles)
 
     if mol:
         smiles = Chem.MolToSmiles(mol)
