@@ -1,0 +1,214 @@
+Implement the following plan:
+
+# Plan: DDP training loop fixes — loss sync, unused-parameter error, and race conditions
+
+## Context
+
+After the DDP wiring (wrapping `self.diffuser` with DDP in `_setup_distributed`) was put in place,
+two sets of problems remain:
+
+1. **Explicit request** — the logged training loss is rank-local (each rank trains on a different
+   data shard). Only rank 0 logs to wandb, so the reported loss reflects only its shard, not the
+   true global batch average.
+
+2. **Crash at the first eval/generate step** — DDP throws
+   `RuntimeError: Expected to have finished reduction in the prior iteration`.
+   Root cause: when `y_update=False`, `AttentionLayer` creates `mlpy` + `norm_y` and
+   `MultiHeadEdgeNodeWithY` creates `Update_y` + `Out_y` + `norm_y` unconditionally, but the
+   forward pass never calls them. DDP (with default `find_unused_parameters=False`) detects the
+   unreduced parameter buckets at the start of the next DDP forward and aborts.
+   This explains the repeated groups of 8+6 parameter indices in the error (one pair per GNN layer).
+
+3. **Additional correctness / reliability issues found in review** (all specific to DDP mode):
+   - `LinAlgError continue` hangs all ranks (erroring rank skips the all-reduce barrier)
+   - `shutil.rmtree` + `os.makedirs` race across N ranks on a shared filesystem
+   - JSON metrics files written simultaneously by all ranks → corrupted output
+   - `generate_samples` runs on all ranks but only main-rank results are used (wasted GPU time)
+
+---
+
+## Files to modify
+
+| File | Change summary |
+|------|---------------|
+| `annotix_ml/graphtransf/arch/digress_meta_arch.py` | Add `find_unused_parameters=True` to DDP |
+| `annotix_ml/graphtransf/train/train.py` | 5 targeted changes (see below) |
+
+---
+
+## Changes
+
+### A. `digress_meta_arch.py` line 716 — `find_unused_parameters=True`
+
+**Why:** `AttentionLayer.mlpy`, `AttentionLayer.norm_y`, `MultiHeadEdgeNodeWithY.Update_y`,
+`MultiHeadEdgeNodeWithY.Out_y`, and `MultiHeadEdgeNodeWithY.norm_y` are created regardless of
+`y_update` but are never called when `y_update=False`. DDP detects unreduced buckets at the next
+forward and raises the `RuntimeError`.
+
+```python
+# Before
+self.train_model = DDP(self.diffuser, device_ids=[get_local_rank()])
+
+# After
+self.train_model = DDP(
+    self.diffuser,
+    device_ids=[get_local_rank()],
+    find_unused_parameters=True,
+)
+```
+
+---
+
+### B. `train.py` — loss all-reduce before logging (lines 412–448)
+
+**Why:** Gradients are already averaged by DDP's backward hook, but the loss *scalar* each rank
+holds only reflects its own data shard. The logged value should be the global average.
+
+Add the all-reduce immediately after `forward_backward`, then use `loss_for_log` everywhere in the
+logging block:
+
+```python
+# After: pN, pE, loss = digress.forward_backward(N, E, mask)
+
+loss_for_log = loss
+if (
+    loss is not None
+    and dist.is_enabled()
+    and digress.train_model is not None
+    and digress.train_schedule is None   # not pipeline — DDP only
+):
+    loss_for_log = loss.detach().clone()
+    torch.distributed.all_reduce(loss_for_log, op=torch.distributed.ReduceOp.AVG)
+
+# then replace every `loss.item()` → `loss_for_log.item()` inside `if loss is not None:`
+```
+
+`torch.distributed` is already available via `import torch` — no new import needed.
+
+---
+
+### C. `train.py` — `LinAlgError continue` → DDP hang (lines 413–418)
+
+**Why:** If any one rank throws `LinAlgError` in `compute_extra_features` (before the DDP forward),
+it `continue`s. The other ranks block forever in the all-reduce triggered by their `loss.backward()`.
+
+Replace the bare `except / continue` with an all-reduce flag so all ranks agree to skip:
+
+```python
+try:
+    pN, pE, loss = digress.forward_backward(N, E, mask)
+    skip = torch.zeros(1, device=device)
+except LinAlgError:
+    print("LinAlgError in forward or digress_loss")
+    pN, pE, loss = None, None, None
+    skip = torch.ones(1, device=device)
+
+if dist.is_enabled():
+    torch.distributed.all_reduce(skip, op=torch.distributed.ReduceOp.MAX)
+if skip.item():
+    optimizer.zero_grad()   # discard any partial gradients
+    continue
+```
+
+---
+
+### D. `train.py` — `makedirs` race (lines 360–364)
+
+**Why:** All N ranks call `shutil.rmtree` and `os.makedirs` simultaneously on a shared path.
+On NFS/Lustre this produces `FileExistsError` or silently corrupts the directory.
+
+```python
+# Before
+if os.path.isdir(save_path):
+    shutil.rmtree(save_path)
+os.makedirs(save_path)
+
+# After
+if dist.is_main_process():
+    if os.path.isdir(save_path):
+        shutil.rmtree(save_path)
+    os.makedirs(save_path)
+if dist.is_enabled():
+    torch.distributed.barrier()   # all ranks wait until the directory exists
+```
+
+---
+
+### E. `train.py` — `generate_samples` on all ranks (lines 468–474)
+
+**Why:** In DDP mode `model.forward()` calls `self.diffuser` directly (no collective), so each rank
+generates independently. Only the main rank's results are used. Non-main ranks waste GPU cycles.
+Pipeline parallelism must NOT be guarded — `eval_schedule.step()` is a collective.
+
+```python
+# Before
+validity, validity_digress, valid_smiles = generate_samples(...)
+
+# After
+if not dist.is_enabled() or digress.eval_schedule or dist.is_main_process():
+    validity, validity_digress, valid_smiles = generate_samples(
+        digress,
+        cfg.valid.num_samples,
+        train_dataset.num_atoms_dist,
+        cfg.valid.batch_size,
+    )
+else:
+    validity, validity_digress, valid_smiles = 0.0, 0.0, []
+```
+
+---
+
+### F. `train.py` — JSON metrics save race (lines 536–541)
+
+**Why:** All ranks open the same JSON paths in write mode simultaneously → corrupted files.
+Additionally `train_metrics` on non-main ranks reflects only their shard.
+
+```python
+# Before
+with open(..., "val_metrics.json", ...) as f:
+    json.dump(metrics, f)
+with open(..., "train_metrics.json", ...) as f:
+    json.dump(train_metrics, f)
+
+# After
+if dist.is_main_process():
+    with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
+        json.dump(metrics, f)
+    with open(os.path.join(cfg.train.save_path, "train_metrics.json"), "w") as f:
+        json.dump(train_metrics, f)
+```
+
+---
+
+## Implementation order
+
+1. A — `find_unused_parameters=True` (unblocks all further testing)
+2. B — loss all-reduce (correctness of logged value)
+3. C — `LinAlgError` barrier (prevents silent hangs)
+4. D — `makedirs` barrier (prevents crash at startup)
+5. E — `generate_samples` guard (efficiency)
+6. F — JSON save guard (data integrity)
+
+---
+
+## Verification
+
+```bash
+# 2-GPU DDP run — should complete 10 steps without errors
+torchrun --nproc_per_node 2 -m annotix_ml.graphtransf.train.train \
+  --config configs/experiments/baseline.yaml \
+  train.distributed=data train.num_train_steps=10
+
+# Confirm:
+# 1. No "Expected to have finished reduction" error during eval/generate
+# 2. Both ranks print identical (all-reduced) loss values in tqdm postfix
+# 3. final.pt and JSON files exist and are not corrupted
+# 4. With TORCH_DISTRIBUTED_DEBUG=DETAIL, no parameter index warnings
+
+# Single-GPU regression check
+python -m annotix_ml.graphtransf.train.train \
+  --config configs/experiments/baseline.yaml train.num_train_steps=10
+```
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl
