@@ -16,6 +16,7 @@ import time
 
 import annotix_ml.distributed as dist
 from annotix_ml.distributed import enable
+from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
 from annotix_ml.graphtransf.data.data_utils import (
     batch_graph_to_smiles,
@@ -27,7 +28,6 @@ from annotix_ml.graphtransf.math.metrics import (
     compute_metrics,
     compute_training_metrics,
 )
-from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker
 from annotix_ml.graphtransf.train.setup import setup
 from annotix_ml.spec2mol.data.datacollator import graph_spec_collate_fn
 from annotix_ml.spec2mol.data.dataset import GraphSpecDataset
@@ -42,6 +42,8 @@ def get_args():
     parser.add_argument("--extra-features", type=str, required=False)
     parser.add_argument("--batch-size", type=int, required=False)
     parser.add_argument("--num-train-steps", type=int, required=False)
+    parser.add_argument("--num-diffusion-steps", type=int, required=False)
+    parser.add_argument("--distributed-strat", type=str, required=False)
 
     return parser.parse_args()
 
@@ -59,6 +61,10 @@ def make_datasets(cfg):
     train_df = data[data[split_column] != val_tag].reset_index(drop=True)
     valid_df = data[data[split_column] == val_tag].reset_index(drop=True)
 
+    cache_path = cfg.dataset.get("cache_path")
+    train_cache = f"{cache_path}_train.pt" if cache_path else None
+    valid_cache = f"{cache_path}_valid.pt" if cache_path else None
+
     common_kwargs = dict(
         spec_folder=cfg.dataset.spec_folder,
         subform_folder=cfg.dataset.subform_folder,
@@ -69,10 +75,19 @@ def make_datasets(cfg):
         sanitizer=graph_to_smiles_digress,
     )
 
-    train_dataset = GraphSpecDataset(data=train_df, **common_kwargs)
+    train_dataset = GraphSpecDataset(
+        data=train_df,
+        cache_path=train_cache,
+        save_cache=dist.is_main_process(),
+        **common_kwargs,
+    )
     valid_elements = train_dataset.valid_elements
     valid_dataset = GraphSpecDataset(
-        data=valid_df, valid_elements=valid_elements, **common_kwargs
+        data=valid_df,
+        valid_elements=valid_elements,
+        cache_path=valid_cache,
+        save_cache=dist.is_main_process(),
+        **common_kwargs,
     )
 
     return train_dataset, valid_dataset
@@ -82,6 +97,7 @@ def do_eval(
     model: Spec2MolMetaArch,
     eval_loader: DataLoader,
     device: torch.device,
+    expected_bs: int | None = None,
 ) -> dict[str, float]:
     DisableLog("rdApp.*")
     metrics = defaultdict(list)
@@ -104,6 +120,12 @@ def do_eval(
             intens,
             smiles,
         ) = batch
+
+        # If last batch, then size will be < to the one planned by schedule
+        # To avoid error -> skip it when there is a schedule (ie pp)
+        if model.eval_schedule:
+            if nodes.shape[0] != expected_bs:
+                continue
 
         # Noise the elements
         nodes_noised, edges_noised, sampled_t = model.noiser(nodes, edges, mask)
@@ -195,34 +217,59 @@ def do_eval(
 
 
 def generate_samples(
-    model: Spec2MolMetaArch, num_samples: int, num_nodes_dist: torch.Tensor
+    model: Spec2MolMetaArch,
+    num_samples: int,
+    num_nodes_dist: torch.Tensor,
+    batch_size: int,
 ) -> tuple[float, float, list[str]]:
-    n = (
-        num_nodes_dist.unsqueeze(0).expand((num_samples, -1)).multinomial(1).squeeze(-1)
-        + 1
+    print(f"Generating {num_samples} graphs in batches of {batch_size}...")
+    all_gen_smiles = []
+    all_gen_smiles_digress = []
+    samples_generated = 0
+
+    while samples_generated < num_samples:
+        n = (
+            num_nodes_dist.unsqueeze(0)
+            .expand((batch_size, -1))
+            .multinomial(1)
+            .squeeze(-1)
+            + 1
+        )
+
+        try:
+            gen_N, gen_E, gen_mask = model.generate(
+                num_samples=n, max_nodes=n.max(), progress_bar=True
+            )
+
+            gen_smiles = batch_graph_to_smiles(
+                gen_N, gen_E, gen_mask, model.valid_elements
+            )
+            all_gen_smiles.extend(gen_smiles)
+
+            gen_smiles_digress = batch_graph_to_smiles_digress(
+                gen_N, gen_E, gen_mask, model.valid_elements
+            )
+            all_gen_smiles_digress.extend(gen_smiles_digress)
+
+        except LinAlgError:
+            print("LinAlgError during generation batch, skipping batch...")
+            continue
+
+        samples_generated += batch_size
+
+    # Trim to exactly num_samples to avoid overshoot bias in validity metrics.
+    all_gen_smiles = all_gen_smiles[:num_samples]
+    all_gen_smiles_digress = all_gen_smiles_digress[:num_samples]
+
+    valid_smiles = [s for s in all_gen_smiles if s]
+    valid_smiles_digress = [s for s in all_gen_smiles_digress if s]
+
+    validity = len(valid_smiles) / len(all_gen_smiles) if all_gen_smiles else 0
+    validity_digress = (
+        len(valid_smiles_digress) / len(all_gen_smiles_digress)
+        if all_gen_smiles_digress
+        else 0
     )
-
-    print("Generating graphs for validity computation...")
-    try:
-        gen_N, gen_E, gen_mask = model.generate(
-            num_samples=n, max_nodes=n.max(), progress_bar=True
-        )
-
-        gen_smiles = batch_graph_to_smiles(gen_N, gen_E, gen_mask, model.valid_elements)
-        valid_smiles = [s for s in gen_smiles if s]
-
-        gen_smiles_digress = batch_graph_to_smiles_digress(
-            gen_N, gen_E, gen_mask, model.valid_elements
-        )
-        valid_smiles_digress = [s for s in gen_smiles_digress if s]
-
-        validity = len(valid_smiles) / len(gen_smiles)
-        validity_digress = len(valid_smiles_digress) / len(gen_smiles)
-
-    except LinAlgError:
-        validity = 0
-        validity_digress = 0
-        valid_smiles = []
 
     return validity, validity_digress, valid_smiles
 
@@ -230,7 +277,7 @@ def generate_samples(
 def train(cfg):
     # Initialize wandb
     if dist.is_main_process():
-        print(dist._MAIN_RANK)
+        print(f"Logging with main rank as : {dist._MAIN_RANK}")
 
         wandb.init(
             project=cfg.run.project,
@@ -261,6 +308,10 @@ def train(cfg):
             print(
                 f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
             )
+
+    # If the training is pipeline dist -> train and valid bs need to be =
+    if cfg.train.get("distributed") == "pipeline":
+        cfg.valid.batch_size = cfg.train.batch_size
 
     collate_fn = graph_spec_collate_fn
 
@@ -334,6 +385,7 @@ def train(cfg):
     print(f"Valid elements: {train_dataset.valid_elements}")
     print(f"Node distribution: {train_dataset.nodes_distribution.tolist()}")
     print(f"Edge distribution: {train_dataset.edges_distribution.tolist()}")
+    print(f"Number of atoms distribution: {train_dataset.num_atoms_dist.tolist()}")
     print(f"Max weight in dataset: {train_dataset.max_weight}")
     print("=" * 50 + "\n")
 
@@ -343,10 +395,12 @@ def train(cfg):
 
     # Prepare the save path
     save_path = cfg.train.save_path
-    if os.path.isdir(save_path):
-        shutil.rmtree(save_path)
-
-    os.makedirs(save_path)
+    if dist.is_main_process():
+        if os.path.isdir(save_path):
+            shutil.rmtree(save_path)
+        os.makedirs(save_path)
+    if dist.is_enabled():
+        torch.distributed.barrier()
 
     # Setup for distributed training
     if cfg.train.get("distributed") is not None:
@@ -378,13 +432,6 @@ def train(cfg):
         enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
     )
 
-    # Setup per-layer memory tracking
-    if spec2mol.train_stage is not None:
-        tracked_module = spec2mol.train_stage.submod
-    else:
-        tracked_module = spec2mol.diffuser
-    mem_tracker = LayerMemoryTracker(tracked_module, device)
-
     start_train_time = time.time()
     for i, batch in pbar:
         batch_start_time = time.time()
@@ -392,10 +439,9 @@ def train(cfg):
 
         optimizer.zero_grad()
 
-        # Reset memory tracker for this step
+        # Reset peak memory stats for this step
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
-        mem_tracker.reset()
 
         # Move the batch to the correct device
         batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
@@ -425,10 +471,30 @@ def train(cfg):
                 form_vec=form_vec,
                 intens=intens,
             )
-
+            skip = torch.zeros(1, device=device)
         except LinAlgError:
             print("LinAlgError in forward or digress_loss")
+            pN, pE, loss = None, None, None
+            skip = torch.ones(1, device=device)
+
+        if dist.is_enabled():
+            torch.distributed.all_reduce(skip, op=torch.distributed.ReduceOp.MAX)
+        if skip.item():
+            optimizer.zero_grad()
             continue
+
+        # All-reduce loss scalar so the logged value is the global average (DDP only)
+        loss_for_log = loss
+        if (
+            loss is not None
+            and dist.is_enabled()
+            and spec2mol.train_model is not None
+            and spec2mol.train_schedule is None
+        ):
+            loss_for_log = loss.detach().clone()
+            torch.distributed.all_reduce(
+                loss_for_log, op=torch.distributed.ReduceOp.AVG
+            )
 
         # If loss is None (on non-last ranks in PP), we skip logging
         if loss is not None:
@@ -443,24 +509,22 @@ def train(cfg):
 
             # Update the progress bar
             lr = optimizer.param_groups[0]["lr"]
-            pbar.set_postfix(loss=loss.item(), lr=lr, **epoch_metrics)
+            pbar.set_postfix(loss=loss_for_log.item(), lr=lr, **epoch_metrics)
 
             # Log training metrics to wandb
             train_log = {
-                "train/loss": loss.item(),
+                "train/loss": loss_for_log.item(),
                 "train/learning_rate": lr,
                 "train/epoch_time": time.time() - batch_start_time,
                 "train/total_time": time.time() - start_train_time,
                 "step": i,
             }
 
-            # Log per-layer memory metrics from hooks
-            train_log.update(mem_tracker.get_metrics())
-
             for k, v in epoch_metrics.items():
                 train_log[f"train/{k}"] = v
 
-            wandb.log(train_log)
+            if dist.is_main_process():
+                wandb.log(train_log)
 
         # Update the parameters
         optimizer.step()
@@ -470,18 +534,28 @@ def train(cfg):
             scheduler.step()
 
         # Start the evaluation
-        if (i % cfg.valid.num_eval_steps == 0) & (i > 0):
+        if i % cfg.valid.num_eval_steps == 0:
             spec2mol.diffuser.eval()
 
             with torch.no_grad():
-                eval_metrics = do_eval(spec2mol, valid_loader, device)
-
-                # All ranks must participate in generation (forward calls need all stages)
-                validity, validity_digress, valid_smiles = generate_samples(
-                    spec2mol,
-                    cfg.valid.num_samples,
-                    train_dataset.num_atoms_dist,
+                eval_metrics = do_eval(
+                    spec2mol, valid_loader, device, cfg.valid.batch_size
                 )
+
+                # Pipeline: all ranks must participate; DDP: only main rank needs to run
+                if (
+                    not dist.is_enabled()
+                    or spec2mol.eval_schedule
+                    or dist.is_main_process()
+                ):
+                    validity, validity_digress, valid_smiles = generate_samples(
+                        spec2mol,
+                        cfg.valid.num_samples,
+                        train_dataset.num_atoms_dist,
+                        cfg.valid.batch_size,
+                    )
+                else:
+                    validity, validity_digress, valid_smiles = 0.0, 0.0, []
 
                 if eval_metrics:
                     eval_metrics["gen_validity"] = validity
@@ -508,35 +582,50 @@ def train(cfg):
 
         # Save the model
         if (i % cfg.train.save_steps == 0) & (i > 0):
-            torch.save(
-                {
-                    "diffuser": spec2mol.diffuser.state_dict(),
-                    "merge_function": spec2mol.merge_function.state_dict(),
-                },
-                os.path.join(cfg.train.save_path, f"{i}.pt"),
-            )
+            if cfg.train.get("distributed") == "pipeline":
+                save_checkpoint(
+                    spec2mol.diffuser,
+                    optimizer,
+                    os.path.join(cfg.train.save_path, f"checkpoint_{i}"),
+                )
+            else:
+                if dist.is_main_process():
+                    torch.save(
+                        {
+                            "diffuser": spec2mol.diffuser.state_dict(),
+                            "merge_function": spec2mol.merge_function.state_dict(),
+                        },
+                        os.path.join(cfg.train.save_path, f"{i}.pt"),
+                    )
 
         # Stop the training when the desired number of steps has been reached
         if i >= cfg.train.num_train_steps:
             break
 
-    mem_tracker.remove_hooks()
-
     # Save the final model
-    torch.save(
-        {
-            "diffuser": spec2mol.diffuser.state_dict(),
-            "merge_function": spec2mol.merge_function.state_dict(),
-        },
-        os.path.join(cfg.train.save_path, "final.pt"),
-    )
+    if cfg.train.get("distributed") == "pipeline":
+        save_checkpoint(
+            spec2mol.diffuser,
+            optimizer,
+            os.path.join(cfg.train.save_path, "final"),
+        )
+    else:
+        if dist.is_main_process():
+            torch.save(
+                {
+                    "diffuser": spec2mol.diffuser.state_dict(),
+                    "merge_function": spec2mol.merge_function.state_dict(),
+                },
+                os.path.join(cfg.train.save_path, "final.pt"),
+            )
 
-    # Save the metrics
-    with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
-        json.dump(metrics, f)
+    # Save the metrics (main rank only to avoid concurrent write corruption)
+    if dist.is_main_process():
+        with open(os.path.join(cfg.train.save_path, "val_metrics.json"), "w") as f:
+            json.dump(metrics, f)
 
-    with open(os.path.join(cfg.train.save_path, "train_metrics.json"), "w") as f:
-        json.dump(train_metrics, f)
+        with open(os.path.join(cfg.train.save_path, "train_metrics.json"), "w") as f:
+            json.dump(train_metrics, f)
 
 
 def main():

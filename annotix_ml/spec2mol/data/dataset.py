@@ -1,14 +1,16 @@
 import logging
+import os
 from pathlib import Path
 from collections import Counter
 from typing import Callable
+
 import pandas as pd
+import rdkit.Chem as Chem
 import torch
+from pandas.core.frame import DataFrame
+from rdkit.RDLogger import DisableLog
 from torch.utils.data import Dataset
 from tqdm import tqdm
-import rdkit.Chem as Chem
-from rdkit.RDLogger import DisableLog
-from pandas.core.frame import DataFrame
 
 from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.spectraencoder.data.featurizers import PeakFormula
@@ -42,6 +44,9 @@ class GraphSpecDataset(Dataset):
         instrument_column: str = "instrument",
         valid_elements: list[str] | None = None,
         sanitizer: Callable | None = None,
+        verbose: bool = True,
+        cache_path: str | None = None,
+        save_cache: bool = True,
         **kwargs,
     ):
         super().__init__()
@@ -71,16 +76,81 @@ class GraphSpecDataset(Dataset):
         # Spectra featurizer
         self.spec_featurizer = PeakFormula(subform_folder=str(subform_folder), **kwargs)
 
-        # Graph featurizer (if needed for Batch later, but we use manual graph construction here for distributions)
-        # Actually, we can reuse GraphFeaturizer._featurize or manual logic.
-        # Let's use manual logic from GraphDatasetFromSMILEs to compute distributions
+        # Try to load from cache if a cache path is provided
+        if cache_path is not None and os.path.isfile(cache_path):
+            print(f"Loading dataset from cache: {cache_path}")
+            cache = torch.load(cache_path, weights_only=False)
+            self.smiles = cache["smiles"]
+            self.spec_names = cache["spec_names"]
+            self.formulas = cache["formulas"]
+            self.instruments = cache["instruments"]
+            self.valid_elements = cache["valid_elements"]
+            self.nodes_distribution = cache["nodes_distribution"]
+            self.edges_distribution = cache["edges_distribution"]
+            self.num_atoms_dist = cache["num_atoms_dist"]
+            self.max_weight = cache["max_weight"]
 
-        self.smiles = []
-        self.specs = []
+        else:
+            smiles, spec_names, formulas, instruments, nodes, edges = self._build(
+                sanitizer, verbose
+            )
+            self.smiles = smiles
+            self.spec_names = spec_names
+            self.formulas = formulas
+            self.instruments = instruments
 
+            # Compute the distribution of nodes
+            node_number = torch.cat(nodes).sum(0)
+            self.nodes_distribution = node_number / (node_number.sum(0).item() + 1e-9)
+
+            # Compute the distribution of edges
+            edge_number = torch.cat(edges).sum(0)
+            self.edges_distribution = edge_number / (edge_number.sum(0).item() + 1e-9)
+
+            # Compute the distribution of number of nodes
+            num_atoms_dist = Counter([n.sum(-1).item() for n in nodes])
+            max_num_atom = max(num_atoms_dist.keys()) if num_atoms_dist else 0
+            self.num_atoms_dist = torch.tensor(
+                [num_atoms_dist.get(i + 1, 0) / len(nodes) for i in range(max_num_atom)]
+            )
+
+            # Compute the maximum weight of the dataset
+            weight_tensor = torch.tensor(
+                [getattr(VALID_ELEMENTS[at], "weight") for at in self.valid_elements]
+            )
+            self.max_weight = max(
+                [
+                    (n_mat.float() @ weight_tensor.float()).sum().item()
+                    for n_mat in nodes
+                ]
+            )
+
+            # Save to cache (only if requested, e.g. main rank in distributed mode)
+            if cache_path is not None and save_cache:
+                os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
+                print(f"Saving dataset cache to: {cache_path}")
+                torch.save(
+                    {
+                        "smiles": self.smiles,
+                        "spec_names": self.spec_names,
+                        "formulas": self.formulas,
+                        "instruments": self.instruments,
+                        "valid_elements": self.valid_elements,
+                        "nodes_distribution": self.nodes_distribution,
+                        "edges_distribution": self.edges_distribution,
+                        "num_atoms_dist": self.num_atoms_dist,
+                        "max_weight": self.max_weight,
+                    },
+                    cache_path,
+                )
+
+    def _build(self, sanitizer: Callable | None, verbose: bool):
         smiles_nodes_edges = []
-        for i, row in tqdm(
-            self.data.iterrows(), total=len(self.data), desc="Processing dataset"
+        for _, row in tqdm(
+            self.data.iterrows(),
+            total=len(self.data),
+            desc="Processing dataset",
+            disable=not verbose,
         ):
             sm = row[self.smile_column]
             graph = self.smilesToGraph(sm)
@@ -118,33 +188,8 @@ class GraphSpecDataset(Dataset):
         smiles, spec_names, formulas, instruments, nodes, edges = zip(
             *smiles_nodes_edges
         )
-        self.smiles = smiles
-        self.spec_names = spec_names
-        self.formulas = formulas
-        self.instruments = instruments
 
-        # Compute the distribution of nodes
-        node_number = torch.cat(nodes).sum(0)
-        self.nodes_distribution = node_number / (node_number.sum(0).item() + 1e-9)
-
-        # Compute the distribution of edges
-        edge_number = torch.cat(edges).sum(0)
-        self.edges_distribution = edge_number / (edge_number.sum(0).item() + 1e-9)
-
-        # Compute the distribution of number of nodes
-        num_atoms_dist = Counter([n.sum(-1).item() for n in nodes])
-        max_num_atom = max(num_atoms_dist.keys()) if num_atoms_dist else 0
-        self.num_atoms_dist = torch.tensor(
-            [num_atoms_dist.get(i + 1, 0) / len(nodes) for i in range(max_num_atom)]
-        )
-
-        # Compute the maximum weight of the dataset
-        weight_tensor = torch.tensor(
-            [getattr(VALID_ELEMENTS[at], "weight") for at in self.valid_elements]
-        )
-        self.max_weight = max(
-            [(n_mat.float() @ weight_tensor.float()).sum().item() for n_mat in nodes]
-        )
+        return smiles, spec_names, formulas, instruments, nodes, edges
 
     def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor] | None:
         mol = Chem.MolFromSmiles(smiles)
