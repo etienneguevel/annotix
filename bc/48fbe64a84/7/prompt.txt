@@ -1,0 +1,172 @@
+Implement the following plan:
+
+# Plan: Sync graphtransf changes to spec2mol
+
+## Context
+
+Recent improvements to the `graphtransf` training pipeline (dataset caching, DDP robustness, memory-tracker removal, correct rank-gated logging) were not propagated to the parallel `spec2mol` module. Both modules share the same DiGress backbone; keeping them in sync prevents bugs and keeps maintenance overhead low.
+
+Recent graphtransf commits driving this:
+- `b554289` — dataset caching
+- `06d9aa7` — remove memory tracker
+- `4835b7c` — log only on main rank
+- `3eea05b` — DDP correctness fixes
+
+---
+
+## Files to Modify
+
+1. `annotix_ml/spec2mol/train.py`
+2. `annotix_ml/spec2mol/data/dataset.py`
+
+---
+
+## Changes
+
+### 1. `spec2mol/train.py`
+
+#### a) Remove `LayerMemoryTracker`
+- Delete import: `from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker`
+- Delete: `mem_tracker = LayerMemoryTracker(tracked_module, device)`, `train_stage` check block, `mem_tracker.reset()`, `train_log.update(mem_tracker.get_metrics())`, `mem_tracker.remove_hooks()`
+
+#### b) Add missing imports
+- Add `from annotix_ml.distributed.pipeline_parallelism import save_checkpoint`
+
+#### c) Add CLI args to `get_args()`
+- Add `--num-diffusion-steps` and `--distributed-strat` (already handled in shared `setup()`)
+
+#### d) Fix wandb init print
+- Change `print(dist._MAIN_RANK)` → `print(f"Logging with main rank as : {dist._MAIN_RANK}")`
+
+#### e) Add caching support in `make_datasets(cfg)`
+- Derive per-split cache paths from `cfg.dataset.get("cache_path")`
+- Pass `cache_path` and `save_cache=dist.is_main_process()` to `GraphSpecDataset`
+
+#### f) Add pipeline batch-size sync (after make_datasets, before DataLoader creation)
+```python
+if cfg.train.get("distributed") == "pipeline":
+    cfg.valid.batch_size = cfg.train.batch_size
+```
+
+#### g) Fix save-path creation (distributed-safe)
+- Wrap `shutil.rmtree` / `os.makedirs` in `if dist.is_main_process()`
+- Add `if dist.is_enabled(): torch.distributed.barrier()` after
+
+#### h) Fix `do_eval()` — add `expected_bs` param for pipeline parallelism
+```python
+def do_eval(model, eval_loader, device, expected_bs=None):
+    ...
+    if model.eval_schedule:
+        if nodes.shape[0] != expected_bs:
+            continue
+```
+- Update call site: `do_eval(spec2mol, valid_loader, device, cfg.valid.batch_size)`
+
+#### i) Fix LinAlgError skip to be DDP-coordinated
+Replace bare `continue` on `LinAlgError` with:
+```python
+try:
+    pN, pE, loss = spec2mol.forward_backward(...)
+    skip = torch.zeros(1, device=device)
+except LinAlgError:
+    pN, pE, loss = None, None, None
+    skip = torch.ones(1, device=device)
+
+if dist.is_enabled():
+    torch.distributed.all_reduce(skip, op=torch.distributed.ReduceOp.MAX)
+if skip.item():
+    optimizer.zero_grad()
+    continue
+```
+
+#### j) Add loss all-reduce for DDP logging
+After the try/except, compute `loss_for_log`:
+```python
+loss_for_log = loss
+if (loss is not None and dist.is_enabled()
+        and spec2mol.train_model is not None
+        and spec2mol.train_schedule is None):
+    loss_for_log = loss.detach().clone()
+    torch.distributed.all_reduce(loss_for_log, op=torch.distributed.ReduceOp.AVG)
+```
+Use `loss_for_log.item()` in pbar and wandb log.
+
+#### k) Guard wandb training log behind `dist.is_main_process()`
+```python
+if dist.is_main_process():
+    wandb.log(train_log)
+```
+
+#### l) Update `generate_samples()` to batched approach
+Match graphtransf's batched loop:
+- Add `batch_size: int` param
+- Loop `while samples_generated < num_samples`, sample a sub-batch of size `batch_size` each iteration, catch `LinAlgError` per batch (skip & retry), extend running lists
+- Trim to exactly `num_samples` before computing validity
+- Handle zero-length edge case in validity ratio
+
+#### m) Fix `generate_samples` call + DDP guard
+```python
+if (not dist.is_enabled() or spec2mol.eval_schedule or dist.is_main_process()):
+    validity, validity_digress, valid_smiles = generate_samples(
+        spec2mol, cfg.valid.num_samples, train_dataset.num_atoms_dist,
+        cfg.valid.batch_size,
+    )
+else:
+    validity, validity_digress, valid_smiles = 0.0, 0.0, []
+```
+
+#### n) Remove eval skip at `i == 0`
+Change `(i % cfg.valid.num_eval_steps == 0) & (i > 0)` → `i % cfg.valid.num_eval_steps == 0`
+
+#### o) Fix periodic checkpoint saving (dist-aware + pipeline)
+```python
+if (i % cfg.train.save_steps == 0) & (i > 0):
+    if cfg.train.get("distributed") == "pipeline":
+        save_checkpoint(spec2mol.diffuser, optimizer,
+                        os.path.join(cfg.train.save_path, f"checkpoint_{i}"))
+    else:
+        if dist.is_main_process():
+            torch.save({"diffuser": spec2mol.diffuser.state_dict(),
+                        "merge_function": spec2mol.merge_function.state_dict()},
+                       os.path.join(cfg.train.save_path, f"{i}.pt"))
+```
+
+#### p) Fix final model saving (dist-aware + pipeline)
+Mirror structure above using `"final"` path.
+
+#### q) Fix metrics JSON saving (main rank only)
+Wrap both `json.dump` calls in `if dist.is_main_process()`.
+
+#### r) Add `num_atoms_dist` to dataset info print
+```python
+print(f"Number of atoms distribution: {train_dataset.num_atoms_dist.tolist()}")
+```
+
+---
+
+### 2. `spec2mol/data/dataset.py`
+
+Add caching support to `GraphSpecDataset.__init__()` (mirror `GraphDatasetFromSMILEs`):
+- New params: `cache_path: str | None = None`, `save_cache: bool = True`
+- Early-return branch: if `cache_path` exists, load and restore `smiles`, `spec_names`, `formulas`, `instruments`, `valid_elements`, `nodes_distribution`, `edges_distribution`, `num_atoms_dist`, `max_weight`
+- After build: save all those fields to `cache_path` when `save_cache=True`
+- Add `import os` (already present via pathlib; add `os` explicitly)
+
+---
+
+## Verification
+
+```bash
+# Run existing tests to confirm no regressions
+pytest tests/
+
+# Quick import sanity check
+python -c "from annotix_ml.spec2mol.train import train; print('OK')"
+python -c "from annotix_ml.spec2mol.data.dataset import GraphSpecDataset; print('OK')"
+
+# Smoke-test training (if dataset available)
+python -m annotix_ml.spec2mol.train --config configs/experiments/spec2mol_baseline.yaml
+```
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl

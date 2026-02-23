@@ -3,7 +3,7 @@
   "checkpoint_id": "bc48fbe64a84",
   "strategy": "manual-commit",
   "branch": "graphtransf",
-  "checkpoints_count": 12,
+  "checkpoints_count": 13,
   "files_touched": [
     ".claude/settings.json",
     ".claude/settings.local.json",
@@ -21,6 +21,7 @@
     "annotix_ml/graphtransf/data/loaders.py",
     "annotix_ml/graphtransf/train/memory_tracker.py",
     "annotix_ml/graphtransf/train/train.py",
+    "annotix_ml/spec2mol/data/dataset.py",
     "annotix_ml/spec2mol/spec2mol_meta_arch.py",
     "annotix_ml/spec2mol/train.py",
     "annotix_ml/submit/__init__.py",
@@ -101,13 +102,20 @@
       "context": "/bc/48fbe64a84/6/context.md",
       "content_hash": "/bc/48fbe64a84/6/content_hash.txt",
       "prompt": "/bc/48fbe64a84/6/prompt.txt"
+    },
+    {
+      "metadata": "/bc/48fbe64a84/7/metadata.json",
+      "transcript": "/bc/48fbe64a84/7/full.jsonl",
+      "context": "/bc/48fbe64a84/7/context.md",
+      "content_hash": "/bc/48fbe64a84/7/content_hash.txt",
+      "prompt": "/bc/48fbe64a84/7/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 130,
-    "cache_creation_tokens": 276024,
-    "cache_read_tokens": 4137697,
-    "output_tokens": 20544,
-    "api_call_count": 106
+    "input_tokens": 159,
+    "cache_creation_tokens": 324329,
+    "cache_read_tokens": 5440805,
+    "output_tokens": 22309,
+    "api_call_count": 133
   }
 }

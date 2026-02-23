@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.4.4",
+  "checkpoint_id": "bc48fbe64a84",
+  "session_id": "ba2b1fa1-6463-438a-9cf5-1b4e193faf66",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-23T17:31:16.009475Z",
+  "branch": "graphtransf",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".gemini/settings.json",
+    ".vscode/settings.json",
+    "CLAUDE.md",
+    "annotix_ml/spec2mol/data/dataset.py",
+    "annotix_ml/spec2mol/train.py",
+    "annotix_ml/submit/__init__.py",
+    "bench/test_gnn.py",
+    "bench/utils.py",
+    "notebooks/Kaempferol.ms",
+    "notebooks/explore_msg.ipynb",
+    "notebooks/liste_ions_Annotix.mgf",
+    "notebooks/qm9.ipynb",
+    "notebooks/sirius.ipynb",
+    "notebooks/test.ipynb",
+    "notebooks/test_digress.ipynb",
+    "profiling/DGX_3414025.1771406941775082369.pt.trace.json",
+    "profiling/DGX_3414028.1771406943238638142.pt.trace.json",
+    "profiling/DGX_3414030.1771406940283257045.pt.trace.json",
+    "profiling/DGX_3414031.1771406941823820683.pt.trace.json",
+    "profiling/titan_1194959.1771496149584111501.pt.trace.json",
+    "profiling/titan_1194960.1771496149469871836.pt.trace.json",
+    "test.py"
+  ],
+  "agent": "Claude Code",
+  "token_usage": {
+    "input_tokens": 29,
+    "cache_creation_tokens": 48305,
+    "cache_read_tokens": 1303108,
+    "output_tokens": 1765,
+    "api_call_count": 27
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-23T17:31:15.88307Z",
+    "agent_lines": 128,
+    "human_added": 0,
+    "human_modified": 507,
+    "human_removed": 22526167,
+    "total_committed": 635,
+    "agent_percentage": 20.15748031496063
+  }
+}
