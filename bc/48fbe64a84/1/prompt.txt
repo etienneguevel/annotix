@@ -1,0 +1,88 @@
+Implement the following plan:
+
+# Fix: Dual Pipeline Parallel Schedules (Train + Eval)
+
+## Context
+
+Creating two `ScheduleGPipe` on the same `PipelineStage` fails because PyTorch's `_configure_outputs_meta` asserts it can only be set once. The current code at `digress_meta_arch.py:681-684` creates both `train_schedule` and `eval_schedule` on the same `stage`, causing the second to fail with `"Attempting to reconfigure output_meta, which is not supported"`.
+
+**Fix:** Build two separate `PipelineStage` objects from the same `pipe` (via two `build_stage()` calls). Both stages share the same underlying submodule parameters, so training updates apply to both.
+
+## Changes
+
+### 1. `annotix_ml/distributed/pipeline_parallelism.py` — return two stages
+
+```python
+# Line 45-46: replace single build_stage with two calls
+device = torch.device("cuda", stage_id)
+train_stage = pipe.build_stage(stage_id, device=device)
+eval_stage = pipe.build_stage(stage_id, device=device)
+return train_stage, eval_stage
+```
+
+### 2. `annotix_ml/graphtransf/arch/digress_meta_arch.py`
+
+- **Line 148-150** (`__init__`): Replace `self.stage = None` with `self.train_stage = None` and `self.eval_stage = None`
+- **Lines 663-664** (`_setup_distributed`): Unpack tuple from `auto_model_split`:
+  ```python
+  train_stage, eval_stage = auto_model_split(self.diffuser, example_input)
+  self.train_stage = train_stage
+  self.eval_stage = eval_stage
+  ```
+- **Lines 681-684**: Use separate stages for each schedule:
+  ```python
+  self.train_schedule = ScheduleGPipe(train_stage, num_microbatches, loss_fn=loss_fn)
+  self.eval_schedule = ScheduleGPipe(eval_stage, num_microbatches)
+  ```
+- **Lines 403/406** (`forward`): Replace `self.stage` → `self.eval_stage`
+- **Lines 469/472** (`forward_backward`): Replace `self.stage` → `self.train_stage`
+
+### 3. `annotix_ml/graphtransf/train/train.py` — line 358-359
+
+Replace `digress.stage` → `digress.train_stage`
+
+### 4. `annotix_ml/graphtransf/train/memory_tracker.py` — line 24 (docstring only)
+
+Update docstring example: `digress.stage.submod` → `digress.train_stage.submod`
+
+### 5. `annotix_ml/spec2mol/train.py` — line 374-375
+
+Replace `spec2mol.stage` → `spec2mol.train_stage`
+
+### 6. `tests/graphtransf/arch/test_distributed_setup.py` — line 12
+
+Update mock return to return a tuple: `mock_split.return_value = (MagicMock(), MagicMock())`
+
+## Verification
+
+1. Run `pytest tests/graphtransf/arch/test_distributed_setup.py` — unit test passes
+2. Run `pytest tests/` — no regressions
+3. Launch a multi-GPU training run to confirm both schedules work end-to-end
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl
+
+---
+
+4000it [2:25:00,  2.50s/it, ce_C=0.366, ce_F=0.00735, ce_N=0.214, ce_O=0.274, edge_accuracy=0.854, los
+s=0.874, lr=0.000195, node_accuracy=0.834]   [rank2]:[E219 21:20:41.710829377 ProcessGroupNCCL.cpp:616] [Rank 2
+] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=64026, OpType=ALLREDUCE, NumelIn=1, NumelOut=1,
+ Timeout(ms)=600000) ran for 600091 milliseconds before timing out.                                            
+[rank2]:[E219 21:20:41.718901523 ProcessGroupNCCL.cpp:1785] [PG ID 0 PG GUID 0(default_pg) Rank 2] Exception (e
+ither an error or timeout) detected by watchdog at work: 64026, last enqueued NCCL work: 64026, last completed 
+NCCL work: 64025.                                                                                              
+[rank1]:[E219 21:20:42.767291090 ProcessGroupNCCL.cpp:616] [Rank 1] Watchdog caught collective operation timeou
+t: WorkNCCL(SeqNum=64026, OpType=ALLREDUCE, NumelIn=1, NumelOut=1, Timeout(ms)=600000) ran for 600012 milliseco
+nds before timing out.                                                                                         
+[rank1]:[E219 21:20:42.771955161 ProcessGroupNCCL.cpp:1785] [PG ID 0 PG GUID 0(default_pg) Rank 1] Exception (e
+ither an error or timeout) detected by watchdog at work: 64026, last enqueued NCCL work: 64026, last completed 
+NCCL work: 64025.                                                                                              
+[rank0]:[E219 21:20:42.774009564 ProcessGroupNCCL.cpp:616] [Rank 0] Watchdog caught collective operation timeou
+t: WorkNCCL(SeqNum=32014, OpType=ALLREDUCE, NumelIn=1, NumelOut=1, Timeout(ms)=600000) ran for 600018 milliseco
+nds before timing out.                                                                                         
+[rank0]:[E219 21:20:42.775304093 ProcessGroupNCCL.cpp:1785] [PG ID 0 PG GUID 0(default_pg) Rank 0] Exception (e
+ither an error or timeout) detected by watchdog at work: 32014, last enqueued NCCL work: 32014, last completed 
+NCCL work: 32013.                                                                                              
+[rank2]:[E219 21:20:42.094862812 ProcessGroupNCCL.cpp:1834] [PG ID 0 PG GUID 0(default_pg) Rank 2] Timeout at N
+CCL work: 64026, last enqueued NCCL work: 64026, last completed NCCL work: 64025.                              
+[rank2]:[E219 21:20:42.095013719 ProcessGroupNCCL.cpp:630] [Rank 2] Some NCCL operations have failed or timed o

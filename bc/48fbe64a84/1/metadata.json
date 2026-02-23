@@ -1,9 +1,11 @@
 {
   "cli_version": "0.4.4",
   "checkpoint_id": "bc48fbe64a84",
+  "session_id": "0fd3fa36-01df-448e-91a2-0da9a1097a53",
   "strategy": "manual-commit",
+  "created_at": "2026-02-23T17:30:59.136823Z",
   "branch": "graphtransf",
-  "checkpoints_count": 4,
+  "checkpoints_count": 2,
   "files_touched": [
     ".claude/settings.json",
     ".claude/settings.local.json",
@@ -16,15 +18,12 @@
     "DGX_3414031.1771406941823820683.pt.trace.json",
     "annotix_ml/distributed/pipeline_parallelism.py",
     "annotix_ml/graphtransf/arch/digress_meta_arch.py",
-    "annotix_ml/graphtransf/data/dataset.py",
-    "annotix_ml/graphtransf/data/loaders.py",
     "annotix_ml/graphtransf/train/memory_tracker.py",
     "annotix_ml/graphtransf/train/train.py",
     "annotix_ml/spec2mol/train.py",
     "annotix_ml/submit/__init__.py",
     "bench/test_gnn.py",
     "bench/utils.py",
-    "configs/default_config.yaml",
     "notebooks/Kaempferol.ms",
     "notebooks/explore_msg.ipynb",
     "notebooks/liste_ions_Annotix.mgf",
@@ -38,27 +37,22 @@
     "titan_1194959.1771496149584111501.pt.trace.json",
     "titan_1194960.1771496149469871836.pt.trace.json"
   ],
-  "sessions": [
-    {
-      "metadata": "/bc/48fbe64a84/0/metadata.json",
-      "transcript": "/bc/48fbe64a84/0/full.jsonl",
-      "context": "/bc/48fbe64a84/0/context.md",
-      "content_hash": "/bc/48fbe64a84/0/content_hash.txt",
-      "prompt": "/bc/48fbe64a84/0/prompt.txt"
-    },
-    {
-      "metadata": "/bc/48fbe64a84/1/metadata.json",
-      "transcript": "/bc/48fbe64a84/1/full.jsonl",
-      "context": "/bc/48fbe64a84/1/context.md",
-      "content_hash": "/bc/48fbe64a84/1/content_hash.txt",
-      "prompt": "/bc/48fbe64a84/1/prompt.txt"
-    }
-  ],
+  "agent": "Claude Code",
   "token_usage": {
-    "input_tokens": 42,
-    "cache_creation_tokens": 134471,
-    "cache_read_tokens": 1514409,
-    "output_tokens": 4798,
-    "api_call_count": 34
-  }
+    "input_tokens": 18,
+    "cache_creation_tokens": 94297,
+    "cache_read_tokens": 719571,
+    "output_tokens": 4384,
+    "api_call_count": 14
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-23T17:30:59.022648Z",
+    "agent_lines": 284,
+    "human_added": 0,
+    "human_modified": 1674,
+    "human_removed": 22525253,
+    "total_committed": 1953,
+    "agent_percentage": 14.541730670762929
+  },
+  "transcript_path": ".claude/projects/-Users-etienneguevel-Documents-projects-annotix-all-annotix-ml/0fd3fa36-01df-448e-91a2-0da9a1097a53.jsonl"
 }
