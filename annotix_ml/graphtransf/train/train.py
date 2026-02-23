@@ -498,20 +498,43 @@ def train(cfg):
                     digress, valid_loader, device, cfg.valid.batch_size
                 )
 
-                # Pipeline: all ranks must participate; DDP: only main rank needs to run
-                if (
-                    not dist.is_enabled()
-                    or digress.eval_schedule
-                    or dist.is_main_process()
-                ):
-                    validity, validity_digress, valid_smiles = generate_samples(
-                        digress,
-                        cfg.valid.num_samples,
-                        train_dataset.num_atoms_dist,
-                        cfg.valid.batch_size,
-                    )
+                # In pipeline mode, all ranks generate together (eval_schedule handles
+                # distribution). In DDP mode, each rank generates its share then
+                # results are gathered. In non-distributed mode, all samples on one
+                # process.
+                if dist.is_enabled() and not digress.eval_schedule:
+                    world_size = dist.get_global_size()
+                    samples_per_rank = max(1, cfg.valid.num_samples // world_size)
                 else:
-                    validity, validity_digress, valid_smiles = 0.0, 0.0, []
+                    samples_per_rank = cfg.valid.num_samples
+
+                validity, validity_digress, valid_smiles = generate_samples(
+                    digress,
+                    samples_per_rank,
+                    train_dataset.num_atoms_dist,
+                    cfg.valid.batch_size,
+                )
+
+                # In DDP mode, gather results from all ranks.
+                # all_reduce / all_gather_object act as implicit barriers, so no
+                # explicit barrier() is needed.
+                if dist.is_enabled() and not digress.eval_schedule:
+                    validity_tensor = torch.tensor(
+                        [validity, validity_digress], device=device
+                    )
+                    torch.distributed.all_reduce(
+                        validity_tensor, op=torch.distributed.ReduceOp.SUM
+                    )
+                    validity_tensor /= world_size
+                    validity = validity_tensor[0].item()
+                    validity_digress = validity_tensor[1].item()
+
+                    all_valid_smiles = [None] * world_size
+                    torch.distributed.all_gather_object(all_valid_smiles, valid_smiles)
+                    if dist.is_main_process():
+                        valid_smiles = [
+                            s for per_rank in all_valid_smiles for s in per_rank
+                        ]
 
                 if eval_metrics:
                     eval_metrics["gen_validity"] = validity
