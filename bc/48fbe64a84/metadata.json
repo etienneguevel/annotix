@@ -3,7 +3,7 @@
   "checkpoint_id": "bc48fbe64a84",
   "strategy": "manual-commit",
   "branch": "graphtransf",
-  "checkpoints_count": 9,
+  "checkpoints_count": 11,
   "files_touched": [
     ".claude/settings.json",
     ".claude/settings.local.json",
@@ -21,6 +21,7 @@
     "annotix_ml/graphtransf/data/loaders.py",
     "annotix_ml/graphtransf/train/memory_tracker.py",
     "annotix_ml/graphtransf/train/train.py",
+    "annotix_ml/spec2mol/spec2mol_meta_arch.py",
     "annotix_ml/spec2mol/train.py",
     "annotix_ml/submit/__init__.py",
     "bench/test_gnn.py",
@@ -42,6 +43,11 @@
     "test.py",
     "test_pp_schedules.py",
     "tests/graphtransf/arch/test_distributed_setup.py",
+    "tests/spec2mol/arch/__init__.py",
+    "tests/spec2mol/arch/test_spec2mol_meta_arch.py",
+    "tests/spec2mol/data/test_datacollator.py",
+    "tests/spec2mol/data/test_dataset.py",
+    "tests/spec2mol/test_extra_features.py",
     "titan_1194959.1771496149584111501.pt.trace.json",
     "titan_1194960.1771496149469871836.pt.trace.json",
     "verify_gen_batching.py"
@@ -81,13 +87,20 @@
       "context": "/bc/48fbe64a84/4/context.md",
       "content_hash": "/bc/48fbe64a84/4/content_hash.txt",
       "prompt": "/bc/48fbe64a84/4/prompt.txt"
+    },
+    {
+      "metadata": "/bc/48fbe64a84/5/metadata.json",
+      "transcript": "/bc/48fbe64a84/5/full.jsonl",
+      "context": "/bc/48fbe64a84/5/context.md",
+      "content_hash": "/bc/48fbe64a84/5/content_hash.txt",
+      "prompt": "/bc/48fbe64a84/5/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 96,
-    "cache_creation_tokens": 212556,
-    "cache_read_tokens": 2970430,
-    "output_tokens": 11852,
-    "api_call_count": 78
+    "input_tokens": 124,
+    "cache_creation_tokens": 264322,
+    "cache_read_tokens": 4038748,
+    "output_tokens": 20519,
+    "api_call_count": 102
   }
 }

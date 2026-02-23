@@ -1,0 +1,5 @@
+make the forward_backward method for Spec2MolMetaArch and make tests for it
+
+---
+
+build tests for the spec2mol module on the same functionalities as for graphtransf

@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.4.4",
+  "checkpoint_id": "bc48fbe64a84",
+  "session_id": "98d367ed-130a-4dc0-8500-d9e15e365a03",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-23T17:31:10.362175Z",
+  "branch": "graphtransf",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "annotix_ml/spec2mol/spec2mol_meta_arch.py",
+    "tests/spec2mol/arch/__init__.py",
+    "tests/spec2mol/arch/test_spec2mol_meta_arch.py",
+    "tests/spec2mol/data/test_datacollator.py",
+    "tests/spec2mol/data/test_dataset.py",
+    "tests/spec2mol/test_extra_features.py"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "55a9bdba-2889-4c38-b08c-169e289e11da",
+  "token_usage": {
+    "input_tokens": 28,
+    "cache_creation_tokens": 51766,
+    "cache_read_tokens": 1068318,
+    "output_tokens": 8667,
+    "api_call_count": 24
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-23T17:31:10.242133Z",
+    "agent_lines": 518,
+    "human_added": 22526675,
+    "human_modified": 15,
+    "human_removed": 0,
+    "total_committed": 22527208,
+    "agent_percentage": 0.002299441635199533
+  },
+  "transcript_path": ".claude/projects/-Users-etienneguevel-Documents-projects-annotix-all-annotix-ml/98d367ed-130a-4dc0-8500-d9e15e365a03.jsonl"
+}
