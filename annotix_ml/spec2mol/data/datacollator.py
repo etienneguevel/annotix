@@ -45,8 +45,8 @@ def graph_spec_collate_fn(batch: List[dict]) -> tuple:
         mask[:curr_n] = True
         node_masks.append(mask)
 
-    nodes = torch.stack(padded_nodes)
-    edges = torch.stack(padded_edges)
+    nodes = torch.stack(padded_nodes).to(torch.float32)
+    edges = torch.stack(padded_edges).to(torch.float32)
     mask = torch.stack(node_masks)
     smiles = [d["smiles"] for d in batch]
 

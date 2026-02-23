@@ -28,24 +28,12 @@ from annotix_ml.graphtransf.math.metrics import (
     compute_metrics,
     compute_training_metrics,
 )
+from annotix_ml.graphtransf.train.train import get_args
+from annotix_ml.graphtransf.train.memory_tracker import LayerMemoryTracker
 from annotix_ml.graphtransf.train.setup import setup
 from annotix_ml.spec2mol.data.datacollator import graph_spec_collate_fn
 from annotix_ml.spec2mol.data.dataset import GraphSpecDataset
 from annotix_ml.spec2mol.spec2mol_meta_arch import Spec2MolMetaArch
-
-
-def get_args():
-    parser = ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--project-name", type=str, required=False)
-    parser.add_argument("--save-path", type=str, required=False)
-    parser.add_argument("--extra-features", type=str, required=False)
-    parser.add_argument("--batch-size", type=int, required=False)
-    parser.add_argument("--num-train-steps", type=int, required=False)
-    parser.add_argument("--num-diffusion-steps", type=int, required=False)
-    parser.add_argument("--distributed-strat", type=str, required=False)
-
-    return parser.parse_args()
 
 
 def make_datasets(cfg):
@@ -69,9 +57,6 @@ def make_datasets(cfg):
         spec_folder=cfg.dataset.spec_folder,
         subform_folder=cfg.dataset.subform_folder,
         smile_column=cfg.dataset.smile_column,
-        spec_column=cfg.dataset.spec_column,
-        formula_column=cfg.dataset.formula_column,
-        instrument_column=cfg.dataset.instrument_column,
         sanitizer=graph_to_smiles_digress,
     )
 
