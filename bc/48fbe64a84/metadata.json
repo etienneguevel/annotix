@@ -3,7 +3,7 @@
   "checkpoint_id": "bc48fbe64a84",
   "strategy": "manual-commit",
   "branch": "graphtransf",
-  "checkpoints_count": 4,
+  "checkpoints_count": 7,
   "files_touched": [
     ".claude/settings.json",
     ".claude/settings.local.json",
@@ -32,11 +32,18 @@
     "notebooks/sirius.ipynb",
     "notebooks/test.ipynb",
     "notebooks/test_digress.ipynb",
+    "profiling/DGX_3414025.1771406941775082369.pt.trace.json",
+    "profiling/DGX_3414028.1771406943238638142.pt.trace.json",
+    "profiling/DGX_3414030.1771406940283257045.pt.trace.json",
+    "profiling/DGX_3414031.1771406941823820683.pt.trace.json",
+    "profiling/titan_1194959.1771496149584111501.pt.trace.json",
+    "profiling/titan_1194960.1771496149469871836.pt.trace.json",
     "test.py",
     "test_pp_schedules.py",
     "tests/graphtransf/arch/test_distributed_setup.py",
     "titan_1194959.1771496149584111501.pt.trace.json",
-    "titan_1194960.1771496149469871836.pt.trace.json"
+    "titan_1194960.1771496149469871836.pt.trace.json",
+    "verify_gen_batching.py"
   ],
   "sessions": [
     {
@@ -52,13 +59,20 @@
       "context": "/bc/48fbe64a84/1/context.md",
       "content_hash": "/bc/48fbe64a84/1/content_hash.txt",
       "prompt": "/bc/48fbe64a84/1/prompt.txt"
+    },
+    {
+      "metadata": "/bc/48fbe64a84/2/metadata.json",
+      "transcript": "/bc/48fbe64a84/2/full.jsonl",
+      "context": "/bc/48fbe64a84/2/context.md",
+      "content_hash": "/bc/48fbe64a84/2/content_hash.txt",
+      "prompt": "/bc/48fbe64a84/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 42,
-    "cache_creation_tokens": 134471,
-    "cache_read_tokens": 1514409,
-    "output_tokens": 4798,
-    "api_call_count": 34
+    "input_tokens": 72,
+    "cache_creation_tokens": 181065,
+    "cache_read_tokens": 2412164,
+    "output_tokens": 10400,
+    "api_call_count": 58
   }
 }

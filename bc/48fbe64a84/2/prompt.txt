@@ -1,0 +1,152 @@
+Implement the following plan:
+
+# Plan: Fix NCCL BROADCAST Timeout in Pipeline Parallelism
+
+## Context
+
+When running `train.py` with pipeline parallelism enabled, training hangs and eventually dies with:
+```
+WorkNCCL(SeqN=211, OpType=BROADCAST, NumelIn=18432) ran for 600065ms before timing out.
+```
+Rank 0 calls `tdist.broadcast()` but another rank (the last pipeline stage) never joins the collective.
+
+---
+
+## Root Cause
+
+In `generate()` (`digress_meta_arch.py:648`), the inner try/except only catches `LinAlgError`:
+
+```python
+if pN is not None and pE is not None:   # only True on last rank
+    try:
+        pN = pN.softmax(-1)
+        ...
+        N, E = sample_discrete_features(probN, probE, mask)
+    except LinAlgError:
+        step_ok[0] = False
+
+if self.eval_schedule:
+    tdist.broadcast(step_ok, src=last_rank)   # ← HANGS HERE
+    ...
+    tdist.broadcast(N, src=last_rank)
+    tdist.broadcast(E, src=last_rank)
+```
+
+If any **non**-`LinAlgError` exception (e.g. `RuntimeError` from NaN/Inf, CUDA error, shape mismatch) is raised inside the try block on the last rank, the exception escapes to the outer `try: except LinAlgError:`, skipping the entire broadcast section. Meanwhile, non-last ranks (including rank 0) have finished their pipeline step and are blocked at `tdist.broadcast(step_ok, src=last_rank)` — they wait forever → NCCL BROADCAST timeout.
+
+The sequence number ~211 is consistent with the hang occurring during the first evaluation/generation call, roughly 67 denoising steps in (3 broadcasts/step × ~67 steps ≈ 201, plus ~10 init collectives).
+
+---
+
+## Secondary Issues Found
+
+1. **`compute_extra_features` runs on all pipeline ranks** (`forward()` and `forward_backward()`), but only rank 0's result is actually used. If it raises `LinAlgError` on a non-first rank *before* that rank calls `eval_schedule.step()`, that rank exits without driving its pipeline stage → P2P deadlock on adjacent ranks.
+
+2. **Initial N, E, mask are independently sampled on each rank** before the first broadcast in `generate()`. The `mask` is never synchronized — all ranks keep their own locally-sampled mask throughout the denoising loop. The last rank uses its own mask in `sample_discrete_features(probN, probE, mask)` to produce the N/E that gets broadcast; rank 0 then applies *its own* mask to that broadcast N/E. This causes data inconsistency and may trigger the non-`LinAlgError` exceptions described above.
+
+---
+
+## Plan
+
+### Fix 1 — Broaden exception handling in `generate()` (primary, fixes the timeout)
+
+**File:** `annotix_ml/graphtransf/arch/digress_meta_arch.py` (~line 648)
+
+Change the inner `except LinAlgError:` to `except Exception:` so that *any* error on the last rank is captured by the `step_ok` flag, and the last rank still participates in the broadcast.
+
+```python
+# Before
+    except LinAlgError:
+        step_ok[0] = False
+
+# After
+    except Exception:
+        step_ok[0] = False
+```
+
+The outer `try: except LinAlgError:` retry loop stays unchanged. After the broadcast, every rank checks `step_ok[0]` and all raise `LinAlgError` together, triggering the existing retry logic cleanly.
+
+---
+
+### Fix 2 — Synchronize initial mask (and optionally N, E) in `generate()`
+
+**File:** `annotix_ml/graphtransf/arch/digress_meta_arch.py` (~line 560, after mask/N/E are constructed)
+
+After sampling the initial random graph but before entering the denoising loop, broadcast mask, N, E from rank 0 so all ranks start from the same state:
+
+```python
+if self.eval_schedule:
+    tdist.broadcast(mask, src=0)
+    tdist.broadcast(N, src=0)
+    tdist.broadcast(E, src=0)
+```
+
+This also makes the Laplacian/extra-feature computation identical on all ranks from step 1, preventing spurious divergence.
+
+---
+
+### Fix 3 — Move `compute_extra_features` inside the `is_first` branch
+
+**Files:** `annotix_ml/graphtransf/arch/digress_meta_arch.py`
+
+In both `forward()` and `forward_backward()`, move the `compute_extra_features` call (and the noiser call in `forward_backward`) inside the `if self.eval_stage.is_first:` / `if self.train_stage.is_first:` branch. Non-first ranks do not need these results; running them on every rank wastes compute and risks asymmetric `LinAlgError` before any rank calls `schedule.step()`, causing P2P deadlocks.
+
+In `forward()`:
+```python
+if self.eval_schedule:
+    if self.eval_stage.is_first:
+        pos_emb, y = self.compute_extra_features(nodes, edges, mask, t, **kwargs)
+        input_args = (edges, mask, y, pos_emb, nodes)
+        out = self.eval_schedule.step(*input_args)
+    elif self.eval_stage.is_last:
+        out = self.eval_schedule.step()
+        pN, pE, *_ = out
+    else:
+        out = self.eval_schedule.step()
+else:
+    pos_emb, y = self.compute_extra_features(nodes, edges, mask, t, **kwargs)
+    out = self.diffuser(edges, mask, y, pos_emb, nodes)
+    pN, pE, *_ = out
+```
+
+In `forward_backward()`, move both `self.noiser(...)` and `self.compute_extra_features(...)` inside the `is_first` branch (non-first ranks don't need noised inputs either, since they receive intermediate activations from the previous stage via P2P).
+
+---
+
+## Critical Files
+
+- `annotix_ml/graphtransf/arch/digress_meta_arch.py`
+  - `generate()`: lines ~613–662 (exception handling + initial broadcast)
+  - `forward()`: lines ~365–423 (move compute_extra_features)
+  - `forward_backward()`: lines ~448–492 (move noiser + compute_extra_features)
+
+---
+
+## Verification
+
+1. Run with 2+ GPUs and pipeline PP enabled:
+   ```bash
+   torchrun --nproc_per_node 2 -m annotix_ml.graphtransf.train.train \
+       --config configs/experiments/baseline.yaml \
+       train.distributed=pipeline train.num_microbatches=2
+   ```
+2. Confirm training proceeds past first evaluation step (previously timed out here).
+3. Run existing tests: `pytest tests/` — ensure no regressions.
+4. (Optional) Inject a `RuntimeError` inside the posterior computation block and verify it now triggers a clean retry instead of hanging.
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl
+
+---
+
+[rank0]:     return func(*args, **kwargs)                                                               [32/934]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/raid/home/guevel/projects/annotix_all/annotix-ml/.venv/lib/python3.12/site-packages/torch/dist
+ributed/distributed_c10d.py", line 2417, in broadcast
+[rank0]:     work = default_pg.broadcast([tensor], opts) 
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+[rank0]: RuntimeError: No backend type associated with device type cpu
+
+---
+
+Generation stays stuck at step 0, there seems to be an error that stays in loop because the try except is disfunctional and doesn't increase the counter to get out of while loop
