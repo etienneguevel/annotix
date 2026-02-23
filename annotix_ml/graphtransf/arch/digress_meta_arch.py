@@ -716,7 +716,6 @@ class DigressMetaArch:
             self.train_model = DDP(
                 self.diffuser,
                 device_ids=[get_local_rank()],
-                find_unused_parameters=True,
             )
 
         elif mode == "tensor":
