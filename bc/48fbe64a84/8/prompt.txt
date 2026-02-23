@@ -1,0 +1,84 @@
+Implement the following plan:
+
+# Fix: NCCL ALLREDUCE Timeout During Distributed Training Validation Generation
+
+## Context
+
+During distributed training with DDP (Data Parallel), NCCL collective operation timeouts
+occur at training step ~120012. The error manifests as ALLREDUCE operations timing out
+after 600 seconds across multiple ranks.
+
+**Root cause**: Asymmetric execution during validation generation causes DDP ranks to
+diverge. Only the main rank (rank 0) calls `generate_samples()` during validation, while
+non-main ranks skip it and return dummy values immediately. Non-main ranks then proceed
+to the next training step and invoke DDP gradient ALLREDUCE (via `backward()`), but the
+main rank is still busy running `generate_samples()` (which involves many model forward
+passes across diffusion timesteps). After 10 minutes, NCCL times out.
+
+The relevant code block (train.py:501-514):
+```python
+# Pipeline: all ranks must participate; DDP: only main rank needs to run
+if (
+    not dist.is_enabled()
+    or digress.eval_schedule        # ← Pipeline mode: all ranks participate
+    or dist.is_main_process()       # ← DDP: only main rank generates
+):
+    validity, validity_digress, valid_smiles = generate_samples(...)
+else:
+    validity, validity_digress, valid_smiles = 0.0, 0.0, []  # ← Non-main: immediate skip
+# ← NO BARRIER HERE — non-main ranks race ahead to next training step
+```
+
+The next training step calls `digress.forward_backward()` which calls `loss.backward()`.
+With DDP, this triggers ALLREDUCE for gradient synchronization. Main rank is still in
+generation → deadlock → timeout.
+
+## Fix
+
+**File**: `annotix_ml/graphtransf/train/train.py`
+
+Add a `torch.distributed.barrier()` after the asymmetric generation block (after line
+514), before proceeding to the next training step. This ensures all DDP non-main ranks
+wait for the main rank to finish generation before advancing.
+
+```python
+else:
+    validity, validity_digress, valid_smiles = 0.0, 0.0, []
+
+# NEW: Synchronize all ranks after asymmetric generation.
+# In DDP mode, non-main ranks skip generation and would race ahead
+# to the next training step, triggering ALLREDUCE while main rank
+# is still generating. The barrier prevents this.
+if dist.is_enabled():
+    torch.distributed.barrier()
+
+if eval_metrics:
+    ...
+```
+
+This barrier is safe for pipeline parallelism too: in that mode all ranks already
+participate in `generate_samples()` together (condition `digress.eval_schedule`), so the
+barrier is a cheap no-op ensuring they remain in sync.
+
+## Critical File
+
+- `annotix_ml/graphtransf/train/train.py` — lines 513-516 (after the else branch, before
+  `if eval_metrics:`)
+
+## Verification
+
+1. Run distributed training with DDP (multiple GPUs):
+   ```bash
+   torchrun --nproc_per_node 4 -m annotix_ml.graphtransf.train.train \
+     --config configs/experiments/baseline.yaml
+   ```
+2. Wait for a validation step to trigger (every `cfg.valid.num_eval_steps` steps).
+3. Confirm generation completes without NCCL timeout.
+4. Confirm training resumes normally after the validation/generation step.
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl
+
+---
+
+In case of DDP make all ranks generate examples, then sync their generations and log on the main rank
