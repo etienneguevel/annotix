@@ -21,6 +21,22 @@ model:
     - node_cycle
     - valence_features
 
+spectra_encoder:
+  form_embedder: float
+  output_size: 4096
+  hidden_size: 256
+  spectra_dropout: 0.1
+  top_layers: 2
+  magma_modulo: 2048
+  peak_attn_layers: 4
+  set_pooling: intensity
+  pairwise_featurization: False
+  num_heads: 8
+  embed_instrument: False
+  inten_transform: float
+  no_diffs: False
+  refine_layers: 0
+
 train:
   num_train_steps: 100000
   save_path: logs/msg/baseline_no_ms2
