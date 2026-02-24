@@ -240,7 +240,13 @@ class DigressMetaArch:
             max_weight,
         )
 
-        saved_model = torch.load(model_path, weights_only=True)
+        saved = torch.load(model_path, weights_only=True)
+        # Support both the old format (bare state_dict) and the new format
+        # ({"model": state_dict, "optimizer": ...}).
+        if isinstance(saved, dict) and "model" in saved:
+            saved_model = saved["model"]
+        else:
+            saved_model = saved
         model.diffuser.load_state_dict(saved_model)
 
         return model

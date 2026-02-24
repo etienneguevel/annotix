@@ -284,6 +284,7 @@ def train(cfg):
     # Prepare the save path & check if there is already some existing checkpoints
     save_path = cfg.train.save_path
     last_epoch = 0
+    checkpoint_path = None
 
     if not os.path.isdir(save_path):
         if dist.is_main_process():
@@ -357,7 +358,7 @@ def train(cfg):
     seed = cfg.train.seed
     advance = (
         ((last_epoch + 1) * cfg.train.batch_size) % len(train_dataset)
-        if last_epoch > 0
+        if (last_epoch > 0 and not shuffle)
         else 0
     )
 
@@ -453,8 +454,19 @@ def train(cfg):
         amsgrad=True,
     )
 
+    # Restore optimizer state when resuming from a checkpoint that contains it
+    if checkpoint_path is not None:
+        saved = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        if isinstance(saved, dict) and "optimizer" in saved:
+            optimizer.load_state_dict(saved["optimizer"])
+            print(f"Optimizer state restored from {checkpoint_path}.")
+
     # Define the scheduler
     if cfg.train.learning_rate_schedule == "cosine":
+        if last_epoch > 0:
+            for pg in optimizer.param_groups:
+                pg.setdefault("initial_lr", cfg.train.starting_learning_rate)
+
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=cfg.train.num_train_steps,
@@ -645,7 +657,10 @@ def train(cfg):
             else:
                 if dist.is_main_process():
                     torch.save(
-                        digress.diffuser.state_dict(),
+                        {
+                            "model": digress.diffuser.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                        },
                         os.path.join(cfg.train.save_path, f"{global_step}.pt"),
                     )
 
@@ -664,7 +679,10 @@ def train(cfg):
     else:
         if dist.is_main_process():
             torch.save(
-                digress.diffuser.state_dict(),
+                {
+                    "model": digress.diffuser.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                },
                 os.path.join(cfg.train.save_path, "final.pt"),
             )
 
