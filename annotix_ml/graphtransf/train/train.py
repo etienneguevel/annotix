@@ -232,15 +232,33 @@ def train(cfg):
     )
     print(f"Using device: {device}\n")
 
-    train_dataset, valid_dataset = make_datasets(
-        cfg.dataset.data_path,
-        cfg.dataset.smile_column,
-        cfg.dataset.split_column,
-        cfg.dataset.val_tag,
-        verbose=dist.is_main_process(),
-        cache_path=cfg.dataset.get("cache_path"),
-        save_cache=dist.is_main_process(),
-    )
+    # Rank 0 builds or loads the cache first; a barrier then lets other ranks
+    # safely read the fully-written cache file (avoids concurrent read/write
+    # failures on network filesystems in DDP runs).
+    if dist.is_main_process() or not dist.is_enabled():
+        train_dataset, valid_dataset = make_datasets(
+            cfg.dataset.data_path,
+            cfg.dataset.smile_column,
+            cfg.dataset.split_column,
+            cfg.dataset.val_tag,
+            verbose=True,
+            cache_path=cfg.dataset.get("cache_path"),
+            save_cache=True,
+        )
+
+    if dist.is_enabled():
+        torch.distributed.barrier()
+
+    if dist.is_enabled() and not dist.is_main_process():
+        train_dataset, valid_dataset = make_datasets(
+            cfg.dataset.data_path,
+            cfg.dataset.smile_column,
+            cfg.dataset.split_column,
+            cfg.dataset.val_tag,
+            verbose=False,
+            cache_path=cfg.dataset.get("cache_path"),
+            save_cache=False,
+        )
 
     # Determine the collation function and distributed data rank/size
     data_rank = dist.get_global_rank()
