@@ -2,6 +2,9 @@ run:
   project: annotix_ml
   name: digress_medium_long
 
+dataset:
+  data_path: data/qm9.csv
+
 model:
   d: 256
   de: 64

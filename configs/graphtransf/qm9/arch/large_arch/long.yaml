@@ -1,24 +1,25 @@
 run:
-  name: test_pp
+  project: annotix_ml
+  name: digress_large_long
 
 dataset:
-  val_tag: test
+  data_path: data/qm9.csv
 
 model:
-  y_update: False
-  no_y: True
+  d: 768
+  de: 192
+  dy: 192
+  n_heads: 12
+  n_layers: 16
   diffusion_steps: 500
   noise_strategy: distribution
+  last_layer: mlp
   num_ev: 2
   extra_features:
     - laplacian_embedding
     - node_cycle
-    - valence_features
 
 train:
   batch_size: 512
   num_train_steps: 100000
-  save_steps: 4000
-  distributed: "pipeline"
-  num_microbatches: 4
-  num_workers: 1
+  save_path: logs/qm9_large_long

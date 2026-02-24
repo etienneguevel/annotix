@@ -1,44 +1,10 @@
 run:
-  project: annotix_ml
-  name: digress_base
 
 dataset:
-  data_path: data/qm9.csv
   smile_column: smiles
   split_column: split
   val_tag: test
-  cache_path: null  # If set, saves/loads processed dataset to/from <cache_path>_{train,valid}.pt
-  datadir: data/BanyulsInference
-  filter: False
-  split_file: data/BanyulsInference/split.tsv
-  stats_dir: null
-  labels_file: data/BanyulsInference/labels.tsv
-  spec_folder: data/BanyulsInference/spec_files
-  subform_folder: data/BanyulsInference/subformulae/default_subformulae
-  max_peaks: null
-  morgan_r: 2
-  morgan_nbits: 2048
-  augment_data: False
-  magma_aux_loss: False
-  magma_folder: null
-  inten_transform: float
-  cls_type: ms1
-  forward_labels: null
-  augment_prob: 1.0
-  remove_prob: 0.1
-  remove_weights: exp
-  inten_prob: 0.1
-  forward_aug_folder: null
-  magma_modulo: 512
-  max_count: null
-  fp_file: null
-  remove_h: null
-  denoise_nodes: False
-  merge: downproject_4096
-  spec_features: peakformula
-  mol_features: fingerprint
-  cache_featurizers: True
-  set_pooling: cls
+  cache_path: null
 
 model:
   d: 256
@@ -79,7 +45,6 @@ train:
   starting_learning_rate: 0.0002
   final_learning_rate: 0.000001
   learning_rate_schedule: cosine
-  save_path: logs/qm9_experiment
   save_steps: 1000
   num_workers: 4
   seed: 24

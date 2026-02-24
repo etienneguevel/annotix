@@ -1,5 +1,0 @@
-model:
-  last_layer: unembedding
-
-train:
-  save_path: logs/qm9_dist_unemb

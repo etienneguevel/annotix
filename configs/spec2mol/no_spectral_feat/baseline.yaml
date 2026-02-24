@@ -1,21 +1,20 @@
 run:
   project: annotix_msg
   name: baseline_no_ms2
-  save_path: runs/msg/baseline_no_ms2
 
 dataset:
-  data_dir: data/msg
   data_path: data/msg/labels_.csv
-  split_file: data/msg/split.tsv
   spec_folder: data/msg/spec_files
   subform_folder: data/msg/subformulae/default_subformulae
+  datadir: data/BanyulsInference
+  labels_file: data/BanyulsInference/labels.tsv
+  morgan_nbits: 2048
 
 model:
   y_update: False
   no_y: True
   diffusion_steps: 500
   noise_strategy: distribution
-  last_layer: mlp
   num_ev: 2
   extra_features:
     - laplacian_embedding
