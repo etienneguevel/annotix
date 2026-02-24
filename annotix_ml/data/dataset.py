@@ -11,7 +11,7 @@ from pandas.core.frame import DataFrame
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
+from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 
 
 def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
@@ -33,7 +33,118 @@ def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
     return sorted(list(atoms))
 
 
-class GraphDatasetFromSMILEs(Dataset):
+class GraphDatasetMixin:
+    """
+    Mixin class that provides common graph-related methods for graph datasets.
+    Requires `self.valid_elements` to be defined in the inheriting class.
+    """
+
+    def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor] | None:
+        """
+        Convert a SMILES string into node and edge tensor representations.
+
+        Args:
+            smiles (str): The SMILES string to convert.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor] | None: A tuple (nodes, edges) if successful,
+                where nodes is of shape (n, natoms) and edges is of shape (n, n, nbonds).
+                Returns None if conversion fails or if the molecule contains invalid elements.
+        """
+
+        # Make a molecule
+        mol = Chem.MolFromSmiles(smiles)
+
+        # If rdkit is not able to make a molecule from the smile -> None
+        if mol is None:
+            return None
+
+        # Initialize the nodes, edges matrices
+        n = mol.GetNumAtoms()
+        nodes = torch.zeros((n, len(self.valid_elements)), dtype=int)  # (n, natoms)
+        edges = torch.zeros((n, n, len(TYPE_EDGES)), dtype=int)  # (n, n, nbonds)
+
+        for i, atom in enumerate(mol.GetAtoms()):
+            # Return None for the molecules that are not in the ones of interest
+            atom_symbol = atom.GetSymbol()
+            if atom_symbol not in self.valid_elements:
+                return None
+
+            # One-hot encode the atom
+            nodes[i, self.valid_elements.index(atom_symbol)] = 1
+
+            # Iter over the bonds of the atom
+            for bond in atom.GetBonds():
+                # TODO : check how this method works -> doubt that bond works sym
+                s = bond.GetBeginAtomIdx()
+                e = bond.GetEndAtomIdx()
+                bond_type = bond.GetBondType()
+
+                # Return None for the molecules with edges not in the ones of interest.
+                if bond_type not in TYPE_EDGES:
+                    return None
+
+                # One-hot encode the type of edge
+                edges[s, e, TYPE_EDGES.index(bond_type)] = 1
+
+        # Symmetrize the matrix
+        edges = edges + edges.transpose(0, 1)  # (n, natoms)
+
+        # One-hot encode the edges that have yet no 1 -> means no edges
+        mask = edges.sum(-1)
+        edges[:, :, 0] += 1 - mask  # Put a 0 at dim1 -> No Bond # (n, n, nbonds)
+
+        return nodes, edges
+
+    def graphToSmiles(self, nodes: torch.Tensor, edges: torch.Tensor) -> str:
+        """
+        Convert a graph representation back to a SMILES string.
+
+        Args:
+            nodes (torch.Tensor): One-hot encoded node features of shape (n, natoms).
+            edges (torch.Tensor): One-hot encoded edge features of shape (n, n, nbonds).
+
+        Returns:
+            str: The reconstructed SMILES string.
+        """
+        # Create a writable molecule
+        mol = Chem.RWMol()
+
+        # Add atoms
+        atom_indices = []
+        for i in range(nodes.shape[0]):
+            atom_idx = torch.argmax(nodes[i]).item()
+            atom_symbol = self.valid_elements[atom_idx]
+            atom = Chem.Atom(atom_symbol)
+            idx = mol.AddAtom(atom)
+            atom_indices.append(idx)
+
+        # Add bonds
+        # edges is (n, n, nbonds)
+        # We iterate over the upper triangle to avoid duplicates
+        n = nodes.shape[0]
+        for i in range(n):
+            for j in range(i + 1, n):
+                bond_type_idx = torch.argmax(edges[i, j]).item()
+                bond_type = TYPE_EDGES[bond_type_idx]
+
+                if bond_type != "NoBond":
+                    mol.AddBond(atom_indices[i], atom_indices[j], bond_type)
+
+        # Sanitize the molecule to handle aromaticity etc.
+        try:
+            Chem.SanitizeMol(mol)
+        except ValueError:
+            # If sanitization fails, we might return a raw SMILES or None
+            # For now let's try to return what we have, but it might be invalid
+            pass
+
+        # Convert to SMILES
+        smiles = Chem.MolToSmiles(mol)
+        return smiles
+
+
+class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
     """
     Torch Dataset for molecular graphs built from SMILES strings.
 
@@ -196,110 +307,6 @@ class GraphDatasetFromSMILEs(Dataset):
         smiles, nodes, edges = zip(*smiles_nodes_edges)
 
         return smiles, nodes, edges
-
-    def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor] | None:
-        """
-        Convert a SMILES string into node and edge tensor representations.
-
-        Args:
-            smiles (str): The SMILES string to convert.
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor] | None: A tuple (nodes, edges) if successful,
-                where nodes is of shape (n, natoms) and edges is of shape (n, n, nbonds).
-                Returns None if conversion fails or if the molecule contains invalid elements.
-        """
-
-        # Make a molecule
-        mol = Chem.MolFromSmiles(smiles)
-
-        # If rdkit is not able to make a molecule from the smile -> None
-        if mol is None:
-            return None
-
-        # Initialize the nodes, edges matrices
-        n = mol.GetNumAtoms()
-        nodes = torch.zeros((n, len(self.valid_elements)), dtype=int)  # (n, natoms)
-        edges = torch.zeros((n, n, len(TYPE_EDGES)), dtype=int)  # (n, n, nbonds)
-
-        for i, atom in enumerate(mol.GetAtoms()):
-            # Return None for the molecules that are not in the ones of interest
-            atom_symbol = atom.GetSymbol()
-            if atom_symbol not in self.valid_elements:
-                return None
-
-            # One-hot encode the atom
-            nodes[i, self.valid_elements.index(atom_symbol)] = 1
-
-            # Iter over the bonds of the atom
-            for bond in atom.GetBonds():
-                # TODO : check how this method works -> doubt that bond works sym
-                s = bond.GetBeginAtomIdx()
-                e = bond.GetEndAtomIdx()
-                bond_type = bond.GetBondType()
-
-                # Return None for the molecules with edges not in the ones of interest.
-                if bond_type not in TYPE_EDGES:
-                    return None
-
-                # One-hot encode the type of edge
-                edges[s, e, TYPE_EDGES.index(bond_type)] = 1
-
-        # Symmetrize the matrix
-        edges = edges + edges.transpose(0, 1)  # (n, natoms)
-
-        # One-hot encode the edges that have yet no 1 -> means no edges
-        mask = edges.sum(-1)
-        edges[:, :, 0] += 1 - mask  # Put a 0 at dim1 -> No Bond # (n, n, nbonds)
-
-        return nodes, edges
-
-    def graphToSmiles(self, nodes: torch.Tensor, edges: torch.Tensor) -> str:
-        """
-        Convert a graph representation back to a SMILES string.
-
-        Args:
-            nodes (torch.Tensor): One-hot encoded node features of shape (n, natoms).
-            edges (torch.Tensor): One-hot encoded edge features of shape (n, n, nbonds).
-
-        Returns:
-            str: The reconstructed SMILES string.
-        """
-        # Create a writable molecule
-        mol = Chem.RWMol()
-
-        # Add atoms
-        atom_indices = []
-        for i in range(nodes.shape[0]):
-            atom_idx = torch.argmax(nodes[i]).item()
-            atom_symbol = self.valid_elements[atom_idx]
-            atom = Chem.Atom(atom_symbol)
-            idx = mol.AddAtom(atom)
-            atom_indices.append(idx)
-
-        # Add bonds
-        # edges is (n, n, nbonds)
-        # We iterate over the upper triangle to avoid duplicates
-        n = nodes.shape[0]
-        for i in range(n):
-            for j in range(i + 1, n):
-                bond_type_idx = torch.argmax(edges[i, j]).item()
-                bond_type = TYPE_EDGES[bond_type_idx]
-
-                if bond_type != "NoBond":
-                    mol.AddBond(atom_indices[i], atom_indices[j], bond_type)
-
-        # Sanitize the molecule to handle aromaticity etc.
-        try:
-            Chem.SanitizeMol(mol)
-        except ValueError:
-            # If sanitization fails, we might return a raw SMILES or None
-            # For now let's try to return what we have, but it might be invalid
-            pass
-
-        # Convert to SMILES
-        smiles = Chem.MolToSmiles(mol)
-        return smiles
 
     def __len__(self):
         """

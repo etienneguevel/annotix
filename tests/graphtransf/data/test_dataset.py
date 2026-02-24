@@ -3,8 +3,8 @@ import torch
 from torch import Tensor
 
 from annotix_ml import BASE_DIR
-from annotix_ml.graphtransf.data.dataset import GraphDatasetFromSMILEs
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
+from annotix_ml.data.dataset import GraphDatasetFromSMILEs
+from annotix_ml.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 import rdkit.Chem as Chem
 
 

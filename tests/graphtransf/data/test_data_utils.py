@@ -3,8 +3,8 @@ from unittest.mock import patch
 import torch
 from rdkit import Chem
 
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
-from annotix_ml.graphtransf.data.data_utils import (
+from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
+from annotix_ml.data.data_utils import (
     batch_graph_to_smiles,
     batch_graph_to_smiles_digress,
     graph_to_mol,

@@ -3,10 +3,10 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
 from annotix_ml import BASE_DIR
-from annotix_ml.spec2mol.spec2mol_meta_arch import Spec2MolMetaArch
-from annotix_ml.spec2mol.data.dataset import GraphSpecDataset
-from annotix_ml.spec2mol.data.datacollator import graph_spec_collate_fn
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
+from annotix_ml.graphtransf.arch.spec2mol_meta_arch import Spec2MolMetaArch
+from annotix_ml.data.spec_dataset import GraphSpecDataset
+from annotix_ml.data.datacollator import graph_spec_collate_fn
+from annotix_ml.data.atoms_data import TYPE_EDGES
 
 
 def _load_cfg():

@@ -1,6 +1,6 @@
 import torch
 
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
+from annotix_ml.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.math.extra_features import laplacian_embedding, node_cycle
 from annotix_ml.graphtransf.test_utils import create_random_start
 

@@ -10,8 +10,8 @@ from tqdm import tqdm
 
 from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
-from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
+from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
+from annotix_ml.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.math.extra_features import (

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from annotix_ml.graphtransf.data.data_utils import mask_any_tensor
+from annotix_ml.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.layers.mlp import MLP
 
 

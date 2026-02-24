@@ -5,29 +5,19 @@ from collections import Counter
 from typing import Callable
 
 import pandas as pd
-import rdkit.Chem as Chem
 import torch
 from pandas.core.frame import DataFrame
 from rdkit.RDLogger import DisableLog
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
+from annotix_ml.data.atoms_data import VALID_ELEMENTS
+from annotix_ml.data.dataset import GraphDatasetMixin, _extract_atoms_from_smiles
 from annotix_ml.spectraencoder.data.featurizers import PeakFormula
 from annotix_ml.spectraencoder.data.objects import Spectra
 
 
-def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
-    atoms = set()
-    for smiles in smiles_list:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is not None:
-            for atom in mol.GetAtoms():
-                atoms.add(atom.GetSymbol())
-    return sorted(list(atoms))
-
-
-class GraphSpecDataset(Dataset):
+class GraphSpecDataset(Dataset, GraphDatasetMixin):
     """
     GraphSpecDataset combines molecular graph transformation from SMILES
     and MS2 spectra transformation from associated files.
@@ -190,34 +180,6 @@ class GraphSpecDataset(Dataset):
         )
 
         return smiles, spec_names, formulas, instruments, nodes, edges
-
-    def smilesToGraph(self, smiles: str) -> tuple[torch.Tensor, torch.Tensor] | None:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return None
-
-        n = mol.GetNumAtoms()
-        nodes = torch.zeros((n, len(self.valid_elements)), dtype=int)
-        edges = torch.zeros((n, n, len(TYPE_EDGES)), dtype=int)
-
-        for i, atom in enumerate(mol.GetAtoms()):
-            atom_symbol = atom.GetSymbol()
-            if atom_symbol not in self.valid_elements:
-                return None
-            nodes[i, self.valid_elements.index(atom_symbol)] = 1
-
-            for bond in atom.GetBonds():
-                s = bond.GetBeginAtomIdx()
-                e = bond.GetEndAtomIdx()
-                bond_type = bond.GetBondType()
-                if bond_type not in TYPE_EDGES:
-                    return None
-                edges[s, e, TYPE_EDGES.index(bond_type)] = 1
-
-        edges = edges + edges.transpose(0, 1)
-        mask = edges.sum(-1)
-        edges[:, :, 0] += 1 - mask
-        return nodes, edges
 
     def __len__(self):
         return len(self.smiles)

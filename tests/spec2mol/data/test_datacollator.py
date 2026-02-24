@@ -2,13 +2,13 @@ import torch
 from torch.utils.data import DataLoader
 
 from annotix_ml import BASE_DIR
-from annotix_ml.spec2mol.data.dataset import GraphSpecDataset
-from annotix_ml.spec2mol.data.datacollator import graph_spec_collate_fn
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
+from annotix_ml.data.spec_dataset import GraphSpecDataset
+from annotix_ml.data.datacollator import collateGraphSpec
+from annotix_ml.data.atoms_data import TYPE_EDGES
 
 
 def test_collate_graph_spec():
-    """Test graph_spec_collate_fn produces correctly shaped and padded batches."""
+    """Test collateGraphSpec produces correctly shaped and padded batches."""
     data_path = BASE_DIR / "data/BanyulsInference/labels.tsv"
     spec_folder = BASE_DIR / "data/BanyulsInference/spec_files"
     subform_folder = "data/BanyulsInference/subformulae/default_subformulae"
@@ -24,7 +24,7 @@ def test_collate_graph_spec():
     )
 
     bs = 4
-    loader = DataLoader(dataset, batch_size=bs, collate_fn=graph_spec_collate_fn)
+    loader = DataLoader(dataset, batch_size=bs, collate_fn=collateGraphSpec)
     (
         nodes,
         edges,

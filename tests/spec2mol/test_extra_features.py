@@ -3,9 +3,9 @@ from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 
 from annotix_ml import BASE_DIR
-from annotix_ml.spec2mol.data.dataset import GraphSpecDataset
-from annotix_ml.spec2mol.data.datacollator import graph_spec_collate_fn
-from annotix_ml.spec2mol.extra_features import spectra_fingerprint
+from annotix_ml.data.spec_dataset import GraphSpecDataset
+from annotix_ml.data.datacollator import collateGraphSpec
+from annotix_ml.graphtransf.math.extra_features import spectra_fingerprint
 from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoder
 
 
@@ -25,7 +25,7 @@ def test_spectra_fingerprint():
     )
 
     bs = 2
-    loader = DataLoader(dataset, batch_size=bs, collate_fn=graph_spec_collate_fn)
+    loader = DataLoader(dataset, batch_size=bs, collate_fn=collateGraphSpec)
     (
         nodes,
         edges,
@@ -95,7 +95,7 @@ def test_spectra_fingerprint_deterministic():
         instrument_column="instrument",
     )
 
-    loader = DataLoader(dataset, batch_size=2, collate_fn=graph_spec_collate_fn)
+    loader = DataLoader(dataset, batch_size=2, collate_fn=collateGraphSpec)
     batch = next(iter(loader))
     _, _, _, num_peaks, types, instruments, ion_vec, form_vec, intens, _ = batch
 

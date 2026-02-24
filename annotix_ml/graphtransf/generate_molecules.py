@@ -7,8 +7,8 @@ from rdkit import RDLogger
 
 from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
-from annotix_ml.graphtransf.data.loaders import make_datasets
-from annotix_ml.graphtransf.data.data_utils import batch_graph_to_smiles
+from annotix_ml.data.loaders import make_datasets
+from annotix_ml.data.data_utils import batch_graph_to_smiles
 
 logger = RDLogger.logger()
 logger.setLevel(RDLogger.CRITICAL)

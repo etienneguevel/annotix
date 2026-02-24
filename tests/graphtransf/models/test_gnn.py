@@ -2,7 +2,7 @@ from functools import partial
 
 import torch
 
-from annotix_ml.graphtransf.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
+from annotix_ml.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
 from annotix_ml.graphtransf.layers import (
     EmbeddingLaplacian,
     FfnNodeEdge,

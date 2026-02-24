@@ -2,8 +2,8 @@ import pandas as pd
 from torch.utils.data import DataLoader
 
 from annotix_ml import BASE_DIR
-from annotix_ml.graphtransf.data.datacollator import collateGraph
-from annotix_ml.graphtransf.data.dataset import GraphDatasetFromSMILEs
+from annotix_ml.data.datacollator import collateGraph
+from annotix_ml.data.dataset import GraphDatasetFromSMILEs
 
 
 def test_collate_MSG():

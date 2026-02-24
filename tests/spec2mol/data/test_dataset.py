@@ -4,8 +4,8 @@ from torch import Tensor
 import rdkit.Chem as Chem
 
 from annotix_ml import BASE_DIR
-from annotix_ml.spec2mol.data.dataset import GraphSpecDataset
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
+from annotix_ml.data.spec_dataset import GraphSpecDataset
+from annotix_ml.data.atoms_data import TYPE_EDGES
 
 
 DATA_PATH = BASE_DIR / "data/BanyulsInference/labels.tsv"

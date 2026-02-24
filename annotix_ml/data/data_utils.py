@@ -1,6 +1,6 @@
 import torch
 import rdkit.Chem as Chem
-from annotix_ml.graphtransf.data.atoms_data import TYPE_EDGES
+from annotix_ml.data.atoms_data import TYPE_EDGES
 
 
 def mask_any_tensor(

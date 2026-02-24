@@ -5,7 +5,7 @@ from omegaconf import DictConfig
 
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
 from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoder
-from annotix_ml.spec2mol.extra_features import spectra_fingerprint
+from annotix_ml.graphtransf.math.extra_features import spectra_fingerprint
 
 
 class Spec2MolMetaArch(DigressMetaArch):
