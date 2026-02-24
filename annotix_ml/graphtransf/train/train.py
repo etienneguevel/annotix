@@ -273,6 +273,34 @@ def train(cfg):
             # Save a copy of the config file
             OmegaConf.save(config=cfg, f=os.path.join(save_path, "config.yaml"))
 
+    # Initialize wandb after the barrier so rank 0's network call cannot delay
+    # other ranks from reaching the synchronisation point above.
+    if dist.is_main_process():
+        print(f"Logging with main rank as : {dist._MAIN_RANK}")
+
+        wandb_id_file = os.path.join(save_path, "wandb_run_id.txt")
+        if last_epoch > 0 and os.path.isfile(wandb_id_file):
+            with open(wandb_id_file) as f:
+                wandb_run_id = f.read().strip()
+            wandb.init(
+                project=cfg.run.project,
+                name=cfg.run.name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+                id=wandb_run_id,
+                resume="allow",
+            )
+        else:
+            wandb.init(
+                project=cfg.run.project,
+                name=cfg.run.name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+            )
+            with open(wandb_id_file, "w") as f:
+                f.write(wandb.run.id)
+
+    if dist.is_enabled():
+        torch.distributed.barrier()
+
     # Check if there are already model weights in the saving path
     model_checkpoints = [f for f in os.listdir(save_path) if f.endswith(".pt")]
     if len(model_checkpoints) > 0:
@@ -304,33 +332,6 @@ def train(cfg):
             train_dataset.edges_distribution,
             max_weight=train_dataset.max_weight,
         )
-
-    # Initialize wandb
-    if dist.is_main_process():
-        # Constrain wandb to only see the current GPU for system metrics
-        print(f"Logging with main rank as : {dist._MAIN_RANK}")
-
-        wandb_id_file = os.path.join(save_path, "wandb_run_id.txt")
-        if last_epoch > 0 and os.path.isfile(wandb_id_file):
-            with open(wandb_id_file) as f:
-                wandb_run_id = f.read().strip()
-            wandb.init(
-                project=cfg.run.project,
-                name=cfg.run.name,
-                config=OmegaConf.to_container(cfg, resolve=True),
-                id=wandb_run_id,
-                resume="allow",
-            )
-            print(f"Checkpoints found, resumed from epoch {last_epoch}.")
-        else:
-            wandb.init(
-                project=cfg.run.project,
-                name=cfg.run.name,
-                config=OmegaConf.to_container(cfg, resolve=True),
-            )
-            os.makedirs(save_path, exist_ok=True)
-            with open(wandb_id_file, "w") as f:
-                f.write(wandb.run.id)
 
     # Make the DataLoaders
     sample_count = len(train_dataset)
@@ -416,9 +417,6 @@ def train(cfg):
     metrics = defaultdict(list)
     train_metrics = defaultdict(list)
 
-    if dist.is_enabled():
-        torch.distributed.barrier()
-
     # Setup for distributed training
     if cfg.train.get("distributed") is not None:
         example_batch = next(iter(train_loader))
@@ -450,6 +448,9 @@ def train(cfg):
     pbar = tqdm(
         enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
     )
+
+    if dist.is_enabled():
+        torch.distributed.barrier()
 
     start_train_time = time.time()
     for i, batch in pbar:
