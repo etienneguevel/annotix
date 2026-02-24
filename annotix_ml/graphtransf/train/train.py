@@ -355,7 +355,11 @@ def train(cfg):
     sample_count = len(train_dataset)
     shuffle = True
     seed = cfg.train.seed
-    advance = (last_epoch + 1) * cfg.train.batch_size if last_epoch > 0 else 0
+    advance = (
+        ((last_epoch + 1) * cfg.train.batch_size) % len(train_dataset)
+        if last_epoch > 0
+        else 0
+    )
 
     # If the training is pipeline dist -> train and valid bs need to be =
     # TODO : find a way to rm that dependency
