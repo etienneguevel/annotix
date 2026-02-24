@@ -140,22 +140,22 @@ class GraphDatasetFromSMILEs(Dataset):
                 ]
             )
 
-        # Save to cache (only if requested, e.g. main rank in distributed mode)
-        if cache_path is not None and save_cache:
-            os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
-            if verbose:
-                print(f"Saving dataset cache to: {cache_path}")
-            torch.save(
-                {
-                    "smiles": self.smiles,
-                    "valid_elements": self.valid_elements,
-                    "nodes_distribution": self.nodes_distribution,
-                    "edges_distribution": self.edges_distribution,
-                    "num_atoms_dist": self.num_atoms_dist,
-                    "max_weight": self.max_weight,
-                },
-                cache_path,
-            )
+            # Save to cache only when we actually call _build not load from cache
+            if cache_path is not None and save_cache:
+                os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
+                if verbose:
+                    print(f"Saving dataset cache to: {cache_path}")
+                torch.save(
+                    {
+                        "smiles": self.smiles,
+                        "valid_elements": self.valid_elements,
+                        "nodes_distribution": self.nodes_distribution,
+                        "edges_distribution": self.edges_distribution,
+                        "num_atoms_dist": self.num_atoms_dist,
+                        "max_weight": self.max_weight,
+                    },
+                    cache_path,
+                )
 
     def _build(
         self,

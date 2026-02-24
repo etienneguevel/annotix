@@ -232,50 +232,34 @@ def train(cfg):
     )
     print(f"Using device: {device}\n")
 
-    # Rank 0 builds or loads the cache first
-    if dist.is_main_process() or not dist.is_enabled():
-        train_dataset, valid_dataset = make_datasets(
-            cfg.dataset.data_path,
-            cfg.dataset.smile_column,
-            cfg.dataset.split_column,
-            cfg.dataset.val_tag,
-            verbose=True,
-            cache_path=cfg.dataset.get("cache_path"),
-            save_cache=True,
-        )
-
-    if dist.is_enabled():
-        torch.distributed.barrier()
-
-    if dist.is_enabled() and not dist.is_main_process():
-        train_dataset, valid_dataset = make_datasets(
-            cfg.dataset.data_path,
-            cfg.dataset.smile_column,
-            cfg.dataset.split_column,
-            cfg.dataset.val_tag,
-            verbose=False,
-            cache_path=cfg.dataset.get("cache_path"),
-            save_cache=False,
-        )
+    # Main rank builds or loads the cache first
+    train_dataset, valid_dataset = make_datasets(
+        cfg.dataset.data_path,
+        cfg.dataset.smile_column,
+        cfg.dataset.split_column,
+        cfg.dataset.val_tag,
+        verbose=True,
+        cache_path=cfg.dataset.get("cache_path"),
+        save_cache=dist.is_main_process(),
+    )
 
     # Determine the collation function and distributed data rank/size
     data_rank = dist.get_global_rank()
     data_size = dist.get_global_size()
 
-    if dist.is_enabled():
-        if cfg.train.get("distributed") == "pipeline":
-            # In Pipeline Parallelism, all ranks in the same pipeline
-            # (which is the whole world here) must see the same data.
-            data_rank = 0
-            data_size = 1
-            print(
-                f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
-            )
-
+    if cfg.train.get("distributed") == "pipeline":
+        # In Pipeline Parallelism, all ranks in the same pipeline
+        # (which is the whole world here) must see the same data.
+        data_rank = 0
+        data_size = 1
+        print(
+            f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
+        )
         # Derive n_max from the distribution of number of atoms
         n_max = len(train_dataset.num_atoms_dist)
         collate_fn = partial(collateGraphStatic, n_max=n_max)
         print(f"Using static shape data collator with n_max={n_max}")
+
     else:
         collate_fn = collateGraph
 
