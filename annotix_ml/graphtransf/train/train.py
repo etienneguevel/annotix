@@ -232,9 +232,7 @@ def train(cfg):
     )
     print(f"Using device: {device}\n")
 
-    # Rank 0 builds or loads the cache first; a barrier then lets other ranks
-    # safely read the fully-written cache file (avoids concurrent read/write
-    # failures on network filesystems in DDP runs).
+    # Rank 0 builds or loads the cache first
     if dist.is_main_process() or not dist.is_enabled():
         train_dataset, valid_dataset = make_datasets(
             cfg.dataset.data_path,
@@ -292,31 +290,6 @@ def train(cfg):
             # Save a copy of the config file
             OmegaConf.save(config=cfg, f=os.path.join(save_path, "config.yaml"))
 
-    # Initialize wandb after the barrier so rank 0's network call cannot delay
-    # other ranks from reaching the synchronisation point above.
-    if dist.is_main_process():
-        print(f"Logging with main rank as : {dist._MAIN_RANK}")
-
-        wandb_id_file = os.path.join(save_path, "wandb_run_id.txt")
-        if last_epoch > 0 and os.path.isfile(wandb_id_file):
-            with open(wandb_id_file) as f:
-                wandb_run_id = f.read().strip()
-            wandb.init(
-                project=cfg.run.project,
-                name=cfg.run.name,
-                config=OmegaConf.to_container(cfg, resolve=True),
-                id=wandb_run_id,
-                resume="allow",
-            )
-        else:
-            wandb.init(
-                project=cfg.run.project,
-                name=cfg.run.name,
-                config=OmegaConf.to_container(cfg, resolve=True),
-            )
-            with open(wandb_id_file, "w") as f:
-                f.write(wandb.run.id)
-
     if dist.is_enabled():
         torch.distributed.barrier()
 
@@ -351,6 +324,29 @@ def train(cfg):
             train_dataset.edges_distribution,
             max_weight=train_dataset.max_weight,
         )
+
+    if dist.is_main_process():
+        print(f"Logging with main rank as : {dist._MAIN_RANK}")
+
+        wandb_id_file = os.path.join(save_path, "wandb_run_id.txt")
+        if last_epoch > 0 and os.path.isfile(wandb_id_file):
+            with open(wandb_id_file) as f:
+                wandb_run_id = f.read().strip()
+            wandb.init(
+                project=cfg.run.project,
+                name=cfg.run.name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+                id=wandb_run_id,
+                resume="allow",
+            )
+        else:
+            wandb.init(
+                project=cfg.run.project,
+                name=cfg.run.name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+            )
+            with open(wandb_id_file, "w") as f:
+                f.write(wandb.run.id)
 
     # Make the DataLoaders
     sample_count = len(train_dataset)
@@ -480,15 +476,17 @@ def train(cfg):
     step_offset = last_epoch + 1 if last_epoch > 0 else 0
 
     pbar = tqdm(
-        enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
+        enumerate(train_loader, start=step_offset),
+        desc="Training",
+        disable=not dist.is_main_process(),
+        initial=step_offset,
     )
 
     if dist.is_enabled():
         torch.distributed.barrier()
 
     start_train_time = time.time()
-    for i, batch in pbar:
-        global_step = i + step_offset
+    for global_step, batch in pbar:
         batch_start_time = time.time()
         # Make the model in train mode
         digress.diffuser.train()
