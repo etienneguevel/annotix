@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import time
 from argparse import ArgumentParser
 from collections import defaultdict
@@ -74,9 +73,12 @@ def do_eval(
         nodes_noised, edges_noised, sampled_t = model.noiser(nodes, edges, mask)
 
         # Compute the predictions
-        pN, pE = model.forward(
-            nodes_noised, edges_noised, mask, sampled_t
-        )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        try:
+            pN, pE = model.forward(
+                nodes_noised, edges_noised, mask, sampled_t
+            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
+        except LinAlgError:
+            continue
 
         # Non-last ranks in pipeline parallelism get None outputs;
         # they must keep looping so every rank calls schedule.step().
@@ -220,17 +222,6 @@ def generate_samples(
 
 
 def train(cfg):
-    # Initialize wandb
-    if dist.is_main_process():
-        # Constrain wandb to only see the current GPU for system metrics
-        print(f"Logging with main rank as : {dist._MAIN_RANK}")
-
-        wandb.init(
-            project=cfg.run.project,
-            name=cfg.run.name,
-            config=OmegaConf.to_container(cfg, resolve=True),
-        )
-
     # Select the device for the training
     device = (
         torch.device("cuda")
@@ -272,11 +263,80 @@ def train(cfg):
     else:
         collate_fn = collateGraph
 
+    # Prepare the save path & check if there is already some existing checkpoints
+    save_path = cfg.train.save_path
+    last_epoch = 0
+
+    if not os.path.isdir(save_path):
+        if dist.is_main_process():
+            os.makedirs(save_path)
+            # Save a copy of the config file
+            OmegaConf.save(config=cfg, f=os.path.join(save_path, "config.yaml"))
+
+    # Check if there are already model weights in the saving path
+    model_checkpoints = [f for f in os.listdir(save_path) if f.endswith(".pt")]
+    if len(model_checkpoints) > 0:
+        last_checkpoint = sorted(model_checkpoints, key=lambda y: int(y.split(".")[0]))[
+            -1
+        ]
+        checkpoint_path = os.path.join(save_path, last_checkpoint)
+        last_epoch = int(last_checkpoint.split(".")[0])
+
+        print(f"Checkpoints found, loading from the weights at {checkpoint_path}.")
+        digress = DigressMetaArch.load_pretrained(
+            cfg,
+            device,
+            checkpoint_path,
+            train_dataset.valid_elements,
+            train_dataset.nodes_distribution,
+            train_dataset.edges_distribution,
+            train_dataset.max_weight,
+        )
+
+    else:
+        # Define the model
+        print("No checkpoints found, init from zero.")
+        digress = DigressMetaArch.init_from_cfg(
+            cfg,
+            device,
+            train_dataset.valid_elements,
+            train_dataset.nodes_distribution,
+            train_dataset.edges_distribution,
+            max_weight=train_dataset.max_weight,
+        )
+
+    # Initialize wandb
+    if dist.is_main_process():
+        # Constrain wandb to only see the current GPU for system metrics
+        print(f"Logging with main rank as : {dist._MAIN_RANK}")
+
+        wandb_id_file = os.path.join(save_path, "wandb_run_id.txt")
+        if last_epoch > 0 and os.path.isfile(wandb_id_file):
+            with open(wandb_id_file) as f:
+                wandb_run_id = f.read().strip()
+            wandb.init(
+                project=cfg.run.project,
+                name=cfg.run.name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+                id=wandb_run_id,
+                resume="allow",
+            )
+            print(f"Checkpoints found, resumed from epoch {last_epoch}.")
+        else:
+            wandb.init(
+                project=cfg.run.project,
+                name=cfg.run.name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+            )
+            os.makedirs(save_path, exist_ok=True)
+            with open(wandb_id_file, "w") as f:
+                f.write(wandb.run.id)
+
     # Make the DataLoaders
     sample_count = len(train_dataset)
     shuffle = True
     seed = cfg.train.seed
-    advance = 0
+    advance = (last_epoch + 1) * cfg.train.batch_size if last_epoch > 0 else 0
 
     # If the training is pipeline dist -> train and valid bs need to be =
     # TODO : find a way to rm that dependency
@@ -305,17 +365,6 @@ def train(cfg):
         collate_fn=collate_fn,
         shuffle=False,
     )
-
-    # Define the models
-    digress = DigressMetaArch.init_from_cfg(
-        cfg,
-        device,
-        train_dataset.valid_elements,
-        train_dataset.nodes_distribution,
-        train_dataset.edges_distribution,
-        max_weight=train_dataset.max_weight,
-    )
-    digress.valid_elements = train_dataset.valid_elements
 
     # Log model dimensions
     print("\n" + "=" * 50)
@@ -367,12 +416,6 @@ def train(cfg):
     metrics = defaultdict(list)
     train_metrics = defaultdict(list)
 
-    # Prepare the save path
-    save_path = cfg.train.save_path
-    if dist.is_main_process():
-        if os.path.isdir(save_path):
-            shutil.rmtree(save_path)
-        os.makedirs(save_path)
     if dist.is_enabled():
         torch.distributed.barrier()
 
@@ -396,17 +439,21 @@ def train(cfg):
             optimizer,
             T_max=cfg.train.num_train_steps,
             eta_min=cfg.train.final_learning_rate,
+            last_epoch=last_epoch if last_epoch > 0 else -1,
         )
     else:
         scheduler = None
 
     # Start the training loop
+    step_offset = last_epoch + 1 if last_epoch > 0 else 0
+
     pbar = tqdm(
         enumerate(train_loader), desc="Training", disable=not dist.is_main_process()
     )
 
     start_train_time = time.time()
     for i, batch in pbar:
+        global_step = i + step_offset
         batch_start_time = time.time()
         # Make the model in train mode
         digress.diffuser.train()
@@ -471,7 +518,7 @@ def train(cfg):
                 "train/learning_rate": lr,
                 "train/epoch_time": time.time() - batch_start_time,
                 "train/total_time": time.time() - start_train_time,
-                "step": i,
+                "step": global_step,
             }
 
             for k, v in epoch_metrics.items():
@@ -488,7 +535,7 @@ def train(cfg):
             scheduler.step()
 
         # Start the evaluation
-        if i % cfg.valid.num_eval_steps == 0:
+        if global_step % cfg.valid.num_eval_steps == 0:
             # Make the model in eval mode
             digress.diffuser.eval()
 
@@ -547,7 +594,7 @@ def train(cfg):
                         print(f"Evaluation Metrics: {eval_metrics}")
 
                         # Log evaluation metrics to wandb
-                        eval_log = {"step": i}
+                        eval_log = {"step": global_step}
                         for k, v in eval_metrics.items():
                             eval_log[f"eval/{k}"] = v
 
@@ -555,30 +602,32 @@ def train(cfg):
 
                         # Save the valid smiles
                         with open(
-                            os.path.join(cfg.train.save_path, f"valid_smiles_{i}.txt"),
+                            os.path.join(
+                                cfg.train.save_path, f"valid_smiles_{global_step}.txt"
+                            ),
                             "w",
                         ) as f:
                             for s in valid_smiles:
                                 f.write(f"{s}\n")
 
         # Save the model
-        if (i % cfg.train.save_steps == 0) & (i > 0):
+        if (global_step % cfg.train.save_steps == 0) & (global_step > 0):
             if cfg.train.get("distributed") == "pipeline":
                 save_checkpoint(
                     digress.diffuser,
                     optimizer,
-                    os.path.join(cfg.train.save_path, f"checkpoint_{i}"),
+                    os.path.join(cfg.train.save_path, f"checkpoint_{global_step}"),
                 )
 
             else:
                 if dist.is_main_process():
                     torch.save(
                         digress.diffuser.state_dict(),
-                        os.path.join(cfg.train.save_path, f"{i}.pt"),
+                        os.path.join(cfg.train.save_path, f"{global_step}.pt"),
                     )
 
         # Stop the training when the desired number of steps has been reached
-        if i >= cfg.train.num_train_steps:
+        if global_step >= cfg.train.num_train_steps:
             break
 
     # Save the final model
