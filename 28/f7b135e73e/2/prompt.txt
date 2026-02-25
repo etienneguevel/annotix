@@ -1,0 +1,140 @@
+Implement the following plan:
+
+# Plan: Advance LR Scheduler and Train Loader on Resume
+
+## Context
+
+The training script was updated to detect existing checkpoints and resume from them (loading model weights via `load_pretrained`). However two key components are not yet restored:
+
+1. **LR Scheduler** — `CosineAnnealingLR` always starts from step 0, so the LR jumps back to the initial value instead of continuing the cosine curve from where training stopped.
+2. **DataLoader sampler** — `InfiniteSampler` is created with `advance=0`, so the shuffled sequence restarts from the beginning, replaying already-seen batches.
+
+Additionally, the training loop logs and saves using the local counter `i` (restarts from 0), causing incorrect step numbers in wandb, duplicate checkpoint filenames, and a wrong termination condition.
+
+## Critical File
+
+`annotix_ml/graphtransf/train/train.py`
+
+## Implementation Plan
+
+### 1. Early checkpoint scan (before DataLoader creation, after line 277)
+
+`last_epoch` is currently computed inside the checkpoint loading block (line 314), which is **after** the DataLoader is created. We need it earlier for the sampler `advance`.
+
+Add a read-only scan before line 278:
+
+```python
+# Early scan to compute last_epoch for sampler advance
+save_path = cfg.train.save_path
+last_epoch = 0
+if os.path.isdir(save_path):
+    _early_ckpts = [f for f in os.listdir(save_path) if f.endswith(".pt")]
+    if _early_ckpts:
+        _last_ckpt = sorted(_early_ckpts, key=lambda y: int(y.split(".")[0]))[-1]
+        last_epoch = int(_last_ckpt.split(".")[0])
+```
+
+The existing checkpoint block (lines 312–352) still runs, resets `last_epoch` to the same value, and loads the model. No conflict.
+
+### 2. Set sampler advance (replace line 282 `advance = 0`)
+
+Checkpoint `"{K}.pt"` is saved **after** training step `i=K` (inclusive). So `K+1` batches have been consumed from each rank's sampler stream.
+
+```python
+advance = (last_epoch + 1) * cfg.train.batch_size if last_epoch > 0 else 0
+```
+
+`last_epoch == 0` always means fresh start (checkpoints are only saved at `i > 0`), so `advance=0` for fresh start is correct.
+
+### 3. Fast-forward the LR scheduler (replace lines 421–429)
+
+`CosineAnnealingLR.__init__` calls `step()` once internally, advancing the internal counter by 1.
+
+- Fresh start (`last_epoch=0`): pass `last_epoch=-1` → internal becomes 0 (base LR). Same as current default.
+- Resume (`last_epoch=K`): pass `last_epoch=K` → internal becomes `K+1`, exactly matching the original training state before the next step.
+
+```python
+if cfg.train.learning_rate_schedule == "cosine":
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=cfg.train.num_train_steps,
+        eta_min=cfg.train.final_learning_rate,
+        last_epoch=last_epoch if last_epoch > 0 else -1,
+    )
+else:
+    scheduler = None
+```
+
+### 4. Global step tracking in the training loop
+
+Define `step_offset` once, **before** the `pbar` / `for` loop:
+
+```python
+step_offset = last_epoch + 1 if last_epoch > 0 else 0
+```
+
+Inside the loop (at the top of each iteration body), add:
+
+```python
+global_step = i + step_offset
+```
+
+Then replace every use of bare `i` that represents the global training step:
+
+| Location | Old | New |
+|---|---|---|
+| `train_log["step"]` (line 503) | `"step": i` | `"step": global_step` |
+| `eval_log["step"]` (line 578) | `"step": i` | `"step": global_step` |
+| valid_smiles filename (line 586) | `valid_smiles_{i}.txt` | `valid_smiles_{global_step}.txt` |
+| eval trigger (line 519) | `i % cfg.valid.num_eval_steps == 0` | `global_step % cfg.valid.num_eval_steps == 0` |
+| save condition (line 593) | `(i % cfg.train.save_steps == 0) & (i > 0)` | `(global_step % cfg.train.save_steps == 0) & (global_step > 0)` |
+| save filename (line 605) | `f"{i}.pt"` | `f"{global_step}.pt"` |
+| break condition (line 609) | `i >= cfg.train.num_train_steps` | `global_step >= cfg.train.num_train_steps` |
+
+The loop variable `i` (enumerate counter) is left untouched; only uses that represent the global step are replaced.
+
+## Correctness Check
+
+Fresh start (`last_epoch=0`):
+- `advance=0` ✓
+- `scheduler_last_epoch=-1` → LR = base_lr at step 0 ✓
+- `step_offset=0`, `global_step=i` → identical to current behaviour ✓
+
+Resume from checkpoint `"1000.pt"` (`last_epoch=1000`, `num_train_steps=40000`):
+- `advance=1001*batch_size` → sampler skips the 1001 already-consumed batches ✓
+- `scheduler_last_epoch=1000` → internal state = 1001; first `step()` → 1002 (matches original) ✓
+- `step_offset=1001`, first `global_step=1001`; break at `global_step>=40000` → runs 38999 more iterations; total = 1001+38999 = 40000 ✓
+- Saves as `"2000.pt"`, `"3000.pt"`, … (no collision with existing `"1000.pt"`) ✓
+
+## Verification
+
+Run training without checkpoints, let it save at step 1000 (if `save_steps=1000`), kill it, then resume:
+```bash
+python -m annotix_ml.graphtransf.train.train --config configs/experiments/baseline.yaml
+# After "1000.pt" is saved, kill and restart:
+python -m annotix_ml.graphtransf.train.train --config configs/experiments/baseline.yaml
+```
+Check:
+- Console prints "Checkpoints found, loading from …"
+- wandb `step` starts at 1001 (not 0)
+- LR in wandb continues the cosine curve (not reset to base LR)
+- No repeated batches visible (or verify via a debug print of the first sampled index)
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl
+
+---
+
+Is there a way to sync back to the wandb logs that were generated in the previous failed run ?
+
+---
+
+yes
+
+---
+
+[Request interrupted by user]
+
+---
+
+launching the newly written train file makes it stuck after the printing at line 413. Moreover new jobs are created on main rank which are as many as the number of processes launched with torchrun

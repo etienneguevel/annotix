@@ -3,10 +3,32 @@
   "checkpoint_id": "28f7b135e73e",
   "strategy": "manual-commit",
   "branch": "spec2mol",
-  "checkpoints_count": 1,
+  "checkpoints_count": 3,
   "files_touched": [
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".gemini/settings.json",
+    ".vscode/settings.json",
+    "CLAUDE.md",
     "annotix_ml/graphtransf/train/memory_tracker.py",
-    "annotix_ml/graphtransf/train/train.py"
+    "annotix_ml/graphtransf/train/train.py",
+    "annotix_ml/submit/__init__.py",
+    "bench/test_gnn.py",
+    "bench/utils.py",
+    "notebooks/Kaempferol.ms",
+    "notebooks/explore_msg.ipynb",
+    "notebooks/liste_ions_Annotix.mgf",
+    "notebooks/qm9.ipynb",
+    "notebooks/sirius.ipynb",
+    "notebooks/test.ipynb",
+    "notebooks/test_digress.ipynb",
+    "profiling/DGX_3414025.1771406941775082369.pt.trace.json",
+    "profiling/DGX_3414028.1771406943238638142.pt.trace.json",
+    "profiling/DGX_3414030.1771406940283257045.pt.trace.json",
+    "profiling/DGX_3414031.1771406941823820683.pt.trace.json",
+    "profiling/titan_1194959.1771496149584111501.pt.trace.json",
+    "profiling/titan_1194960.1771496149469871836.pt.trace.json",
+    "test.py"
   ],
   "sessions": [
     {
@@ -22,13 +44,20 @@
       "context": "/28/f7b135e73e/1/context.md",
       "content_hash": "/28/f7b135e73e/1/content_hash.txt",
       "prompt": "/28/f7b135e73e/1/prompt.txt"
+    },
+    {
+      "metadata": "/28/f7b135e73e/2/metadata.json",
+      "transcript": "/28/f7b135e73e/2/full.jsonl",
+      "context": "/28/f7b135e73e/2/context.md",
+      "content_hash": "/28/f7b135e73e/2/content_hash.txt",
+      "prompt": "/28/f7b135e73e/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 8204,
-    "cache_creation_tokens": 154965,
-    "cache_read_tokens": 1403705,
-    "output_tokens": 275,
-    "api_call_count": 22
+    "input_tokens": 8247,
+    "cache_creation_tokens": 233363,
+    "cache_read_tokens": 3153139,
+    "output_tokens": 674,
+    "api_call_count": 57
   }
 }
