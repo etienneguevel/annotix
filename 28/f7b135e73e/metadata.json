@@ -3,13 +3,19 @@
   "checkpoint_id": "28f7b135e73e",
   "strategy": "manual-commit",
   "branch": "spec2mol",
-  "checkpoints_count": 3,
+  "checkpoints_count": 4,
   "files_touched": [
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".gemini/settings.json",
     ".vscode/settings.json",
     "CLAUDE.md",
+    "annotix_ml/graphtransf/data/atoms_data.py",
+    "annotix_ml/graphtransf/data/data_utils.py",
+    "annotix_ml/graphtransf/data/datacollator.py",
+    "annotix_ml/graphtransf/data/dataset.py",
+    "annotix_ml/graphtransf/data/loaders.py",
+    "annotix_ml/graphtransf/data/samplers.py",
     "annotix_ml/graphtransf/train/memory_tracker.py",
     "annotix_ml/graphtransf/train/train.py",
     "annotix_ml/submit/__init__.py",
@@ -51,13 +57,20 @@
       "context": "/28/f7b135e73e/2/context.md",
       "content_hash": "/28/f7b135e73e/2/content_hash.txt",
       "prompt": "/28/f7b135e73e/2/prompt.txt"
+    },
+    {
+      "metadata": "/28/f7b135e73e/3/metadata.json",
+      "transcript": "/28/f7b135e73e/3/full.jsonl",
+      "context": "/28/f7b135e73e/3/context.md",
+      "content_hash": "/28/f7b135e73e/3/content_hash.txt",
+      "prompt": "/28/f7b135e73e/3/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 8247,
-    "cache_creation_tokens": 233363,
-    "cache_read_tokens": 3153139,
-    "output_tokens": 674,
-    "api_call_count": 57
+    "input_tokens": 8262,
+    "cache_creation_tokens": 319638,
+    "cache_read_tokens": 4136613,
+    "output_tokens": 2214,
+    "api_call_count": 72
   }
 }

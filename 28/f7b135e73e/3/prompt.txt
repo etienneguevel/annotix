@@ -1,0 +1,190 @@
+Implement the following plan:
+
+# Refactoring Plan: Merge spec2mol into graphtransf + Reorganize Package
+
+## Context
+
+The `spec2mol/` package is ~90% duplicated from `graphtransf/` (training loop, dataset, collator, `smilesToGraph`). Data modules are scattered across `graphtransf/data/` and `spec2mol/data/`. This refactoring centralizes data, dissolves `spec2mol/`, and lifts training to a top-level module. **`spectraencoder/` is NOT touched.**
+
+**Target structure:**
+```
+annotix_ml/
+├── data/            # merged from graphtransf/data + spec2mol/data
+├── distributed/     # unchanged
+├── graphtransf/     # arch + layers + math + models (includes spec2mol arch)
+│   ├── arch/        # digress_meta_arch.py + spec2mol_meta_arch.py
+│   ├── layers/
+│   ├── math/        # + spec2mol_extra_features.py
+│   ├── models/
+│   └── test_utils.py
+├── spectraencoder/  # UNCHANGED (model/, data/, utils.py all stay)
+├── train/           # train_digress.py, train_spec2mol.py, setup.py, generate_molecules.py
+```
+
+---
+
+## Phase 1: Create `annotix_ml/data/` (move graphtransf + spec2mol data)
+
+### 1.1 File moves
+
+| Source | Destination |
+|--------|-------------|
+| `graphtransf/data/atoms_data.py` | `data/atoms_data.py` |
+| `graphtransf/data/data_utils.py` | `data/data_utils.py` |
+| `graphtransf/data/datacollator.py` | `data/datacollator.py` |
+| `graphtransf/data/dataset.py` | `data/dataset.py` |
+| `graphtransf/data/loaders.py` | `data/loaders.py` |
+| `graphtransf/data/samplers.py` | `data/samplers.py` |
+| `spec2mol/data/datacollator.py` | `data/spec_datacollator.py` |
+| `spec2mol/data/dataset.py` | `data/spec_dataset.py` |
+
+Create `data/__init__.py` (empty).
+
+### 1.2 Deduplicate shared code
+
+Extract from `GraphDatasetFromSMILEs` and `GraphSpecDataset` into `data/data_utils.py`:
+- `smiles_to_graph(smiles, valid_elements) -> tuple | None` (standalone function)
+- Move `_extract_atoms_from_smiles()` into `data/dataset.py` only; have `data/spec_dataset.py` import it from there
+
+Both dataset classes then call `smiles_to_graph(sm, self.valid_elements)` instead of `self.smilesToGraph(sm)`. Keep `GraphDatasetFromSMILEs.graphToSmiles()` as a thin wrapper.
+
+### 1.3 Fix internal imports in moved files
+
+- `data/data_utils.py`: `from annotix_ml.graphtransf.data.atoms_data` → `from annotix_ml.data.atoms_data`
+- `data/dataset.py`: `from annotix_ml.graphtransf.data.atoms_data` → `from annotix_ml.data.atoms_data`
+- `data/loaders.py`: `from annotix_ml.graphtransf.data.dataset` → `from annotix_ml.data.dataset`, same for `data_utils`
+- `data/spec_dataset.py`: `from annotix_ml.graphtransf.data.atoms_data` → `from annotix_ml.data.atoms_data` (imports from `annotix_ml.spectraencoder.data.*` stay as-is since spectraencoder is untouched)
+- `data/spec_datacollator.py`: imports from `annotix_ml.spectraencoder.data.featurizers` stay as-is
+
+### 1.4 Update all consumer imports
+
+**Source files** (prefix `annotix_ml/`):
+- `graphtransf/arch/digress_meta_arch.py` — atoms_data, data_utils → `annotix_ml.data.*`
+- `graphtransf/layers/attention.py` — mask_any_tensor → `annotix_ml.data.data_utils`
+- `graphtransf/layers/embeddings.py` — mask_any_tensor → `annotix_ml.data.data_utils`
+- `graphtransf/layers/ffn.py` — mask_any_tensor → `annotix_ml.data.data_utils`
+- `graphtransf/math/losses.py` — mask_any_tensor → `annotix_ml.data.data_utils`
+- `graphtransf/math/extra_features.py` — atoms_data, data_utils → `annotix_ml.data.*`
+- `graphtransf/generate_molecules.py` — loaders, data_utils → `annotix_ml.data.*`
+- `graphtransf/train/train.py` — datacollator, data_utils, atoms_data, loaders, samplers → `annotix_ml.data.*`
+- `spec2mol/train.py` — atoms_data, data_utils, samplers → `annotix_ml.data.*`; spec2mol data → `annotix_ml.data.spec_*`
+
+**Test files** (prefix `tests/`):
+- `graphtransf/data/test_datacollator.py` — datacollator, dataset → `annotix_ml.data.*`
+- `graphtransf/data/test_dataset.py` — dataset, atoms_data → `annotix_ml.data.*`
+- `graphtransf/data/test_data_utils.py` — atoms_data, data_utils → `annotix_ml.data.*`
+- `graphtransf/arch/test_digress_meta_arch.py` — atoms_data, dataset → `annotix_ml.data.*`
+- `graphtransf/math/test_extra_features.py` — atoms_data → `annotix_ml.data.atoms_data`
+- `graphtransf/models/test_gnn.py` — atoms_data → `annotix_ml.data.atoms_data`
+- `spec2mol/arch/test_spec2mol_meta_arch.py` — atoms_data, spec_dataset, spec_datacollator → `annotix_ml.data.*`
+- `spec2mol/data/test_datacollator.py` — spec_dataset, spec_datacollator, atoms_data → `annotix_ml.data.*`
+- `spec2mol/data/test_dataset.py` — spec_dataset, atoms_data → `annotix_ml.data.*`
+- `spec2mol/test_extra_features.py` — spec_dataset, spec_datacollator → `annotix_ml.data.*`
+
+**Other:** `test.py`, `bench/test_gnn.py`, 5 notebooks (lower priority)
+
+### 1.5 Delete old data directories
+
+- Delete `annotix_ml/graphtransf/data/` entirely
+- Delete `annotix_ml/spec2mol/data/` entirely
+
+**Checkpoint: `pytest tests/` + `pre-commit run --all-files`**
+
+---
+
+## Phase 2: Move spec2mol arch/math into graphtransf
+
+### 2.1 File moves
+
+| Source | Destination |
+|--------|-------------|
+| `spec2mol/spec2mol_meta_arch.py` | `graphtransf/arch/spec2mol_meta_arch.py` |
+| `spec2mol/extra_features.py` | `graphtransf/math/spec2mol_extra_features.py` |
+
+### 2.2 Import changes in moved files
+
+- `spec2mol_meta_arch.py`: `from annotix_ml.spec2mol.extra_features` → `from annotix_ml.graphtransf.math.spec2mol_extra_features`
+- No other changes (DigressMetaArch + SpectraEncoder imports stay the same)
+
+### 2.3 Update consumers
+
+- `spec2mol/train.py`: `from annotix_ml.spec2mol.spec2mol_meta_arch` → `from annotix_ml.graphtransf.arch.spec2mol_meta_arch`
+- `tests/spec2mol/arch/test_spec2mol_meta_arch.py`: same
+- `tests/spec2mol/test_extra_features.py`: `from annotix_ml.spec2mol.extra_features` → `from annotix_ml.graphtransf.math.spec2mol_extra_features`
+
+**Checkpoint: `pytest tests/`**
+
+---
+
+## Phase 3: Create `annotix_ml/train/` (move training code)
+
+### 3.1 File moves
+
+| Source | Destination |
+|--------|-------------|
+| `graphtransf/train/setup.py` | `train/setup.py` |
+| `graphtransf/train/train.py` | `train/train_digress.py` |
+| `spec2mol/train.py` | `train/train_spec2mol.py` |
+| `graphtransf/generate_molecules.py` | `train/generate_molecules.py` |
+
+Create `train/__init__.py` (empty).
+
+### 3.2 Import changes in moved files
+
+**`train/train_digress.py`:**
+- `from annotix_ml.graphtransf.train.setup` → `from annotix_ml.train.setup`
+- All `graphtransf.data.*` already updated in Phase 1
+
+**`train/train_spec2mol.py`:**
+- `from annotix_ml.graphtransf.train.train import get_args` → `from annotix_ml.train.train_digress import get_args`
+- `from annotix_ml.graphtransf.train.setup` → `from annotix_ml.train.setup`
+- `from annotix_ml.spec2mol.spec2mol_meta_arch` → `from annotix_ml.graphtransf.arch.spec2mol_meta_arch` (already done in Phase 2)
+- All data imports already updated in Phase 1
+
+**`train/generate_molecules.py`:**
+- Data imports already updated in Phase 1
+
+### 3.3 Delete old train directories
+
+- Delete `annotix_ml/graphtransf/train/` entirely
+- Delete `annotix_ml/graphtransf/generate_molecules.py`
+
+**Checkpoint: `pytest tests/`**
+
+---
+
+## Phase 4: Clean up
+
+### 4.1 Delete `spec2mol/` package entirely
+
+After Phases 1-3, all code has been moved out. Delete `annotix_ml/spec2mol/` entirely.
+
+### 4.2 Update `CLAUDE.md`
+
+Update commands:
+- `python -m annotix_ml.graphtransf.train.train` → `python -m annotix_ml.train.train_digress`
+- `python -m annotix_ml.spec2mol.train` → `python -m annotix_ml.train.train_spec2mol`
+- `python -m annotix_ml.graphtransf.generate_molecules` → `python -m annotix_ml.train.generate_molecules`
+- Update architecture section to reflect new package structure
+
+---
+
+## Verification
+
+1. `pytest tests/` — all tests pass
+2. `pre-commit run --all-files` — linting passes
+3. Dry-run: `python -c "from annotix_ml.train.train_digress import main"`
+4. Dry-run: `python -c "from annotix_ml.train.train_spec2mol import main"`
+5. Dry-run: `python -c "from annotix_ml.graphtransf.arch.spec2mol_meta_arch import Spec2MolMetaArch"`
+6. Check notebooks still import correctly (manual)
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl
+
+---
+
+[Request interrupted by user]
+
+---
+
+continue
