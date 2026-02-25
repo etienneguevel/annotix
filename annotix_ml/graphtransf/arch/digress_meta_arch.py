@@ -290,7 +290,6 @@ class DigressMetaArch:
         edges: torch.Tensor,
         mask: torch.Tensor,
         t: torch.Tensor,
-        **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute extra node and global features for the current graph state.
@@ -300,7 +299,6 @@ class DigressMetaArch:
             edges (torch.Tensor): Edge features tensor of shape (bs, n, n, nedges).
             mask (torch.Tensor): Mask tensor of shape (bs, n).
             t (torch.Tensor): Timestep tensor of shape (bs, 1).
-            **kwargs: Extra arguments for subclasses (e.g. spectral features).
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -374,7 +372,7 @@ class DigressMetaArch:
         edges: torch.Tensor,
         mask: torch.Tensor,
         t: torch.Tensor | None = None,
-        **kwargs,
+        *args,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run the forward pass: noise the input batch, then predict the clean graph.
@@ -386,7 +384,7 @@ class DigressMetaArch:
             edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
             mask (torch.Tensor): Mask tensor of shape (bs, n).
             t (torch.Tensor | None): Optional timestep tensor.
-            **kwargs: Extra arguments passed to compute_extra_features.
+            *args: Extra arguments passed to compute_extra_features.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -399,7 +397,7 @@ class DigressMetaArch:
                 # Only the first stage needs the extra features; non-first stages
                 # receive intermediate activations from the previous stage via P2P.
                 pos_emb, y = self.compute_extra_features(
-                    nodes, edges, mask, t, **kwargs
+                    nodes, edges, mask, t, *args
                 )  # (bs, node_features), (bs, global_features)
                 input_args = (edges, mask, y, pos_emb, nodes)
                 out = self.eval_schedule.step(*input_args)
@@ -416,7 +414,7 @@ class DigressMetaArch:
         # no gradient sync is needed.
         else:
             pos_emb, y = self.compute_extra_features(
-                nodes, edges, mask, t, **kwargs
+                nodes, edges, mask, t, *args
             )  # (bs, node_features), (bs, global_features)
             out = self.diffuser(edges, mask, y, pos_emb, nodes)
             pN, pE, *_ = out
@@ -431,7 +429,7 @@ class DigressMetaArch:
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
-        **kwargs,
+        *args,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run the forward pass: noise the input batch, then predict the clean graph.
@@ -442,7 +440,7 @@ class DigressMetaArch:
             nodes (torch.Tensor): Node features of shape (bs, n, natoms).
             edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
             mask (torch.Tensor): Mask tensor of shape (bs, n).
-            **kwargs: Extra arguments passed to compute_extra_features.
+            *args: Extra arguments passed to compute_extra_features.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -461,7 +459,7 @@ class DigressMetaArch:
                 # non-first stages receive intermediate activations via P2P.
                 N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
                 pos_emb, y = self.compute_extra_features(
-                    N_noised, E_noised, mask, sampled_t, **kwargs
+                    N_noised, E_noised, mask, sampled_t, *args
                 )  # (bs, node_features), (bs, global_features)
                 input_args = (E_noised, mask, y, pos_emb, N_noised)
                 out = self.train_schedule.step(*input_args)
@@ -480,7 +478,7 @@ class DigressMetaArch:
             # triggers the all-reduce gradient synchronisation across ranks.
             N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
             pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t, **kwargs
+                N_noised, E_noised, mask, sampled_t, *args
             )  # (bs, node_features), (bs, global_features)
             out = self.train_model(E_noised, mask, y, pos_emb, N_noised)
             pN, pE, *_ = out
@@ -491,7 +489,7 @@ class DigressMetaArch:
             # No distributed training
             N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
             pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t, **kwargs
+                N_noised, E_noised, mask, sampled_t, *args
             )  # (bs, node_features), (bs, global_features)
             input_args = (E_noised, mask, y, pos_emb, N_noised)
             out = self.diffuser(*input_args)
@@ -509,10 +507,10 @@ class DigressMetaArch:
         self,
         num_samples: int | torch.Tensor,
         max_nodes: int,
-        min_nodes: int = 1,
+        min_nodes: int = 6,
         progress_bar=False,
         num_attempts: int = 3,
-        **kwargs,
+        *args,
     ):
         """
         Generate new graphs using the reverse diffusion process.
@@ -533,7 +531,7 @@ class DigressMetaArch:
             min_nodes (int, optional): Minimum number of nodes for the generated graphs. Defaults to 1.
             progress_bar (bool, optional): Whether to show a progress bar during denoising. Defaults to False.
             num_attempts (int, optional): Number of attempts to generate graphs (to handle potential LinAlgError). Defaults to 3.
-            **kwargs: Extra arguments passed to compute_extra_features (e.g. conditioning spectra).
+            *args: Extra arguments passed to compute_extra_features (e.g. conditioning spectra).
 
         Raises:
             LinAlgError: If generation fails after all attempts due to numerical instability.
@@ -623,7 +621,7 @@ class DigressMetaArch:
                     )  # bs, 1
 
                     # Forward pass — all ranks must call this to drive th   e pipeline.
-                    pN, pE = self.forward(N, E, mask, t_tensor, **kwargs)
+                    pN, pE = self.forward(N, E, mask, t_tensor, *args)
 
                     # Only the last pipeline rank gets valid predictions.
                     if pN is not None and pE is not None:

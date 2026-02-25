@@ -39,6 +39,21 @@ def MCES_distance(smile1: str, smile2: str) -> int:
     return mces_distance
 
 
+def compute_MCES_distance(pred_smiles: list[str], true_smiles: list[str]) -> list[int]:
+    mces = []
+    for p_s, t_s in zip(pred_smiles, true_smiles):
+        if p_s is not None and t_s is not None:
+            try:
+                val = MCES_distance(p_s, t_s)
+                mces.append(val)
+            except Exception:
+                mces.append(-1)
+        else:
+            mces.append(-1)
+
+    return mces
+
+
 def mol_to_fingerprint(m: Chem.Mol, radius: int = 3, nbits: int = 2048):
     """
     Convert a RDKit molecule object to a numpy Morgan fingerprint.
@@ -81,6 +96,8 @@ def tanimoto_sim(smile1: str, smile2: str) -> float:
     # Compute the tanimoto similarity
     intersection = (fp1 & fp2).sum(-1)
     union = (fp1 | fp2).sum(-1)
+    if union == 0:
+        return 0.0
     tanimoto = intersection / union
 
     return tanimoto
@@ -119,7 +136,9 @@ def compute_tanimoto_similarity(
                 sim = tanimoto_sim(p_s, t_s)
                 tanimoto_sims.append(sim)
             except Exception:
-                pass
+                tanimoto_sims.append(0.0)
+        else:
+            tanimoto_sims.append(0.0)
     return tanimoto_sims
 
 

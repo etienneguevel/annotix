@@ -12,8 +12,13 @@ from annotix_ml.data.data_utils import (
     batch_graph_to_smiles,
     batch_graph_to_smiles_digress,
 )
-from annotix_ml.graphtransf.arch import DigressMetaArch
-from annotix_ml.graphtransf.math.metrics import compute_metrics
+from annotix_ml.graphtransf.arch import DigressMetaArch, Spec2MolMetaArch
+from annotix_ml.graphtransf.math.metrics import (
+    compute_MCES_distance,
+    compute_metrics,
+    compute_tanimoto_similarity,
+    compute_validity,
+)
 
 
 def do_eval(
@@ -128,6 +133,30 @@ def do_eval(
     return final_metrics
 
 
+def allreduce_eval_metrics(
+    eval_metrics: dict[str, float],
+) -> dict[str, float]:
+    """Average eval metrics across all distributed ranks via all_gather_object."""
+    if not dist.is_enabled() or not eval_metrics:
+        return eval_metrics
+
+    world_size = dist.get_global_size()
+    all_metrics = [None] * world_size
+    torch.distributed.all_gather_object(all_metrics, eval_metrics)
+
+    # Merge: for each key, average over ranks that reported it
+    all_keys: set[str] = set()
+    for m in all_metrics:
+        all_keys.update(m.keys())
+
+    result = {}
+    for k in all_keys:
+        values = [m[k] for m in all_metrics if k in m]
+        result[k] = sum(values) / len(values)
+
+    return result
+
+
 def generate_samples(
     model: DigressMetaArch,
     num_samples: int,
@@ -136,8 +165,9 @@ def generate_samples(
 ) -> tuple[float, float, list[str]]:
     # Generate the graphs
     batch_size = min(num_samples, batch_size)
-
     print(f"Generating {num_samples} graphs in batches of {batch_size}...")
+
+    # Init the lists
     all_gen_smiles = []
     all_gen_smiles_digress = []
     samples_generated = 0
@@ -191,3 +221,68 @@ def generate_samples(
     )
 
     return validity, validity_digress, valid_smiles
+
+
+def generate_samples_from_spec(
+    model: Spec2MolMetaArch,
+    num_samples: int,
+    eval_dataloader: DataLoader,
+):
+    # Init the lists
+    metrics = defaultdict(list)
+    samples_generated = 0
+
+    # Make the eval loader as iterable
+    iter_loader = iter(eval_dataloader)
+
+    while samples_generated < num_samples:
+        try:
+            batch = next(iter_loader)
+        except StopIteration:
+            print("Dataloader exhausted before reaching num_samples.")
+            break
+        # Unpack the batch
+        batch = [
+            k.to(model.device) if isinstance(k, torch.Tensor) else k for k in batch
+        ]
+        nodes, edges, mask, *spectra_args = batch
+        bs = nodes.shape[0]
+
+        # Generate the samples from the spectra_args
+        n = mask.sum(-1)  # Generate molecules with the same number of nodes as original
+
+        try:
+            gen_N, gen_E, gen_mask = model.generate(
+                num_samples=n, max_nodes=n.max(), progress_bar=True, *spectra_args
+            )
+
+            # Convert to smiles
+            gen_smiles = batch_graph_to_smiles(
+                gen_N, gen_E, gen_mask, model.valid_elements
+            )
+            metrics["all_gen_smiles"].extend(gen_smiles)
+
+            # Convert to smiles with Digress method
+            gen_smiles_digress = batch_graph_to_smiles_digress(
+                gen_N, gen_E, gen_mask, model.valid_elements
+            )
+            metrics["all_gen_smiles_digress"].extend(gen_smiles_digress)
+
+        except LinAlgError:
+            print("LinAlgError during generation batch, skipping batch...")
+            continue
+
+        # Compute the metrics between the generated samples and original molecules
+        true_smiles = batch_graph_to_smiles(nodes, edges, mask, model.valid_elements)
+        tan_sim = compute_tanimoto_similarity(gen_smiles, true_smiles)
+        mces = compute_MCES_distance(gen_smiles, true_smiles)
+
+        metrics["true_smiles"].extend(true_smiles)
+        metrics["validity"].extend(compute_validity(gen_smiles))
+        metrics["tan_sim"].extend(tan_sim)
+        metrics["mces"].extend(mces)
+
+        # Increase the counter of generated samples
+        samples_generated += bs
+
+    return metrics

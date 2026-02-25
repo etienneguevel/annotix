@@ -9,6 +9,7 @@ import wandb
 from omegaconf import OmegaConf
 from torch.linalg import LinAlgError
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import annotix_ml.distributed as dist
@@ -17,7 +18,7 @@ from annotix_ml.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import (
     compute_training_metrics,
 )
-from annotix_ml.train.eval import do_eval, generate_samples
+from annotix_ml.train.eval import do_eval, generate_samples, allreduce_eval_metrics
 from annotix_ml.train.setup import setup, setup_model_mode
 
 
@@ -153,11 +154,21 @@ def train(cfg):
         collate_fn=collate_fn,
         num_workers=cfg.train.num_workers,
     )
+    if cfg.train.get("distributed") == "data":
+        valid_sampler = DistributedSampler(
+            valid_dataset,
+            num_replicas=data_size,
+            rank=data_rank,
+            shuffle=False,
+        )
+    else:
+        valid_sampler = None
+
     valid_loader = DataLoader(
         valid_dataset,
         batch_size=cfg.valid.batch_size,
         collate_fn=collate_fn,
-        shuffle=False,
+        sampler=valid_sampler,
     )
 
     # Log model dimensions
@@ -338,6 +349,25 @@ def train(cfg):
         if scheduler is not None:
             scheduler.step()
 
+        # Save the model
+        if (global_step % cfg.train.save_steps == 0) & (global_step > 0):
+            if cfg.train.get("distributed") == "pipeline":
+                save_checkpoint(
+                    digress.diffuser,
+                    optimizer,
+                    os.path.join(cfg.train.save_path, f"checkpoint_{global_step}"),
+                )
+
+            else:
+                if dist.is_main_process():
+                    torch.save(
+                        {
+                            "model": digress.diffuser.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                        },
+                        os.path.join(cfg.train.save_path, f"{global_step}.pt"),
+                    )
+
         # Start the evaluation
         if global_step % cfg.valid.num_eval_steps == 0:
             # Make the model in eval mode
@@ -349,10 +379,14 @@ def train(cfg):
                     digress, valid_loader, device, cfg.valid.batch_size
                 )
 
+                if cfg.train.get("distributed") == "data":
+                    eval_metrics = allreduce_eval_metrics(eval_metrics)
+
                 # If DDP then we make each rank generates a part of the samples
                 if cfg.train.get("distributed") == "data":
                     world_size = dist.get_global_size()
                     samples_per_rank = max(1, cfg.valid.num_samples // world_size)
+
                 else:
                     samples_per_rank = cfg.valid.num_samples
 
@@ -416,25 +450,6 @@ def train(cfg):
                         ) as f:
                             for s in valid_smiles:
                                 f.write(f"{s}\n")
-
-        # Save the model
-        if (global_step % cfg.train.save_steps == 0) & (global_step > 0):
-            if cfg.train.get("distributed") == "pipeline":
-                save_checkpoint(
-                    digress.diffuser,
-                    optimizer,
-                    os.path.join(cfg.train.save_path, f"checkpoint_{global_step}"),
-                )
-
-            else:
-                if dist.is_main_process():
-                    torch.save(
-                        {
-                            "model": digress.diffuser.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                        },
-                        os.path.join(cfg.train.save_path, f"{global_step}.pt"),
-                    )
 
         # Stop the training when the desired number of steps has been reached
         if global_step >= cfg.train.num_train_steps:
