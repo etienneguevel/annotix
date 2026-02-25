@@ -181,7 +181,6 @@ def collateGraphSpec(batch: list[dict]) -> tuple:
     nodes = torch.stack(padded_nodes).to(torch.float32)
     edges = torch.stack(padded_edges).to(torch.float32)
     mask = torch.stack(node_masks)
-    smiles = [d["smiles"] for d in batch]
 
     return (
         nodes,
@@ -193,5 +192,4 @@ def collateGraphSpec(batch: list[dict]) -> tuple:
         spec_batch["ion_vec"],
         spec_batch["form_vec"],
         spec_batch["intens"],
-        smiles,
     )

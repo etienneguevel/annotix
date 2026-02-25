@@ -3,11 +3,9 @@ import os
 import time
 from argparse import ArgumentParser
 from collections import defaultdict
-from functools import partial
 
 import torch
 import wandb
-from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
 from omegaconf import OmegaConf
 from torch.linalg import LinAlgError
 from torch.utils.data import DataLoader
@@ -15,20 +13,12 @@ from tqdm import tqdm
 
 import annotix_ml.distributed as dist
 from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
-from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
-from annotix_ml.data.datacollator import collateGraph, collateGraphStatic
-from annotix_ml.data.data_utils import (
-    batch_graph_to_smiles,
-    batch_graph_to_smiles_digress,
-)
-from annotix_ml.data.atoms_data import TYPE_EDGES
-from annotix_ml.data.loaders import make_datasets
 from annotix_ml.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import (
-    compute_metrics,
     compute_training_metrics,
 )
-from annotix_ml.train.setup import setup
+from annotix_ml.train.eval import do_eval, generate_samples
+from annotix_ml.train.setup import setup, setup_model_mode
 
 
 def get_args():
@@ -45,183 +35,6 @@ def get_args():
     return parser.parse_args()
 
 
-def do_eval(
-    model: DigressMetaArch,
-    eval_loader: DataLoader,
-    device: torch.device,
-    expected_bs: int | None = None,
-) -> dict[str, float]:
-    DisableLog("rdApp.*")
-    metrics = defaultdict(list)
-    for batch in tqdm(
-        eval_loader, desc="evaluation", disable=not dist.is_main_process()
-    ):
-        # Move the elements to the device of interest
-        batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
-
-        # Unpack the elements
-        nodes, edges, mask = batch
-
-        # If last batch, then size will be < to the one planned by schedule
-        # To avoid error -> skip it when there is a schedule (ie pp)
-        if model.eval_schedule:
-            if nodes.shape[0] != expected_bs:
-                continue
-
-        # Noise the elements
-        nodes_noised, edges_noised, sampled_t = model.noiser(nodes, edges, mask)
-
-        # Compute the predictions
-        try:
-            pN, pE = model.forward(
-                nodes_noised, edges_noised, mask, sampled_t
-            )  # (bs, n, n_atoms), (bs, n, n, n_edges)
-        except LinAlgError:
-            continue
-
-        # Non-last ranks in pipeline parallelism get None outputs;
-        # they must keep looping so every rank calls schedule.step().
-        if pN is None or pE is None:
-            continue
-
-        # Make the prediction graph
-        N_ = torch.nn.functional.one_hot(
-            pN.argmax(-1), num_classes=pN.shape[-1]
-        )  # (bs, n, n_atoms)
-        E_ = torch.nn.functional.one_hot(
-            pE.argmax(-1), num_classes=pE.shape[-1]
-        )  # (bs, n, n, n_edges)
-
-        # Convert the graph to smiles
-        true_smiles = batch_graph_to_smiles(
-            nodes, edges, mask, model.valid_elements
-        )  # (bs,)
-        pred_smiles = batch_graph_to_smiles(N_, E_, mask, model.valid_elements)  # (bs,)
-
-        # Compute the metrics
-        batch_metrics = compute_metrics(
-            pred_smiles,
-            true_smiles,
-            pN,
-            pE,
-            nodes,
-            edges,
-            mask,
-        )
-
-        # Compute accuracy per node type
-        target_nodes = nodes.argmax(-1)
-        pred_nodes = pN.argmax(-1)
-        valid_mask = mask.bool()
-
-        target_nodes_flat = target_nodes[valid_mask]
-        pred_nodes_flat = pred_nodes[valid_mask]
-
-        for i, atom_type in enumerate(model.valid_elements):
-            atom_mask = target_nodes_flat == i
-            if atom_mask.sum() > 0:
-                acc = (pred_nodes_flat[atom_mask] == i).float().mean().item()
-                batch_metrics[f"accuracy_node_{atom_type}"] = [acc]
-
-        # Compute accuracy per edge type
-        target_edges = edges.argmax(-1)
-        pred_edges = pE.argmax(-1)
-        edge_mask = mask.unsqueeze(2) * mask.unsqueeze(1)
-        edge_mask = edge_mask.bool()
-
-        target_edges_flat = target_edges[edge_mask]
-        pred_edges_flat = pred_edges[edge_mask]
-
-        if len(target_edges_flat) > 0:
-            acc_edge = (pred_edges_flat == target_edges_flat).float().mean().item()
-            batch_metrics["accuracy_edge_global"] = [acc_edge]
-
-        for i, edge_type in enumerate(TYPE_EDGES):
-            edge_type_mask = target_edges_flat == i
-            if edge_type_mask.sum() > 0:
-                acc = (pred_edges_flat[edge_type_mask] == i).float().mean().item()
-                batch_metrics[f"accuracy_edge_{str(edge_type)}"] = [acc]
-
-        # Accumulate metrics
-        for k, v in batch_metrics.items():
-            metrics[k].extend(v)
-
-    # Average and print metrics
-    final_metrics = {}
-    for k, v in metrics.items():
-        if len(v) > 0:
-            final_metrics[k] = sum(v) / len(v)
-        else:
-            final_metrics[k] = 0.0
-
-    return final_metrics
-
-
-def generate_samples(
-    model: DigressMetaArch,
-    num_samples: int,
-    num_nodes_dist: torch.Tensor,
-    batch_size: int,
-) -> tuple[float, float, list[str]]:
-    # Generate the graphs
-    batch_size = max(num_samples, batch_size)
-
-    print(f"Generating {num_samples} graphs in batches of {batch_size}...")
-    all_gen_smiles = []
-    all_gen_smiles_digress = []
-    samples_generated = 0
-
-    while samples_generated < num_samples:
-        # Sample from the distribution
-        n = (
-            num_nodes_dist.unsqueeze(0)
-            .expand((batch_size, -1))
-            .multinomial(1)
-            .squeeze(-1)
-            + 1
-        )
-
-        try:
-            gen_N, gen_E, gen_mask = model.generate(
-                num_samples=n, max_nodes=n.max(), progress_bar=True
-            )
-
-            # Convert to smiles
-            gen_smiles = batch_graph_to_smiles(
-                gen_N, gen_E, gen_mask, model.valid_elements
-            )
-            all_gen_smiles.extend(gen_smiles)
-
-            # Convert to smiles with Digress method
-            gen_smiles_digress = batch_graph_to_smiles_digress(
-                gen_N, gen_E, gen_mask, model.valid_elements
-            )
-            all_gen_smiles_digress.extend(gen_smiles_digress)
-
-        except LinAlgError:
-            print("LinAlgError during generation batch, skipping batch...")
-            continue
-
-        samples_generated += batch_size
-
-    # Trim to exactly num_samples to avoid overshoot bias in validity metrics.
-    all_gen_smiles = all_gen_smiles[:num_samples]
-    all_gen_smiles_digress = all_gen_smiles_digress[:num_samples]
-
-    valid_smiles = [s for s in all_gen_smiles if s]
-    valid_smiles_digress = [s for s in all_gen_smiles_digress if s]
-
-    # Compute the validity
-    validity = len(valid_smiles) / len(all_gen_smiles) if all_gen_smiles else 0
-    validity_digress = (
-        len(valid_smiles_digress) / len(all_gen_smiles_digress)
-        if all_gen_smiles_digress
-        else 0
-    )
-
-    return validity, validity_digress, valid_smiles
-
-
 def train(cfg):
     # Select the device for the training
     device = (
@@ -233,36 +46,12 @@ def train(cfg):
     )
     print(f"Using device: {device}\n")
 
-    # Main rank builds or loads the cache first
-    train_dataset, valid_dataset = make_datasets(
-        cfg.dataset.data_path,
-        cfg.dataset.smile_column,
-        cfg.dataset.split_column,
-        cfg.dataset.val_tag,
-        verbose=True,
-        cache_path=cfg.dataset.get("cache_path"),
-        save_cache=dist.is_main_process(),
-    )
-
     # Determine the collation function and distributed data rank/size
     data_rank = dist.get_global_rank()
     data_size = dist.get_global_size()
 
-    if cfg.train.get("distributed") == "pipeline":
-        # In Pipeline Parallelism, all ranks in the same pipeline
-        # (which is the whole world here) must see the same data.
-        data_rank = 0
-        data_size = 1
-        print(
-            f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
-        )
-        # Derive n_max from the distribution of number of atoms
-        n_max = len(train_dataset.num_atoms_dist)
-        collate_fn = partial(collateGraphStatic, n_max=n_max)
-        print(f"Using static shape data collator with n_max={n_max}")
-
-    else:
-        collate_fn = collateGraph
+    # Make the training objects from the cfg mode (graphtransf or spec2mol)
+    train_dataset, valid_dataset, arch, collate_fn = setup_model_mode(cfg)
 
     # Prepare the save path & check if there is already some existing checkpoints
     save_path = cfg.train.save_path
@@ -288,7 +77,7 @@ def train(cfg):
         last_epoch = int(last_checkpoint.split(".")[0])
 
         print(f"Checkpoints found, loading from the weights at {checkpoint_path}.")
-        digress = DigressMetaArch.load_pretrained(
+        digress = arch.load_pretrained(
             cfg,
             device,
             checkpoint_path,
@@ -301,7 +90,7 @@ def train(cfg):
     else:
         # Define the model
         print("No checkpoints found, init from zero.")
-        digress = DigressMetaArch.init_from_cfg(
+        digress = arch.init_from_cfg(
             cfg,
             device,
             train_dataset.valid_elements,
@@ -417,10 +206,6 @@ def train(cfg):
     print(f"Max weight in dataset: {train_dataset.max_weight}")
     print("=" * 50 + "\n")
 
-    # Define the metrics
-    metrics = defaultdict(list)
-    train_metrics = defaultdict(list)
-
     # Setup for distributed training
     if cfg.train.get("distributed") is not None:
         example_batch = next(iter(train_loader))
@@ -457,6 +242,10 @@ def train(cfg):
     else:
         scheduler = None
 
+    # Define the metrics
+    metrics = defaultdict(list)
+    train_metrics = defaultdict(list)
+
     # Start the training loop
     step_offset = last_epoch + 1 if last_epoch > 0 else 0
 
@@ -485,31 +274,27 @@ def train(cfg):
 
         # Move the batch to the correct device
         batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
-        N, E, mask = batch
 
         # Do the forward and loss computation
         try:
-            pN, pE, loss = digress.forward_backward(N, E, mask)
+            p_nodes, p_edges, loss = digress.forward_backward(*batch)
             skip = torch.zeros(1, device=device)
+
         except LinAlgError:
             print("LinAlgError in forward or digress_loss")
-            pN, pE, loss = None, None, None
+            p_nodes, p_edges, loss = None, None, None
             skip = torch.ones(1, device=device)
 
         if dist.is_enabled():
             torch.distributed.all_reduce(skip, op=torch.distributed.ReduceOp.MAX)
+
         if skip.item():
             optimizer.zero_grad()
             continue
 
         # All-reduce loss scalar so the logged value is the global average (DDP only)
         loss_for_log = loss
-        if (
-            loss is not None
-            and dist.is_enabled()
-            and digress.train_model is not None
-            and digress.train_schedule is None
-        ):
+        if loss is not None and cfg.train.get("distributed") == "data":
             loss_for_log = loss.detach().clone()
             torch.distributed.all_reduce(
                 loss_for_log, op=torch.distributed.ReduceOp.AVG
@@ -517,8 +302,9 @@ def train(cfg):
 
         # If loss is None (on non-last ranks in PP), we skip logging
         if loss is not None:
+            nodes, edges, mask, *_ = batch
             epoch_metrics = compute_training_metrics(
-                pN, pE, N, E, mask, digress.valid_elements
+                p_nodes, p_edges, nodes, edges, mask, digress.valid_elements
             )
 
             for k, v in epoch_metrics.items():
@@ -543,7 +329,7 @@ def train(cfg):
                 train_log[f"train/{k}"] = v
 
             if dist.is_main_process():
-                wandb.log(train_log)
+                wandb.log(train_log, step=global_step)
 
         # Update the parameters
         optimizer.step()
@@ -563,11 +349,8 @@ def train(cfg):
                     digress, valid_loader, device, cfg.valid.batch_size
                 )
 
-                # In pipeline mode, all ranks generate together (eval_schedule handles
-                # distribution). In DDP mode, each rank generates its share then
-                # results are gathered. In non-distributed mode, all samples on one
-                # process.
-                if dist.is_enabled() and not digress.eval_schedule:
+                # If DDP then we make each rank generates a part of the samples
+                if cfg.train.get("distributed") == "data":
                     world_size = dist.get_global_size()
                     samples_per_rank = max(1, cfg.valid.num_samples // world_size)
                 else:
@@ -583,7 +366,7 @@ def train(cfg):
                 # In DDP mode, gather results from all ranks.
                 # all_reduce / all_gather_object act as implicit barriers, so no
                 # explicit barrier() is needed.
-                if dist.is_enabled() and not digress.eval_schedule:
+                if cfg.train.get("distributed") == "data":
                     validity_tensor = torch.tensor(
                         [validity, validity_digress], device=device
                     )
@@ -622,7 +405,7 @@ def train(cfg):
                                 smiles_table.add_data(s)
                             eval_log["eval/generated_smiles"] = smiles_table
 
-                        wandb.log(eval_log)
+                        wandb.log(eval_log, step=global_step)
 
                         # Save the valid smiles
                         with open(

@@ -449,7 +449,7 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
-        # Compute the output of the diffuser
+        # Compute the output of the diffuser, for pp we need to use the schedule
         if self.train_schedule:
             # Make the target -> need to stack to be splitted for mb
             target = torch.hstack(

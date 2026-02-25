@@ -5,8 +5,7 @@ from collections import defaultdict
 
 import torch
 import wandb
-from rdkit.RDLogger import DisableLog  # pyright: ignore[reportAttributeAccessIssue]
-from omegaconf import OmegaConf
+from rdkit.RDLogger import DisableLog
 from torch.linalg import LinAlgError
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -57,7 +56,6 @@ def do_eval(
             ion_vec,
             form_vec,
             intens,
-            smiles,
         ) = batch
 
         # If last batch, then size will be < to the one planned by schedule
@@ -214,16 +212,6 @@ def generate_samples(
 
 
 def train(cfg):
-    # Initialize wandb
-    if dist.is_main_process():
-        print(f"Logging with main rank as : {dist._MAIN_RANK}")
-
-        wandb.init(
-            project=cfg.run.project,
-            name=cfg.run.name,
-            config=OmegaConf.to_container(cfg, resolve=True),
-        )
-
     # Select the device for the training
     device = (
         torch.device("cuda")
@@ -406,7 +394,6 @@ def train(cfg):
             ion_vec,
             form_vec,
             intens,
-            smiles,
         ) = batch
 
         # Do the forward and loss computation
