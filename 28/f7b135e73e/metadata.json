@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.4",
+  "checkpoint_id": "28f7b135e73e",
+  "strategy": "manual-commit",
+  "branch": "spec2mol",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "annotix_ml/graphtransf/train/memory_tracker.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/28/f7b135e73e/0/metadata.json",
+      "transcript": "/28/f7b135e73e/0/full.jsonl",
+      "context": "/28/f7b135e73e/0/context.md",
+      "content_hash": "/28/f7b135e73e/0/content_hash.txt",
+      "prompt": "/28/f7b135e73e/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 4130,
+    "cache_creation_tokens": 82279,
+    "cache_read_tokens": 745230,
+    "output_tokens": 151,
+    "api_call_count": 11
+  }
+}

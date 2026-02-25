@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.4.4",
+  "checkpoint_id": "28f7b135e73e",
+  "session_id": "168b7a06-6044-47ae-968f-d92197d9686e",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-25T13:46:46.165061Z",
+  "branch": "spec2mol",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "annotix_ml/graphtransf/train/memory_tracker.py"
+  ],
+  "agent": "Claude Code",
+  "token_usage": {
+    "input_tokens": 4130,
+    "cache_creation_tokens": 82279,
+    "cache_read_tokens": 745230,
+    "output_tokens": 151,
+    "api_call_count": 11
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-25T13:46:45.532391Z",
+    "agent_lines": 0,
+    "human_added": 3397,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 3397,
+    "agent_percentage": 0
+  },
+  "transcript_path": ".claude/projects/-Users-etienneguevel-Documents-projects-annotix-all-annotix-ml/168b7a06-6044-47ae-968f-d92197d9686e.jsonl"
+}
