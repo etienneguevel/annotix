@@ -1,0 +1,101 @@
+Implement the following plan:
+
+# Plan: Distributed Validation with DistributedSampler + allreduce
+
+## Context
+
+Currently, every rank processes the **entire** validation set redundantly during eval. In DDP mode with N GPUs, this wastes N-1x compute on identical work. We want to shard the validation set across ranks using `DistributedSampler`, then aggregate metrics via collective operations.
+
+## Changes (3 files)
+
+### 1. `annotix_ml/train/eval.py` — Add `allreduce_eval_metrics()` helper
+
+Add a new function after `do_eval()` (after line 132):
+
+```python
+def allreduce_eval_metrics(
+    eval_metrics: dict[str, float],
+    device: torch.device,
+) -> dict[str, float]:
+    """Average eval metrics across all distributed ranks via all_gather_object."""
+    if not dist.is_enabled() or not eval_metrics:
+        return eval_metrics
+
+    world_size = dist.get_global_size()
+    all_metrics = [None] * world_size
+    torch.distributed.all_gather_object(all_metrics, eval_metrics)
+
+    # Merge: for each key, average over ranks that reported it
+    all_keys: set[str] = set()
+    for m in all_metrics:
+        all_keys.update(m.keys())
+
+    result = {}
+    for k in all_keys:
+        values = [m[k] for m in all_metrics if k in m]
+        result[k] = sum(values) / len(values)
+
+    return result
+```
+
+**Why `all_gather_object` instead of `all_reduce`?** Per-atom-type and per-edge-type metric keys (`accuracy_node_Br`, etc.) may differ across ranks if certain atom types only appear in one rank's shard. `all_gather_object` of dicts handles this naturally by averaging only over ranks that have each key. For ~20 floats every N steps, the overhead vs NCCL all_reduce is negligible.
+
+### 2. `annotix_ml/train/train.py` — Shard valid_loader + aggregate metrics
+
+**Add import** (line ~11):
+```python
+from torch.utils.data.distributed import DistributedSampler
+```
+
+**Update import** from eval (line ~20):
+```python
+from annotix_ml.train.eval import do_eval, generate_samples, allreduce_eval_metrics
+```
+
+**Replace valid_loader creation** (lines 156-161):
+```python
+if cfg.train.get("distributed") == "data":
+    valid_sampler = DistributedSampler(
+        valid_dataset, num_replicas=data_size, rank=data_rank, shuffle=False,
+    )
+else:
+    valid_sampler = None
+
+valid_loader = DataLoader(
+    valid_dataset,
+    batch_size=cfg.valid.batch_size,
+    collate_fn=collate_fn,
+    shuffle=False,
+    sampler=valid_sampler,
+)
+```
+
+**Add allreduce after `do_eval()`** (after line 369):
+```python
+if cfg.train.get("distributed") == "data":
+    eval_metrics = allreduce_eval_metrics(eval_metrics, device)
+```
+
+### 3. `annotix_ml/train/train_spec2mol.py` — Same pattern
+
+- Add `DistributedSampler` import
+- Add `allreduce_eval_metrics` import
+- Replace valid_loader creation (lines 143-148) with same conditional sampler pattern
+- Add allreduce after `do_eval()` call (after line 360)
+
+## What stays the same
+
+- `do_eval()` internals — no changes, stays distribution-agnostic
+- Pipeline parallelism — guarded by `cfg.train.get("distributed") == "data"`, pipeline mode unaffected
+- Single-GPU mode — `valid_sampler=None`, no allreduce, identical to current behavior
+- Generation sample distribution — already handled correctly in train.py (lines 371-407)
+- Wandb logging / SMILES saving — still only on main rank
+
+## Verification
+
+- Run single-GPU training: behavior unchanged (no sampler, no allreduce)
+- Run DDP training (`torchrun --nproc_per_node 2`): each rank processes half the validation set, metrics are aggregated, logged values should be similar to single-GPU (not identical due to DistributedSampler padding of at most `world_size - 1` samples)
+- Check wandb logs match between single-GPU and multi-GPU runs on same data
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/etienneguevel/.REDACTED.jsonl

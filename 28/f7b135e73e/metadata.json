@@ -3,7 +3,7 @@
   "checkpoint_id": "28f7b135e73e",
   "strategy": "manual-commit",
   "branch": "spec2mol",
-  "checkpoints_count": 5,
+  "checkpoints_count": 6,
   "files_touched": [
     ".claude/settings.json",
     ".claude/settings.local.json",
@@ -19,6 +19,9 @@
     "annotix_ml/graphtransf/train/memory_tracker.py",
     "annotix_ml/graphtransf/train/train.py",
     "annotix_ml/submit/__init__.py",
+    "annotix_ml/train/eval.py",
+    "annotix_ml/train/train.py",
+    "annotix_ml/train/train_spec2mol.py",
     "bench/test_gnn.py",
     "bench/utils.py",
     "notebooks/Kaempferol.ms",
@@ -71,13 +74,20 @@
       "context": "/28/f7b135e73e/4/context.md",
       "content_hash": "/28/f7b135e73e/4/content_hash.txt",
       "prompt": "/28/f7b135e73e/4/prompt.txt"
+    },
+    {
+      "metadata": "/28/f7b135e73e/5/metadata.json",
+      "transcript": "/28/f7b135e73e/5/full.jsonl",
+      "context": "/28/f7b135e73e/5/context.md",
+      "content_hash": "/28/f7b135e73e/5/content_hash.txt",
+      "prompt": "/28/f7b135e73e/5/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 8277,
-    "cache_creation_tokens": 370753,
-    "cache_read_tokens": 4588130,
-    "output_tokens": 2347,
-    "api_call_count": 83
+    "input_tokens": 8293,
+    "cache_creation_tokens": 398842,
+    "cache_read_tokens": 5144377,
+    "output_tokens": 2758,
+    "api_call_count": 97
   }
 }
