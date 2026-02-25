@@ -20,6 +20,7 @@ model:
     - laplacian_embedding
     - node_cycle
     - valence_features
+    - spectra_fingerprint
 
 spectra_encoder:
   form_embedder: pos-cos

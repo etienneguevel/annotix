@@ -1,3 +1,4 @@
+from traitlets import Any
 import os
 from typing import Literal
 
@@ -241,15 +242,42 @@ class DigressMetaArch:
         )
 
         saved = torch.load(model_path, weights_only=True)
-        # Support both the old format (bare state_dict) and the new format
-        # ({"model": state_dict, "optimizer": ...}).
-        if isinstance(saved, dict) and "model" in saved:
-            saved_model = saved["model"]
-        else:
-            saved_model = saved
-        model.diffuser.load_state_dict(saved_model)
+        # Unwrap the "checkpoint" envelope used by the new save format;
+        # fall back to the raw dict for old-format files.
+        state = (
+            saved["checkpoint"]
+            if isinstance(saved, dict) and "checkpoint" in saved
+            else saved
+        )
+        model.load_checkpoint_state_dict(state)
 
         return model
+
+    def trainable_parameters(self):
+        """Yield from the trainable parameters of the model."""
+        yield from self.diffuser.parameters()
+
+    def checkpoint_state_dict(self) -> dict:
+        """Return the state dict for checkpointing."""
+        return {"model": self.diffuser.state_dict()}
+
+    def load_checkpoint_state_dict(self, state: dict):
+        """Load the model state from a checkpoint state dict."""
+        # Support both the old format (bare state_dict) and the new format
+        # ({"model": state_dict, "optimizer": ...}).
+        if isinstance(state, dict) and "model" in state:
+            saved_model = state["model"]
+        else:
+            saved_model = state
+        self.diffuser.load_state_dict(saved_model)
+
+    def sync_extra_gradients(self):
+        """
+        No-op for DigressMetaArch as DDP already wraps self.diffuser.
+        Subclasses with extra trainable modules must override this to synchronize
+        gradients across ranks manually.
+        """
+        pass
 
     @property
     def global_features(self) -> int:
@@ -510,7 +538,7 @@ class DigressMetaArch:
         min_nodes: int = 6,
         progress_bar=False,
         num_attempts: int = 3,
-        *args,
+        other_args: list[Any] = [],
     ):
         """
         Generate new graphs using the reverse diffusion process.
@@ -620,8 +648,8 @@ class DigressMetaArch:
                         torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))
                     )  # bs, 1
 
-                    # Forward pass — all ranks must call this to drive th   e pipeline.
-                    pN, pE = self.forward(N, E, mask, t_tensor, *args)
+                    # Forward pass — all ranks must call this to drive the pipeline.
+                    pN, pE = self.forward(N, E, mask, t_tensor, *other_args)
 
                     # Only the last pipeline rank gets valid predictions.
                     if pN is not None and pE is not None:

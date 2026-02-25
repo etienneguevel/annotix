@@ -157,12 +157,27 @@ def allreduce_eval_metrics(
     return result
 
 
+def allreduce_gen_metrics(gen_metrics: dict[str, list]) -> dict[str, list]:
+    """Gather per-sample gen_metrics lists from all DDP ranks and concatenate."""
+    if not dist.is_enabled() or not gen_metrics:
+        return gen_metrics
+
+    world_size = dist.get_global_size()
+    all_metrics = [None] * world_size
+    torch.distributed.all_gather_object(all_metrics, gen_metrics)
+
+    result: dict[str, list] = {}
+    for k in all_metrics[0].keys():
+        result[k] = [item for rank_dict in all_metrics for item in rank_dict[k]]
+    return result
+
+
 def generate_samples(
     model: DigressMetaArch,
     num_samples: int,
     num_nodes_dist: torch.Tensor,
     batch_size: int,
-) -> tuple[float, float, list[str]]:
+) -> dict[str, list]:
     # Generate the graphs
     batch_size = min(num_samples, batch_size)
     print(f"Generating {num_samples} graphs in batches of {batch_size}...")
@@ -209,18 +224,12 @@ def generate_samples(
     all_gen_smiles = all_gen_smiles[:num_samples]
     all_gen_smiles_digress = all_gen_smiles_digress[:num_samples]
 
-    valid_smiles = [s for s in all_gen_smiles if s]
-    valid_smiles_digress = [s for s in all_gen_smiles_digress if s]
-
-    # Compute the validity
-    validity = len(valid_smiles) / len(all_gen_smiles) if all_gen_smiles else 0
-    validity_digress = (
-        len(valid_smiles_digress) / len(all_gen_smiles_digress)
-        if all_gen_smiles_digress
-        else 0
-    )
-
-    return validity, validity_digress, valid_smiles
+    return {
+        "all_gen_smiles": all_gen_smiles,
+        "all_gen_smiles_digress": all_gen_smiles_digress,
+        "validity": [1.0 if s else 0.0 for s in all_gen_smiles],
+        "validity_digress": [1.0 if s else 0.0 for s in all_gen_smiles_digress],
+    }
 
 
 def generate_samples_from_spec(
@@ -253,7 +262,10 @@ def generate_samples_from_spec(
 
         try:
             gen_N, gen_E, gen_mask = model.generate(
-                num_samples=n, max_nodes=n.max(), progress_bar=True, *spectra_args
+                num_samples=n,
+                max_nodes=n.max(),
+                progress_bar=True,
+                other_args=spectra_args,
             )
 
             # Convert to smiles

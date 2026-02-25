@@ -181,6 +181,7 @@ class SpectraEncoderGrowing(nn.Module):
             hidden_size=cfg.spectra_encoder.hidden_size,
             spectra_dropout=cfg.spectra_encoder.spectra_dropout,
             top_layers=cfg.spectra_encoder.top_layers,
+            refine_layers=cfg.spectra_encoder.get("refine_layers", 0),
             magma_modulo=cfg.spectra_encoder.magma_modulo,
             peak_attn_layers=cfg.spectra_encoder.peak_attn_layers,
             set_pooling=cfg.spectra_encoder.get("set_pooling", "intensity"),

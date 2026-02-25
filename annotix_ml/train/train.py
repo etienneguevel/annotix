@@ -13,13 +13,21 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import annotix_ml.distributed as dist
+from annotix_ml.graphtransf.arch import Spec2MolMetaArch
 from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import (
     compute_training_metrics,
 )
-from annotix_ml.train.eval import do_eval, generate_samples, allreduce_eval_metrics
+from annotix_ml.train.eval import (
+    allreduce_eval_metrics,
+    allreduce_gen_metrics,
+    do_eval,
+    generate_samples,
+    generate_samples_from_spec,
+)
 from annotix_ml.train.setup import setup, setup_model_mode
+from annotix_ml.train.logging import create_gen_samples_table
 
 
 def get_args():
@@ -226,7 +234,7 @@ def train(cfg):
 
     # Make the optimizer
     optimizer = torch.optim.AdamW(
-        digress.diffuser.parameters(),
+        digress.trainable_parameters(),
         lr=cfg.train.starting_learning_rate,
         amsgrad=True,
     )
@@ -303,6 +311,9 @@ def train(cfg):
             optimizer.zero_grad()
             continue
 
+        if dist.is_enabled() and cfg.train.get("distributed") == "data":
+            digress.sync_extra_gradients()
+
         # All-reduce loss scalar so the logged value is the global average (DDP only)
         loss_for_log = loss
         if loss is not None and cfg.train.get("distributed") == "data":
@@ -333,7 +344,6 @@ def train(cfg):
                 "train/learning_rate": lr,
                 "train/epoch_time": time.time() - batch_start_time,
                 "train/total_time": time.time() - start_train_time,
-                "step": global_step,
             }
 
             for k, v in epoch_metrics.items():
@@ -362,7 +372,7 @@ def train(cfg):
                 if dist.is_main_process():
                     torch.save(
                         {
-                            "model": digress.diffuser.state_dict(),
+                            "checkpoint": digress.checkpoint_state_dict(),
                             "optimizer": optimizer.state_dict(),
                         },
                         os.path.join(cfg.train.save_path, f"{global_step}.pt"),
@@ -390,33 +400,33 @@ def train(cfg):
                 else:
                     samples_per_rank = cfg.valid.num_samples
 
-                validity, validity_digress, valid_smiles = generate_samples(
-                    digress,
-                    samples_per_rank,
-                    train_dataset.num_atoms_dist,
-                    cfg.valid.batch_size,
-                )
+                if isinstance(digress, Spec2MolMetaArch):
+                    gen_metrics = generate_samples_from_spec(
+                        digress, samples_per_rank, valid_loader
+                    )
+                else:
+                    gen_metrics = generate_samples(
+                        digress,
+                        samples_per_rank,
+                        train_dataset.num_atoms_dist,
+                        cfg.valid.batch_size,
+                    )
 
-                # In DDP mode, gather results from all ranks.
-                # all_reduce / all_gather_object act as implicit barriers, so no
-                # explicit barrier() is needed.
                 if cfg.train.get("distributed") == "data":
-                    validity_tensor = torch.tensor(
-                        [validity, validity_digress], device=device
-                    )
-                    torch.distributed.all_reduce(
-                        validity_tensor, op=torch.distributed.ReduceOp.SUM
-                    )
-                    validity_tensor /= world_size
-                    validity = validity_tensor[0].item()
-                    validity_digress = validity_tensor[1].item()
+                    gen_metrics = allreduce_gen_metrics(gen_metrics)
 
-                    all_valid_smiles = [None] * world_size
-                    torch.distributed.all_gather_object(all_valid_smiles, valid_smiles)
-                    if dist.is_main_process():
-                        valid_smiles = [
-                            s for per_rank in all_valid_smiles for s in per_rank
-                        ]
+                validity = (
+                    sum(gen_metrics["validity"]) / len(gen_metrics["validity"])
+                    if gen_metrics.get("validity")
+                    else 0.0
+                )
+                validity_digress = (
+                    sum(gen_metrics["validity_digress"])
+                    / len(gen_metrics["validity_digress"])
+                    if gen_metrics.get("validity_digress")
+                    else 0.0
+                )
+                valid_smiles = [s for s in gen_metrics.get("all_gen_smiles", []) if s]
 
                 if eval_metrics:
                     eval_metrics["gen_validity"] = validity
@@ -429,16 +439,14 @@ def train(cfg):
                         print(f"Evaluation Metrics: {eval_metrics}")
 
                         # Log evaluation metrics to wandb
-                        eval_log = {"step": global_step}
+                        eval_log = {}
                         for k, v in eval_metrics.items():
                             eval_log[f"eval/{k}"] = v
 
-                        if valid_smiles:
-                            smiles_table = wandb.Table(columns=["SMILES"])
-                            for s in valid_smiles:
-                                smiles_table.add_data(s)
-                            eval_log["eval/generated_smiles"] = smiles_table
-
+                        if isinstance(digress, Spec2MolMetaArch) and gen_metrics:
+                            eval_log["generated_samples"] = create_gen_samples_table(
+                                gen_metrics
+                            )
                         wandb.log(eval_log, step=global_step)
 
                         # Save the valid smiles
@@ -467,7 +475,7 @@ def train(cfg):
         if dist.is_main_process():
             torch.save(
                 {
-                    "model": digress.diffuser.state_dict(),
+                    "checkpoint": digress.checkpoint_state_dict(),
                     "optimizer": optimizer.state_dict(),
                 },
                 os.path.join(cfg.train.save_path, "final.pt"),

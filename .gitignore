@@ -4,8 +4,10 @@
 outputs/
 resources/
 logs
+profiling/
 .env
 .DS_Store
+.vscode
 test_data/
 /data/
 /results/

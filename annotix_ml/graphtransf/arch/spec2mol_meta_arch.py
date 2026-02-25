@@ -3,8 +3,9 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
+from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch import DigressMetaArch
-from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoder
+from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowing
 from annotix_ml.graphtransf.math.extra_features import spectra_fingerprint
 
 
@@ -86,7 +87,7 @@ class Spec2MolMetaArch(DigressMetaArch):
         )
 
         # Build the models for spectra treatment
-        self.spectra_encoder = SpectraEncoder(
+        self.spectra_encoder = SpectraEncoderGrowing(
             form_embedder=form_embedder,
             output_size=output_size,
             hidden_size=hidden_size,
@@ -114,40 +115,27 @@ class Spec2MolMetaArch(DigressMetaArch):
         edges_distribution: torch.Tensor | None,
         max_weight: float | None = None,
     ):
-        return cls(
-            d=cfg.model.d,
-            de=cfg.model.de,
-            dy=cfg.model.dy,
-            n_heads=cfg.model.n_heads,
-            n_layers=cfg.model.n_layers,
-            noise_strategy=cfg.model.noise_strategy,
-            diffusion_steps=cfg.model.diffusion_steps,
-            loss_ratio=cfg.train.loss_ratio,
-            device=device,
-            valid_elements=valid_elements,
-            y_update=cfg.model.y_update,
-            no_y=cfg.model.no_y,
-            nodes_distribution=nodes_distribution,
-            edges_distribution=edges_distribution,
-            k=cfg.model.num_ev,
-            extra_features=list(cfg.model.extra_features),
-            max_weight=max_weight,
-            morgan_nbits=cfg.dataset.morgan_nbits,
-            # SpectraEncoder args
-            form_embedder=cfg.spectra_encoder.form_embedder,
-            output_size=cfg.spectra_encoder.output_size,
-            hidden_size=cfg.spectra_encoder.hidden_size,
-            spectra_dropout=cfg.spectra_encoder.spectra_dropout,
-            top_layers=cfg.spectra_encoder.top_layers,
-            magma_modulo=cfg.spectra_encoder.magma_modulo,
-            peak_attn_layers=cfg.spectra_encoder.peak_attn_layers,
-            set_pooling=cfg.spectra_encoder.set_pooling,
-            pairwise_featurization=cfg.spectra_encoder.pairwise_featurization,
-            num_heads=cfg.spectra_encoder.num_heads,
-            embed_instrument=cfg.spectra_encoder.embed_instrument,
-            inten_transform=cfg.spectra_encoder.inten_transform,
-            no_diffs=cfg.spectra_encoder.no_diffs,
+        arch = super().init_from_cfg(
+            cfg,
+            device,
+            valid_elements,
+            nodes_distribution,
+            edges_distribution,
+            max_weight,
         )
+        spectra_encoder = SpectraEncoderGrowing.init_from_cfg(cfg)
+
+        if (ckpt_path := cfg.spectra_encoder.get("checkpoint_path")) is not None:
+            model_dict = torch.load(BASE_DIR / ckpt_path, map_location=device)
+            spectra_encoder.load_state_dict(model_dict)
+            spectra_encoder.eval()
+
+        arch.spectra_encoder = spectra_encoder
+        arch.merge_function = nn.Linear(
+            cfg.spectra_encoder.output_size, cfg.dataset.morgan_nbits
+        )
+
+        return arch
 
     @property
     def global_features(self) -> int:
@@ -175,16 +163,16 @@ class Spec2MolMetaArch(DigressMetaArch):
         DigressMetaArch's noise logic.
         """
         return super().forward(
-            nodes=nodes,
-            edges=edges,
-            mask=mask,
-            t=t,
-            num_peaks=num_peaks,
-            types=types,
-            instruments=instruments,
-            ion_vec=ion_vec,
-            form_vec=form_vec,
-            intens=intens,
+            nodes,
+            edges,
+            mask,
+            t,
+            num_peaks,
+            types,
+            instruments,
+            ion_vec,
+            form_vec,
+            intens,
         )
 
     def forward_backward(
@@ -221,15 +209,15 @@ class Spec2MolMetaArch(DigressMetaArch):
                 All may be None on non-last ranks in pipeline parallelism.
         """
         return super().forward_backward(
-            nodes=nodes,
-            edges=edges,
-            mask=mask,
-            num_peaks=num_peaks,
-            types=types,
-            instruments=instruments,
-            ion_vec=ion_vec,
-            form_vec=form_vec,
-            intens=intens,
+            nodes,
+            edges,
+            mask,
+            num_peaks,
+            types,
+            instruments,
+            ion_vec,
+            form_vec,
+            intens,
         )
 
     def compute_extra_features(
@@ -238,7 +226,12 @@ class Spec2MolMetaArch(DigressMetaArch):
         edges: torch.Tensor,
         mask: torch.Tensor,
         t: torch.Tensor,
-        **kwargs,
+        num_peaks,
+        types,
+        instruments,
+        ion_vec,
+        form_vec,
+        intens,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute extra node and global features for the current graph state.
@@ -259,15 +252,41 @@ class Spec2MolMetaArch(DigressMetaArch):
 
         if "spectra_fingerprint" in all_features:
             fp = spectra_fingerprint(
-                kwargs["num_peaks"],
-                kwargs["types"],
-                kwargs["instruments"],
-                kwargs["ion_vec"],
-                kwargs["form_vec"],
-                kwargs["intens"],
+                num_peaks,
+                types,
+                instruments,
+                ion_vec,
+                form_vec,
+                intens,
                 self.spectra_encoder,
                 self.merge_function,
             )
             y = torch.cat([y, fp], dim=-1)
 
         return pos_emb, y
+
+    def trainable_parameters(self):
+        """Yield from the trainable parameters of the model."""
+        yield from super().trainable_parameters()
+        yield from self.merge_function.parameters()
+
+    def checkpoint_state_dict(self) -> dict:
+        """Return the state dict for checkpointing."""
+        state = super().checkpoint_state_dict()
+        state["merge_function"] = self.merge_function.state_dict()
+        return state
+
+    def load_checkpoint_state_dict(self, state: dict):
+        """Load the model state from a checkpoint state dict."""
+        super().load_checkpoint_state_dict(state)
+        if "merge_function" in state:
+            self.merge_function.load_state_dict(state["merge_function"])
+
+    def sync_extra_gradients(self):
+        """Synchronize merge_function gradients across ranks in DDP."""
+        if torch.distributed.is_initialized():
+            for param in self.merge_function.parameters():
+                if param.grad is not None:
+                    torch.distributed.all_reduce(
+                        param.grad.data, op=torch.distributed.ReduceOp.AVG
+                    )
