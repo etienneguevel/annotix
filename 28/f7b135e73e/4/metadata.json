@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.4.4",
+  "checkpoint_id": "28f7b135e73e",
+  "session_id": "59216eb7-331d-4ef3-8a78-4bb0404ba246",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-25T13:46:47.925935Z",
+  "branch": "spec2mol",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "annotix_ml/graphtransf/train/train.py"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "6d32925b-b741-42ce-af91-3de642b9983a",
+  "token_usage": {
+    "input_tokens": 15,
+    "cache_creation_tokens": 51115,
+    "cache_read_tokens": 451517,
+    "output_tokens": 133,
+    "api_call_count": 11
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-25T13:46:47.859291Z",
+    "agent_lines": 0,
+    "human_added": 22525902,
+    "human_modified": 716,
+    "human_removed": 0,
+    "total_committed": 22525957,
+    "agent_percentage": 0
+  },
+  "transcript_path": ".claude/projects/-Users-etienneguevel-Documents-projects-annotix-all-annotix-ml/59216eb7-331d-4ef3-8a78-4bb0404ba246.jsonl"
+}
