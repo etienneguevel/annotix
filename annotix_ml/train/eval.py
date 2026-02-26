@@ -291,6 +291,7 @@ def generate_samples_from_spec(
 
         metrics["true_smiles"].extend(true_smiles)
         metrics["validity"].extend(compute_validity(gen_smiles))
+        metrics["validity_digress"].extend(compute_validity(gen_smiles_digress))
         metrics["tan_sim"].extend(tan_sim)
         metrics["mces"].extend(mces)
 
