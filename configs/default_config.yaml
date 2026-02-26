@@ -5,6 +5,7 @@ dataset:
   split_column: split
   val_tag: test
   cache_path: null
+  max_nodes: null
 
 model:
   d: 256

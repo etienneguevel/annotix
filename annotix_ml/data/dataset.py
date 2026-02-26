@@ -164,6 +164,7 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
         verbose: bool = True,
         cache_path: str | None = None,
         save_cache: bool = True,
+        max_nodes: int | None = None,
     ):
         """
         Initialize the GraphDatasetFromSMILEs.
@@ -181,8 +182,11 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
                 loaded directly; otherwise the dataset is built and saved there.
             save_cache (bool): Whether to write the cache file after building. Set to False
                 on non-main ranks in distributed training to avoid concurrent writes.
+            max_nodes (int, optional): Maximum number of atoms allowed per molecule.
+                Molecules with more atoms are filtered out during building.
         """
         super().__init__()
+        self.max_nodes = max_nodes
         if isinstance(data, (str, PosixPath)):
             data = pd.read_csv(data)
 
@@ -283,6 +287,11 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
                 continue
 
             nodes, edges = graph
+
+            # Filter on max number of nodes
+            if self.max_nodes is not None and nodes.shape[0] > self.max_nodes:
+                continue
+
             # Sanitize checks
             if sanitizer:
                 DisableLog("rdApp.*")

@@ -60,6 +60,7 @@ def setup_model_mode(cfg):
             verbose=True,
             cache_path=cfg.dataset.get("cache_path"),
             save_cache=dist.is_main_process(),
+            max_nodes=cfg.dataset.get("max_nodes"),
         )
 
         print("Using the DigressMetaArch.\n")

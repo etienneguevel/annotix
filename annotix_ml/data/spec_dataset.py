@@ -37,6 +37,7 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         verbose: bool = True,
         cache_path: str | None = None,
         save_cache: bool = True,
+        max_nodes: int | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -53,6 +54,7 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         self.spec_column = spec_column
         self.formula_column = formula_column
         self.instrument_column = instrument_column
+        self.max_nodes = max_nodes
 
         # SMILES list
         smiles_list = self.data[smile_column].to_list()
@@ -148,6 +150,11 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
                 continue
 
             nodes, edges = graph
+
+            # Filter on max number of nodes
+            if self.max_nodes is not None and nodes.shape[0] > self.max_nodes:
+                continue
+
             # Sanitize checks
             if sanitizer:
                 DisableLog("rdApp.*")

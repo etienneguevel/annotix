@@ -1,6 +1,6 @@
 run:
   project: annotix_msg
-  name: baseline_no_ms2
+  name: baseline_ms2
 
 dataset:
   data_path: data/msg/labels_.csv
@@ -9,8 +9,9 @@ dataset:
   datadir: data/BanyulsInference
   labels_file: data/BanyulsInference/labels.tsv
   morgan_nbits: 2048
-  cache_path: data/cache/msg
+  cache_path: data/cache/msg_50nodes
   val_tag: test
+  max_nodes: 40
 
 model:
   y_update: False
