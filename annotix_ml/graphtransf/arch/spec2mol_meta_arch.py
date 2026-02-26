@@ -103,9 +103,9 @@ class Spec2MolMetaArch(DigressMetaArch):
             inten_transform=inten_transform,
             no_diffs=no_diffs,
             refine_layers=refine_layers,
-        )
+        ).to(device)
 
-        self.merge_function = nn.Linear(output_size, morgan_nbits)
+        self.merge_function = nn.Linear(output_size, morgan_nbits).to(device)
 
     @classmethod
     def init_from_cfg(
@@ -125,17 +125,18 @@ class Spec2MolMetaArch(DigressMetaArch):
             edges_distribution,
             max_weight,
         )
-        spectra_encoder = SpectraEncoderGrowing.init_from_cfg(cfg)
+        spectra_encoder = SpectraEncoderGrowing.init_from_cfg(cfg).to(device)
 
         if (ckpt_path := cfg.spectra_encoder.get("checkpoint_path")) is not None:
             model_dict = torch.load(BASE_DIR / ckpt_path, map_location=device)
             spectra_encoder.load_state_dict(model_dict)
+
             spectra_encoder.eval()
 
         arch.spectra_encoder = spectra_encoder
         arch.merge_function = nn.Linear(
             cfg.spectra_encoder.output_size, cfg.dataset.morgan_nbits
-        )
+        ).to(device)
 
         return arch
 
