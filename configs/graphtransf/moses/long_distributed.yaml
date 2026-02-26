@@ -6,6 +6,8 @@ dataset:
   data_path: data/moses.csv
   smile_column: SMILES
   split_column: SPLIT
+  cache_path: data/cache/moses_san
+  val_tag: val
 
 model:
   d: 256
@@ -13,7 +15,7 @@ model:
   dy: 64
   n_heads: 8
   n_layers: 12
-  diffusion_steps: 500
+  diffusion_steps: 1000
   noise_strategy: distribution
   num_ev: 5
   extra_features:
@@ -24,6 +26,7 @@ model:
 train:
   batch_size: 512
   num_train_steps: 100000
-  save_path: logs/moses_medium_long
+  save_path: logs/moses_medium_long_1000d
   distributed: "data"
   num_microbatches: 4
+  save_steps: 4000

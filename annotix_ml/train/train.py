@@ -27,7 +27,7 @@ from annotix_ml.train.eval import (
     generate_samples_from_spec,
 )
 from annotix_ml.train.setup import setup, setup_model_mode
-from annotix_ml.train.logging import create_gen_samples_table
+from annotix_ml.train.log_utils import create_gen_samples_table
 
 
 def get_args():

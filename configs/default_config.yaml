@@ -13,7 +13,7 @@ model:
   n_heads: 8
   n_layers: 5
   y_update: False
-  no_y: False
+  no_y: True
   diffusion_steps: 500
   noise_strategy: distribution
   num_ev: 2

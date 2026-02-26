@@ -1,6 +1,5 @@
-from traitlets import Any
 import os
-from typing import Literal
+from typing import Literal, Any
 
 import torch
 from omegaconf import DictConfig
