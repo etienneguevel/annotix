@@ -1,5 +1,6 @@
 import wandb
 from rdkit import Chem
+from rdkit.Chem import Draw
 
 
 def create_gen_samples_table(gen_metrics):
@@ -32,13 +33,13 @@ def create_gen_samples_table(gen_metrics):
         if ts:
             mol = Chem.MolFromSmiles(ts)
             if mol:
-                true_mol_img = wandb.Image(mol)
+                true_mol_img = wandb.Image(Draw.MolToImage(mol))
 
         gen_mol_img = None
         if gs:
             mol = Chem.MolFromSmiles(gs)
             if mol:
-                gen_mol_img = wandb.Image(mol)
+                gen_mol_img = wandb.Image(Draw.MolToImage(mol))
 
         table.add_data(ts, true_mol_img, gs, gen_mol_img, m, t)
 
