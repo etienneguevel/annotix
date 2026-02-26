@@ -43,7 +43,7 @@ def make_datasets(
     return train_dataset, valid_dataset
 
 
-def make_spec_datasets(cfg, save_cache: bool):
+def make_spec_datasets(cfg, save_cache: bool, verbose: bool):
     """Create train/valid GraphSpecDataset from config."""
     data = pd.read_csv(
         cfg.dataset.data_path,
@@ -60,18 +60,15 @@ def make_spec_datasets(cfg, save_cache: bool):
     train_cache = f"{cache_path}_train.pt" if cache_path else None
     valid_cache = f"{cache_path}_valid.pt" if cache_path else None
 
-    common_kwargs = dict(
-        spec_folder=cfg.dataset.spec_folder,
-        subform_folder=cfg.dataset.subform_folder,
-        smile_column=cfg.dataset.smile_column,
-        sanitizer=graph_to_smiles_digress,
-    )
-
     train_dataset = GraphSpecDataset(
         data=train_df,
         cache_path=train_cache,
         save_cache=save_cache,
-        **common_kwargs,
+        spec_folder=cfg.dataset.spec_folder,
+        subform_folder=cfg.dataset.subform_folder,
+        smile_column=cfg.dataset.smile_column,
+        sanitizer=graph_to_smiles_digress,
+        verbose=verbose,
     )
     valid_elements = train_dataset.valid_elements
     valid_dataset = GraphSpecDataset(
@@ -79,7 +76,11 @@ def make_spec_datasets(cfg, save_cache: bool):
         valid_elements=valid_elements,
         cache_path=valid_cache,
         save_cache=save_cache,
-        **common_kwargs,
+        spec_folder=cfg.dataset.spec_folder,
+        subform_folder=cfg.dataset.subform_folder,
+        smile_column=cfg.dataset.smile_column,
+        sanitizer=graph_to_smiles_digress,
+        verbose=verbose,
     )
 
     return train_dataset, valid_dataset

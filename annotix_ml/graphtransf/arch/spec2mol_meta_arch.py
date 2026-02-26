@@ -51,13 +51,14 @@ class Spec2MolMetaArch(DigressMetaArch):
         # SpectraEncoder args
         form_embedder: str = "float",
         output_size: int = 4096,
-        hidden_size: int = 50,
+        hidden_size: int = 512,
         spectra_dropout: float = 0.0,
         top_layers: int = 1,
+        refine_layers: int = 4,
         magma_modulo: int = 2048,
         peak_attn_layers: int = 2,
         set_pooling: str = "intensity",
-        pairwise_featurization: bool = False,
+        pairwise_featurization: bool = True,
         num_heads: int = 8,
         embed_instrument: bool = False,
         inten_transform: str = "float",
@@ -101,6 +102,7 @@ class Spec2MolMetaArch(DigressMetaArch):
             embed_instrument=embed_instrument,
             inten_transform=inten_transform,
             no_diffs=no_diffs,
+            refine_layers=refine_layers,
         )
 
         self.merge_function = nn.Linear(output_size, morgan_nbits)

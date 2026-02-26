@@ -84,7 +84,9 @@ def setup_model_mode(cfg):
     else:
         print("Building graph-spec datasets.")
         train_dataset, valid_dataset = make_spec_datasets(
-            cfg, save_cache=dist.is_main_process()
+            cfg,
+            save_cache=cfg.dataset.get("cache_path"),
+            verbose=dist.is_main_process(),
         )
 
         print("Using the Spec2MolMetaArch.\n")

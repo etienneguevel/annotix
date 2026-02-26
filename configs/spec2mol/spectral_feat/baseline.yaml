@@ -9,6 +9,8 @@ dataset:
   datadir: data/BanyulsInference
   labels_file: data/BanyulsInference/labels.tsv
   morgan_nbits: 2048
+  cache_path: data/cache/msg
+  val_tag: test
 
 model:
   y_update: False
@@ -26,7 +28,7 @@ spectra_encoder:
   form_embedder: pos-cos
   output_size: 4096
   hidden_size: 512
-  spectra_dropout: 0.1
+  spectra_dropout: 0
   top_layers: 1
   magma_modulo: 2048
   peak_attn_layers: 2
