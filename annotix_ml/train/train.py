@@ -503,6 +503,9 @@ def main():
     dist.enable(overwrite=True, main_rank=main_rank)
     train(cfg)
 
+    if dist.is_enabled():
+        torch.distributed.destroy_process_group()
+
 
 if __name__ == "__main__":
     main()
