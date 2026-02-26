@@ -167,7 +167,8 @@ def train(cfg):
             valid_dataset,
             num_replicas=data_size,
             rank=data_rank,
-            shuffle=False,
+            shuffle=True,
+            seed=12,
         )
     else:
         valid_sampler = None
