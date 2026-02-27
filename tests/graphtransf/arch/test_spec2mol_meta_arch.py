@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch.spec2mol_meta_arch import Spec2MolMetaArch
 from annotix_ml.data.spec_dataset import GraphSpecDataset
-from annotix_ml.data.datacollator import graph_spec_collate_fn
+from annotix_ml.data.datacollator import collateGraphSpec
 from annotix_ml.data.atoms_data import TYPE_EDGES
 
 
@@ -40,7 +40,7 @@ def _make_model(cfg, dataset):
 
 
 def _load_batch(dataset, bs=2):
-    loader = DataLoader(dataset, batch_size=bs, collate_fn=graph_spec_collate_fn)
+    loader = DataLoader(dataset, batch_size=bs, collate_fn=collateGraphSpec)
     (
         nodes,
         edges,
