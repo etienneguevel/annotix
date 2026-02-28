@@ -457,11 +457,13 @@ class DigressMetaArch:
         edges: torch.Tensor,
         mask: torch.Tensor,
         *args,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Run the forward pass: noise the input batch, then predict the clean graph.
+        Noise the input batch, predict the clean graph, compute loss, and run backpropagation.
+
         This method first adds noise to the input nodes and edges using `self.noiser`,
-        and then uses `self.diffuser` to predict the clean graph probabilities.
+        then uses `self.diffuser` to predict the clean graph probabilities, computes
+        the DiGress loss, and calls `loss.backward()`.
 
         Args:
             nodes (torch.Tensor): Node features of shape (bs, n, natoms).
@@ -470,9 +472,11 @@ class DigressMetaArch:
             *args: Extra arguments passed to compute_extra_features.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
+                - loss (torch.Tensor): Scalar total loss. May be None on non-last ranks in
+                  pipeline parallelism.
         """
         # Compute the output of the diffuser, for pp we need to use the schedule
         if self.train_schedule:
@@ -555,7 +559,7 @@ class DigressMetaArch:
                   specifies the exact number of nodes for a sample. The total number of
                   samples is then determined by the length of this tensor.
             max_nodes (int): Maximum number of nodes for the generated graphs.
-            min_nodes (int, optional): Minimum number of nodes for the generated graphs. Defaults to 1.
+            min_nodes (int, optional): Minimum number of nodes for the generated graphs. Defaults to 6.
             progress_bar (bool, optional): Whether to show a progress bar during denoising. Defaults to False.
             num_attempts (int, optional): Number of attempts to generate graphs (to handle potential LinAlgError). Defaults to 3.
             *args: Extra arguments passed to compute_extra_features (e.g. conditioning spectra).

@@ -73,70 +73,6 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         self.Out_y = MLP(dy, dy, dy)
         self.norm_y = nn.LayerNorm(dy)
 
-    def forward_nested(
-        self,
-        h: torch.Tensor,
-        e: torch.Tensor,
-    ):
-        """
-        Forward pass using nested tensors (experimental).
-
-        Computes the attention map: attn[i, j] = softmax_j(sum_k(Q_i.K_j.E_ij))
-
-        Args:
-            h (torch.Tensor): Nested tensor of nodes representation of shape (bs, *n, d).
-            e (torch.Tensor): Nested tensor of edges representation of shape (bs, *n, *n, de).
-
-        Returns:
-            None: Implementation is incomplete.
-        """
-        # Compute the classic attention map
-        # h : (bs, *n, d)
-        # e : (bs, *n, *n, de)
-
-        bs, _, d = h.size()
-        bse, *_, de = e.size()
-        assert bs == bse, "Wrong batch sizes for nodes and edges."
-        assert d == self.d, "Wrong dimension for the nodes embeddings."
-        assert de == self.de, "Wrong dimension for the edges embeddings."
-
-        # Calculate the Query, Key and Values vectors
-        qkv = self.qkv(h).unflatten(
-            (-1, (3 * self.dk, self.n_heads))
-        )  # (bs, *n, 3 * dk, nh)
-        qkv = qkv.permute((0, 3, 1, 2))  # (bs, nh, *n, 3 * dk)
-        Q, K, V = qkv.chunk(
-            3, -1
-        )  # (bs, nh, *n, dk), (bs, nh, *n, dk), (bs, nh, *n, dk)
-
-        # Change the axis & add a dim for outer product
-        Q = Q.unsqueeze(3)  # (bs, nh, *n, 1, dk)
-        K = K.unsqueeze(2)  # (bs, nh, 1, *n, dk)
-
-        # Calculate the edges key vector
-        E = self.FiLM_E(e).unflatten(
-            (-1, (2 * self.dk, self.n_heads))
-        )  # (bs, *n, *n, 2 * dk, nh)
-        E1, E2 = E.permute((0, 4, 1, 2, 3)).chunk(
-            2, -1
-        )  # (bs, nh, *n, *n, dk), (bs, nh, *n, *n, dk)
-
-        # Do the outer product of Q and K
-        attn = Q * K  # (bs, nh, *n, *n, dk)
-        attn /= sqrt(self.dk)  # (bs, nh, *n, *n, dk)
-
-        # Add the edges to the attn product
-        attn = E1 + (E2 * attn) + attn  # (bs, nh, *n, *n, dk)
-
-        # Do the summed softmax of the edges
-        node_attn = attn.sum(-1)  # (bs, nh, *n, *n)
-        node_attn = node_attn.softmax(-1)  # (bs, nh, *n, *n)
-
-        # Add to the values
-        node_attn = node_attn.unsqueeze(-1) * V
-
-        return None
-
     def compute_attn(
         self,
         h: torch.Tensor,
@@ -314,29 +250,20 @@ class MultiHeadEdgeNodeWithY(nn.Module):
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: Updated (h, e, y, mask).
         """
-        if h.is_nested & e.is_nested:
-            # /!\ Not implemented yet
-            _ = self.forward_nested(h, e)
 
-        elif h.is_nested | e.is_nested:
-            raise TypeError(
-                "Only one of the two tensors is nested -> both need to be the same type."
-            )
+        # Compute the attention
+        node_attn, edge_attn = self.compute_attn(h, e, y, mask)
+        if self.y_update:
+            new_y = self.update_y(h, e, y)  # (bs, dy)
+            y = self.norm_y(y + self.Out_y(new_y))  # (bs, dy)
 
-        else:
-            # Compute the attention
-            node_attn, edge_attn = self.compute_attn(h, e, y, mask)
-            if self.y_update:
-                new_y = self.update_y(h, e, y)  # (bs, dy)
-                y = self.norm_y(y + self.Out_y(new_y))  # (bs, dy)
+        # Do the output transformation
+        h = self.norm_n(h + self.Out_N(node_attn))  # (bs, n, d)
+        e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
 
-            # Do the output transformation
-            h = self.norm_n(h + self.Out_N(node_attn))  # (bs, n, d)
-            e = self.norm_e(e + self.Out_E(edge_attn))  # (bs, n, n, de)
-
-            # Ensure that the masking is still correct
-            h = mask_any_tensor(h, mask)  # (bs, n, d)
-            e = mask_any_tensor(e, mask)  # (bs, n, n, de)
+        # Ensure that the masking is still correct
+        h = mask_any_tensor(h, mask)  # (bs, n, d)
+        e = mask_any_tensor(e, mask)  # (bs, n, n, de)
 
         return h, e, y, mask
 

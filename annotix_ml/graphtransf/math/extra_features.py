@@ -462,9 +462,11 @@ def spectra_fingerprint(
         form_vec (torch.Tensor): Formula embeddings for each peak (bs, max_len, formula_dim).
         intens (torch.Tensor): Intensity values for each peak (bs, max_len).
         spectra_encoder (SpectraEncoder): Trained SpectraEncoder model instance.
+        projection (nn.Module): Linear projection applied to the encoder output
+            (maps from `output_size` to the target fingerprint size, e.g. `morgan_nbits`).
 
     Returns:
-        torch.Tensor: Spectra fingerprints of shape (bs, output_size).
+        torch.Tensor: Projected spectra fingerprints of shape (bs, projection_out_features).
     """
     # Remake the batch dictionary expected by SpectraEncoder
     batch = {

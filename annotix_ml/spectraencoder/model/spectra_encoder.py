@@ -167,13 +167,13 @@ class SpectraEncoderGrowing(nn.Module):
     @classmethod
     def init_from_cfg(cls, cfg: DictConfig):
         """
-        Initialize the SpectraEncoder model from a configuration object.
+        Initialize the SpectraEncoderGrowing model from a configuration object.
 
         Args:
             cfg (DictConfig): Configuration object containing 'spectra_encoder' parameters.
 
         Returns:
-            SpectraEncoder: Initialized model instance.
+            SpectraEncoderGrowing: Initialized model instance.
         """
         return cls(
             form_embedder=cfg.spectra_encoder.form_embedder,

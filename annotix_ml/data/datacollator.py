@@ -16,10 +16,9 @@ def collateGraph(
     plug it to a torch DataLoader.
 
     Args:
-    batch, which is a list of size 3 tuples made of :
+    batch, which is a list of size 2 tuples made of :
     - N: torch.Tensor, contains node of size (n_mol, natoms)
     - E: torch.Tensor, contains edge of size (n_mol, n_mol, nbonds)
-    - pos_emb: torch.Tensor, contains pos_emb (n_mol, k)
 
     Returns:
     tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
@@ -142,7 +141,7 @@ def collateGraphSpec(batch: list[dict]) -> tuple:
     Handles graph padding and spectra feature collation.
 
     Returns:
-        tuple: (nodes, edges, mask, num_peaks, types, instruments, ion_vec, form_vec, intens, smiles)
+        tuple: (nodes, edges, mask, num_peaks, types, instruments, ion_vec, form_vec, intens)
     """
     # Collate spectra features using PeakFormula.collate_fn logic
     spec_batch = PeakFormula.collate_fn(batch)
