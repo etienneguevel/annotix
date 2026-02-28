@@ -33,13 +33,19 @@ def create_gen_samples_table(gen_metrics):
         if ts:
             mol = Chem.MolFromSmiles(ts)
             if mol:
-                true_mol_img = wandb.Image(Draw.MolToImage(mol))
+                try:
+                    true_mol_img = wandb.Image(Draw.MolToImage(mol))
+                except RuntimeError:
+                    pass
 
         gen_mol_img = None
         if gs:
             mol = Chem.MolFromSmiles(gs)
             if mol:
-                gen_mol_img = wandb.Image(Draw.MolToImage(mol))
+                try:
+                    gen_mol_img = wandb.Image(Draw.MolToImage(mol))
+                except RuntimeError:
+                    pass
 
         table.add_data(ts, true_mol_img, gs, gen_mol_img, m, t)
 
