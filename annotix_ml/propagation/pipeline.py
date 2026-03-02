@@ -17,8 +17,13 @@ Output:
     - Ranked candidate annotations with confidence scores and provenance
 """
 
+import multiprocessing as mp
+import os
+from collections import defaultdict
+
 import pandas as pd
 import networkx as nx
+import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 from matchms import Spectrum
@@ -27,6 +32,41 @@ from tqdm import tqdm
 import json
 
 from store import graph_to_json
+
+
+# =============================================================================
+# PARALLEL PAIRWISE SIMILARITY HELPERS
+# Module-level so they are picklable under multiprocessing "spawn" (macOS/Win)
+# =============================================================================
+
+_worker_spectra = None   # set once per worker via initializer
+_worker_mzs = None
+
+
+def _init_worker(spectra, mzs):
+    global _worker_spectra, _worker_mzs
+    _worker_spectra = spectra
+    _worker_mzs = mzs
+
+
+def _score_row(args):
+    """Compute similarities for spectrum i against all j > i.
+
+    m/z pre-filter: skip pairs where |mz_i - mz_j| > max_mz_diff.
+    ModifiedCosine is instantiated per-call to avoid pickling issues.
+    """
+    i, node_ids, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff = args
+    pair = ModifiedCosine(tolerance=mz_tolerance).pair
+    mz_i = _worker_mzs[i]
+    n = len(_worker_spectra)
+    results = []
+    for j in range(i + 1, n):
+        if max_mz_diff > 0 and abs(mz_i - _worker_mzs[j]) > max_mz_diff:
+            continue  # skip clearly unrelated pairs (standard GNPS practice)
+        r = pair(_worker_spectra[i], _worker_spectra[j])
+        if r['score'] >= cosine_threshold and r['matches'] >= min_matched_peaks:
+            results.append((node_ids[i], node_ids[j], float(r['score']), int(r['matches'])))
+    return results
 
 
 # =============================================================================
@@ -59,77 +99,58 @@ def build_molecular_network(
     min_matched_peaks: int = 6,
     top_k: int = 10,
     mz_tolerance: float = 0.02,
+    max_mz_diff: float = 500.0,  # skip pairs with |mz_i - mz_j| > this (Da)
+    n_workers: int = None,       # parallel workers (default: all CPU cores)
     path=""
 ) -> nx.Graph:
-    """
-    Build a molecular network from a list of Spectrum objects.
-
-    Each spectrum becomes a node. Edges connect spectrally similar pairs.
-    Nodes carry the full Spectrum object + any metadata (name, smiles, etc.).
-
-    Parameters
-    ----------
-    spectra : list of matchms.Spectrum
-        Reference spectra (e.g., loaded from GNPS .mgf).
-    cosine_threshold : float
-        Minimum modified cosine score to create an edge.
-    min_matched_peaks : int
-        Minimum number of matching fragment peaks for an edge.
-    top_k : int
-        Keep only the top-K most similar neighbors per node.
-    mz_tolerance : float
-        Fragment m/z tolerance for peak matching (Da).
-
-    Returns
-    -------
-    nx.Graph
-        Molecular network with spectra and annotations as node attributes.
-    """
-    similarity_function = ModifiedCosine(tolerance=mz_tolerance)
     net = nx.Graph()
-
-    # --- Add nodes ---
     for i, spec in enumerate(spectra):
         node_id = spec.get("spectrum_id") or f"spec_{i}"
         net.add_node(node_id, **_extract_node_attributes(spec, node_id))
 
     node_ids = list(net.nodes)
     n = len(node_ids)
+    n_workers = n_workers or os.cpu_count()
+    precursor_mzs = [float(s.get("precursor_mz") or 0.0) for s in spectra]
 
-    # --- Compute pairwise similarities ---
-    print(f"Computing pairwise similarities for {n} spectra...")
+    print(f"Computing pairwise similarities for {n} spectra on {n_workers} workers...")
 
-    # To speed-up the loop
-    pair = similarity_function.pair
+    # Each task is one row i; workers share spectra via initializer (pickled once per worker)
+    tasks = [
+        (i, node_ids, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff)
+        for i in range(n)
+    ]
+    chunksize = max(1, n // (n_workers * 4))
 
-    def get_similarity(spec_i, spec_j, sim_fct):
-        result = sim_fct(spec_i, spec_j)
-        if result['score'] >= cosine_threshold and result['matches'] >= min_matched_peaks:
-            return {
-                "weight": result['score'],
-                "matched_peaks": result['matches']
-            }
-        return {}
+    with mp.Pool(
+        processes=n_workers,
+        initializer=_init_worker,
+        initargs=(spectra, precursor_mzs),
+    ) as pool:
+        row_results = list(tqdm(pool.imap(_score_row, tasks, chunksize=chunksize), total=n))
 
-    all_scores = {(node_ids[i], node_ids[j]): get_similarity(spectra[i], spectra[j], pair) for i in tqdm(range(n)) for j in range(i + 1, n)}
+    # Flatten: list[(u, v, score, matches)]
+    all_matches = [m for row in row_results for m in row]
+    scores_dict = {(u, v): {"weight": s, "matched_peaks": k} for u, v, s, k in all_matches}
 
-    # --- Top-K filtering ---
-    # For each node, keep only its top_k strongest edges
-    node_edges: dict[str, list] = {nid: [] for nid in node_ids}
-    for (u, v), attr in all_scores.items():
-        if attr:
-            node_edges[u].append((v, attr["weight"]))
-            node_edges[v].append((u, attr["weight"]))
+    # --- Top-K filtering with np.argpartition (O(n) per node vs O(n log n)) ---
+    node_neighbors: dict[str, list] = defaultdict(list)
+    for u, v, score, _ in all_matches:
+        node_neighbors[u].append((score, v))
+        node_neighbors[v].append((score, u))
 
-    kept_edges = set()
-    for nid in node_ids:
-        neighbors_sorted = sorted(node_edges[nid], key=lambda x: -x[1])[:top_k]
-        for neighbor, _ in neighbors_sorted:
-            edge = tuple(sorted([nid, neighbor]))
-            kept_edges.add(edge)
+    kept_edges: set = set()
+    for nid, neighbors in node_neighbors.items():
+        if len(neighbors) > top_k:
+            arr = np.array([s for s, _ in neighbors])
+            top_idx = np.argpartition(arr, -top_k)[-top_k:]
+            neighbors = [neighbors[i] for i in top_idx]
+        for _, neighbor in neighbors:
+            kept_edges.add(tuple(sorted([nid, neighbor])))
 
     for u, v in kept_edges:
-        net.add_edge(u, v, **all_scores[(u, v)] if (u, v) in all_scores else all_scores[(v, u)])
+        attrs = scores_dict.get((u, v)) or scores_dict.get((v, u), {})
+        net.add_edge(u, v, **attrs)
 
     n_annotated = sum(1 for _, d in net.nodes(data=True) if d.get("compound_name"))
     print(f"Network: {net.number_of_nodes()} nodes, {net.number_of_edges()} edges, "
