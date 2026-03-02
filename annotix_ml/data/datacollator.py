@@ -54,7 +54,7 @@ def collateGraph(
     )  # (bs, n_batch)
 
     if fingerprints is not None:
-        fps = torch.cat(list(fingerprints), dim=0)
+        fps = torch.stack(list(fingerprints))
         return N_padded, E_padded, mask, fps
 
     return N_padded, E_padded, mask

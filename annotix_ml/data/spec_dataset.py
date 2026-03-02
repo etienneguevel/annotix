@@ -222,4 +222,4 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         }
         fp, _ = self.spectra_encoder(spec_dict)
 
-        return nodes, edges, fp
+        return nodes, edges, fp.squeeze(0)

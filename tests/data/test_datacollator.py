@@ -97,14 +97,16 @@ def test_collate_graph_spec():
     assert fp.shape[0] == bs
 
     # Tensor ranks
-    assert len(nodes.shape) == 3  # (bs, n, natoms)
-    assert len(edges.shape) == 4  # (bs, n, n, nbonds)
-    assert len(mask.shape) == 2  # (bs, n)
+    assert nodes.dim() == 3  # (bs, n, natoms)
+    assert edges.dim() == 4  # (bs, n, n, nbonds)
+    assert mask.dim() == 2  # (bs, n)
+    assert fp.dim() == 2  # (bs, n)
 
     # Spatial dimensions are consistent
     n = nodes.shape[1]
     assert edges.shape[1] == n
     assert edges.shape[2] == n
+    assert mask.shape[1] == n
     assert mask.shape[1] == n
 
     # Edge bond dimension matches TYPE_EDGES
