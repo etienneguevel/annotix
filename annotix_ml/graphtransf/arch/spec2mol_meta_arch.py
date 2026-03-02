@@ -1,11 +1,8 @@
 from typing import Literal
 import torch
-import torch.nn as nn
 from omegaconf import DictConfig
 
-from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch import DigressMetaArch
-from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowing
 
 
 class Spec2MolMetaArch(DigressMetaArch):
@@ -47,21 +44,6 @@ class Spec2MolMetaArch(DigressMetaArch):
         extra_features: list[str] | None = None,
         max_weight: float | None = None,
         morgan_nbits: int = 2048,
-        # SpectraEncoder args
-        form_embedder: str = "float",
-        output_size: int = 4096,
-        hidden_size: int = 512,
-        spectra_dropout: float = 0.0,
-        top_layers: int = 1,
-        refine_layers: int = 4,
-        magma_modulo: int = 2048,
-        peak_attn_layers: int = 2,
-        set_pooling: str = "intensity",
-        pairwise_featurization: bool = True,
-        num_heads: int = 8,
-        embed_instrument: bool = False,
-        inten_transform: str = "float",
-        no_diffs: bool = False,
     ):
         super().__init__(
             d=d,
@@ -84,26 +66,6 @@ class Spec2MolMetaArch(DigressMetaArch):
             morgan_nbits=morgan_nbits,
         )
 
-        # Build the models for spectra treatment
-        self.spectra_encoder = SpectraEncoderGrowing(
-            form_embedder=form_embedder,
-            output_size=output_size,
-            hidden_size=hidden_size,
-            spectra_dropout=spectra_dropout,
-            top_layers=top_layers,
-            magma_modulo=magma_modulo,
-            peak_attn_layers=peak_attn_layers,
-            set_pooling=set_pooling,
-            pairwise_featurization=pairwise_featurization,
-            num_heads=num_heads,
-            embed_instrument=embed_instrument,
-            inten_transform=inten_transform,
-            no_diffs=no_diffs,
-            refine_layers=refine_layers,
-        ).to(device)
-
-        self.merge_function = nn.Linear(output_size, morgan_nbits).to(device)
-
     @classmethod
     def init_from_cfg(
         cls,
@@ -122,18 +84,6 @@ class Spec2MolMetaArch(DigressMetaArch):
             edges_distribution,
             max_weight,
         )
-        spectra_encoder = SpectraEncoderGrowing.init_from_cfg(cfg).to(device)
-
-        if (ckpt_path := cfg.spectra_encoder.get("checkpoint_path")) is not None:
-            model_dict = torch.load(BASE_DIR / ckpt_path, map_location=device)
-            spectra_encoder.load_state_dict(model_dict)
-
-            spectra_encoder.eval()
-
-        arch.spectra_encoder = spectra_encoder
-        arch.merge_function = nn.Linear(
-            cfg.spectra_encoder.output_size, cfg.dataset.morgan_nbits
-        ).to(device)
 
         return arch
 
@@ -143,42 +93,21 @@ class Spec2MolMetaArch(DigressMetaArch):
         edges: torch.Tensor,
         mask: torch.Tensor,
         t: torch.Tensor,
-        num_peaks: torch.Tensor = None,
-        types: torch.Tensor = None,
-        instruments: torch.Tensor = None,
-        ion_vec: torch.Tensor = None,
-        form_vec: torch.Tensor = None,
-        intens: torch.Tensor = None,
+        fp: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run the forward pass for Spec2MolMetaArch.
         This provides explicit arguments for spectral features while leveraging
         DigressMetaArch's noise logic.
         """
-        return super().forward(
-            nodes,
-            edges,
-            mask,
-            t,
-            num_peaks,
-            types,
-            instruments,
-            ion_vec,
-            form_vec,
-            intens,
-        )
+        return super().forward(nodes, edges, mask, t, fp)
 
     def forward_backward(
         self,
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
-        num_peaks: torch.Tensor = None,
-        types: torch.Tensor = None,
-        instruments: torch.Tensor = None,
-        ion_vec: torch.Tensor = None,
-        form_vec: torch.Tensor = None,
-        intens: torch.Tensor = None,
+        fp: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Noise the input batch, predict the clean graph, compute loss and backpropagate.
@@ -201,93 +130,17 @@ class Spec2MolMetaArch(DigressMetaArch):
             tuple: (pN, pE, loss) — predicted node/edge probabilities and scalar loss.
                 All may be None on non-last ranks in pipeline parallelism.
         """
-        return super().forward_backward(
-            nodes,
-            edges,
-            mask,
-            num_peaks,
-            types,
-            instruments,
-            ion_vec,
-            form_vec,
-            intens,
-        )
-
-    def compute_fingerprint(
-        self,
-        nodes,
-        edges,
-        mask,
-        num_peaks=None,
-        types=None,
-        instruments=None,
-        ion_vec=None,
-        form_vec=None,
-        intens=None,
-    ):
-        """
-        Compute the fingerprint for a batch using spectral data when available,
-        or fall back to graph-based Morgan fingerprints.
-
-        When `num_peaks` is None, delegates to the parent `DigressMetaArch.compute_fingerprint`
-        which derives fingerprints from the graph structure via RDKit.
-
-        Args:
-            nodes (torch.Tensor): Node features of shape (bs, n, natoms).
-            edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
-            mask (torch.Tensor): Mask tensor of shape (bs, n).
-            num_peaks (torch.Tensor | None): Number of peaks for each spectrum (bs).
-                If None, falls back to graph-based fingerprints.
-            types (torch.Tensor | None): Peak types for each spectrum (bs, max_len).
-            instruments (torch.Tensor | None): Instrument indices for each spectrum (bs).
-            ion_vec (torch.Tensor | None): Ion/adduct indices for each peak (bs, max_len).
-            form_vec (torch.Tensor | None): Formula embeddings for each peak (bs, max_len, formula_dim).
-            intens (torch.Tensor | None): Intensity values for each peak (bs, max_len).
-
-        Returns:
-            torch.Tensor: Fingerprints of shape (bs, morgan_nbits).
-        """
-        if num_peaks is None:
-            return super().compute_fingerprint(nodes, edges, mask)
-
-        batch = {
-            "num_peaks": num_peaks,
-            "types": types,
-            "instruments": instruments,
-            "ion_vec": ion_vec,
-            "form_vec": form_vec,
-            "intens": intens,
-        }
-
-        # Freeze the spectra encoder; only merge_function receives gradients.
-        with torch.no_grad():
-            enc_output, _ = self.spectra_encoder(batch)
-        fingerprint = self.merge_function(enc_output)
-
-        return fingerprint
+        return super().forward_backward(nodes, edges, mask, fp)
 
     def trainable_parameters(self):
         """Yield from the trainable parameters of the model."""
         yield from super().trainable_parameters()
-        yield from self.merge_function.parameters()
 
     def checkpoint_state_dict(self) -> dict:
         """Return the state dict for checkpointing."""
         state = super().checkpoint_state_dict()
-        state["merge_function"] = self.merge_function.state_dict()
         return state
 
     def load_checkpoint_state_dict(self, state: dict):
         """Load the model state from a checkpoint state dict."""
         super().load_checkpoint_state_dict(state)
-        if "merge_function" in state:
-            self.merge_function.load_state_dict(state["merge_function"])
-
-    def sync_extra_gradients(self):
-        """Synchronize merge_function gradients across ranks in DDP."""
-        if torch.distributed.is_initialized():
-            for param in self.merge_function.parameters():
-                if param.grad is not None:
-                    torch.distributed.all_reduce(
-                        param.grad.data, op=torch.distributed.ReduceOp.AVG
-                    )

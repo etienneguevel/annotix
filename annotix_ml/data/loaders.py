@@ -1,6 +1,8 @@
 import pandas as pd
+import torch
+import torch.nn as nn
 
-from annotix_ml.data.dataset import GraphDatasetFromSMILEs
+from annotix_ml.data.dataset import GraphDatasetFromSMILEs, GraphDatasetWithFP
 from annotix_ml.data.spec_dataset import GraphSpecDataset
 from annotix_ml.data.data_utils import graph_to_smiles_digress
 
@@ -10,6 +12,7 @@ def make_datasets(
     smile_column: str = "smiles",
     split_column: str = "fold",
     val_tag: str | None = "test",
+    fingerprint: bool = False,
     verbose: bool = True,
     cache_path: str | None = None,
     save_cache: bool = True,
@@ -19,8 +22,10 @@ def make_datasets(
     train_cache = f"{cache_path}_train.pt" if cache_path is not None else None
     valid_cache = f"{cache_path}_valid.pt" if cache_path is not None else None
 
+    dataset_type = GraphDatasetWithFP if fingerprint else GraphDatasetFromSMILEs
+
     # Make the datasets
-    train_dataset = GraphDatasetFromSMILEs(
+    train_dataset = dataset_type(
         data=data_path,
         smile_column=smile_column,
         split="train",
@@ -31,7 +36,7 @@ def make_datasets(
         save_cache=save_cache,
         max_nodes=max_nodes,
     )
-    valid_dataset = GraphDatasetFromSMILEs(
+    valid_dataset = dataset_type(
         data=data_path,
         smile_column=smile_column,
         split=val_tag,
@@ -46,7 +51,13 @@ def make_datasets(
     return train_dataset, valid_dataset
 
 
-def make_spec_datasets(cfg, save_cache: bool, verbose: bool):
+def make_spec_datasets(
+    cfg,
+    spectra_encoder: nn.Module,
+    device: torch.device,
+    save_cache: bool,
+    verbose: bool,
+):
     """Create train/valid GraphSpecDataset from config."""
     data = pd.read_csv(
         cfg.dataset.data_path,
@@ -71,6 +82,8 @@ def make_spec_datasets(cfg, save_cache: bool, verbose: bool):
         save_cache=save_cache,
         spec_folder=cfg.dataset.spec_folder,
         subform_folder=cfg.dataset.subform_folder,
+        spectra_encoder=spectra_encoder,
+        device=device,
         smile_column=cfg.dataset.smile_column,
         sanitizer=graph_to_smiles_digress,
         verbose=verbose,
@@ -84,6 +97,8 @@ def make_spec_datasets(cfg, save_cache: bool, verbose: bool):
         save_cache=save_cache,
         spec_folder=cfg.dataset.spec_folder,
         subform_folder=cfg.dataset.subform_folder,
+        spectra_encoder=spectra_encoder,
+        device=device,
         smile_column=cfg.dataset.smile_column,
         sanitizer=graph_to_smiles_digress,
         verbose=verbose,

@@ -6,6 +6,7 @@ from typing import Callable
 
 import pandas as pd
 import torch
+import torch.nn as nn
 from pandas.core.frame import DataFrame
 from rdkit.RDLogger import DisableLog
 from torch.utils.data import Dataset
@@ -28,6 +29,8 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         data: str | DataFrame,
         spec_folder: str | Path,
         subform_folder: str | Path,
+        spectra_encoder: nn.Module,
+        device: torch.device,
         smile_column: str = "smiles",
         spec_column: str = "spec",
         formula_column: str = "formula",
@@ -55,6 +58,8 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         self.formula_column = formula_column
         self.instrument_column = instrument_column
         self.max_nodes = max_nodes
+        self.spectra_encoder = spectra_encoder
+        self.device = device
 
         # SMILES list
         smiles_list = self.data[smile_column].to_list()
@@ -208,8 +213,13 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
             instrument=instrument,
         )
         spec_features = self.spec_featurizer.featurize(spec_obj)
+        spec_dict = self.spec_featurizer.collate_fn([spec_features])
 
-        # Return merged dict
-        res = {"nodes": nodes, "edges": edges, "smiles": sm, "spec_name": spec_name}
-        res.update(spec_features)
-        return res
+        # Compute the fingerprint from the spec_features
+        spec_dict = {
+            k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+            for k, v in spec_dict.items()
+        }
+        fp, _ = self.spectra_encoder(spec_dict)
+
+        return nodes, edges, fp

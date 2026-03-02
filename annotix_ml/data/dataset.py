@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
+from annotix_ml.graphtransf.math.metrics import mol_to_fingerprint
 
 
 def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
@@ -344,3 +345,17 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
         nodes, edges = self.smilesToGraph(sm)  # (n, natoms), (n, n, nbonds)
 
         return nodes, edges
+
+
+class GraphDatasetWithFP(GraphDatasetFromSMILEs):
+    def __getitem__(self, idx):
+        sm = self.smiles[idx]
+
+        # Calculate the nodes and edges
+        nodes, edges = self.smilesToGraph(sm)
+
+        # Calculate the fingerprint from the smiles
+        mol = Chem.MolFromSmiles(sm)
+        fp = torch.from_numpy(mol_to_fingerprint(mol))
+
+        return nodes, edges, fp

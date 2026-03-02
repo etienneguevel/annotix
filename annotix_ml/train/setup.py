@@ -1,16 +1,17 @@
 from functools import partial
 
+import torch
 from omegaconf import OmegaConf
 
 import annotix_ml.distributed as dist
 from annotix_ml import BASE_DIR
 from annotix_ml.data.datacollator import (
     collateGraph,
-    collateGraphSpec,
     collateGraphStatic,
 )
 from annotix_ml.data.loaders import make_datasets, make_spec_datasets
 from annotix_ml.graphtransf.arch import DigressMetaArch, Spec2MolMetaArch
+from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowing
 
 
 def setup(args):
@@ -49,14 +50,43 @@ def setup(args):
     return cfg
 
 
-def setup_model_mode(cfg):
-    if cfg.get("spectra_encoder") is None:
-        print("Building classic Graph datasets.")
+def setup_model_mode(cfg, device):
+    if cfg.get("spectra_encoder") is not None:
+        spectra_encoder = SpectraEncoderGrowing.init_from_cfg(cfg)
+        if (ckpt_path := cfg.spectra_encoder.get("checkpoint_path")) is not None:
+            model_dict = torch.load(BASE_DIR / ckpt_path)
+            spectra_encoder.load_state_dict(model_dict)
+
+        spectra_encoder = spectra_encoder.to(device)
+
+        print("Building graph-spec datasets.")
+        train_dataset, valid_dataset = make_spec_datasets(
+            cfg,
+            spectra_encoder,
+            device,
+            save_cache=cfg.dataset.get("cache_path"),
+            verbose=dist.is_main_process(),
+        )
+
+        print("Using the Spec2MolMetaArch\n")
+        arch = Spec2MolMetaArch
+        collate_fn = collateGraph
+
+    else:
+        if "spectra_fingerprint" in cfg.model.get("extra_features"):
+            fingerprint = True
+            print("Building datasets pre-computing fingerprints from graphs.")
+
+        else:
+            fingerprint = False
+            print("Building classic Graph datasets.")
+
         train_dataset, valid_dataset = make_datasets(
             cfg.dataset.data_path,
             cfg.dataset.smile_column,
             cfg.dataset.split_column,
             cfg.dataset.val_tag,
+            fingerprint=fingerprint,
             verbose=True,
             cache_path=cfg.dataset.get("cache_path"),
             save_cache=dist.is_main_process(),
@@ -74,24 +104,5 @@ def setup_model_mode(cfg):
 
         else:
             collate_fn = collateGraph
-
-    else:
-        print("Building graph-spec datasets.")
-        train_dataset, valid_dataset = make_spec_datasets(
-            cfg,
-            save_cache=cfg.dataset.get("cache_path"),
-            verbose=dist.is_main_process(),
-        )
-
-        print("Using the Spec2MolMetaArch.\n")
-        arch = Spec2MolMetaArch
-
-        if cfg.train.get("distributed") == "pipeline":
-            raise ValueError(
-                "pipeline distributed is not enabled for spec2mol, change the dist setup."
-            )
-
-        else:
-            collate_fn = collateGraphSpec
 
     return train_dataset, valid_dataset, arch, collate_fn

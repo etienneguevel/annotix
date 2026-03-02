@@ -60,7 +60,7 @@ def train(cfg):
     data_size = dist.get_global_size()
 
     # Make the training objects from the cfg mode (graphtransf or spec2mol)
-    train_dataset, valid_dataset, arch, collate_fn = setup_model_mode(cfg)
+    train_dataset, valid_dataset, arch, collate_fn = setup_model_mode(cfg, device)
 
     # Prepare the save path & check if there is already some existing checkpoints
     save_path = cfg.train.save_path
@@ -406,7 +406,7 @@ def train(cfg):
                 else:
                     samples_per_rank = cfg.valid.num_samples
 
-                if isinstance(digress, Spec2MolMetaArch):
+                if "spectra_fingerprint" in cfg.model.get("extra_features"):
                     gen_metrics = generate_samples_from_spec(
                         digress, samples_per_rank, valid_loader
                     )

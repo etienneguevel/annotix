@@ -232,7 +232,7 @@ def generate_samples(
     }
 
 
-def generate_samples_from_spec(
+def generate_samples_from_fp(
     model: Spec2MolMetaArch,
     num_samples: int,
     eval_dataloader: DataLoader,
@@ -254,7 +254,7 @@ def generate_samples_from_spec(
         batch = [
             k.to(model.device) if isinstance(k, torch.Tensor) else k for k in batch
         ]
-        nodes, edges, mask, *spectra_args = batch
+        nodes, edges, mask, fp = batch
         bs = nodes.shape[0]
 
         # Generate the samples from the spectra_args
@@ -265,7 +265,7 @@ def generate_samples_from_spec(
                 num_samples=n,
                 max_nodes=n.max(),
                 progress_bar=True,
-                other_args=spectra_args,
+                fp=fp,
             )
 
             # Convert to smiles

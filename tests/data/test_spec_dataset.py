@@ -1,4 +1,5 @@
 import torch
+from omegaconf import OmegaConf
 from torch import Tensor
 
 import rdkit.Chem as Chem
@@ -6,14 +7,45 @@ import rdkit.Chem as Chem
 from annotix_ml import BASE_DIR
 from annotix_ml.data.spec_dataset import GraphSpecDataset
 from annotix_ml.data.atoms_data import TYPE_EDGES
-
+from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowing
 
 DATA_PATH = BASE_DIR / "data/BanyulsInference/labels.tsv"
 SPEC_FOLDER = BASE_DIR / "data/BanyulsInference/spec_files"
 SUBFORM_FOLDER = "data/BanyulsInference/subformulae/default_subformulae"
 
 
+def _load_cfg():
+    # Load default config
+    default_cfg_path = BASE_DIR / "configs" / "default_config.yaml"
+    default_cfg = OmegaConf.load(default_cfg_path)
+
+    # Load the spec2mol config
+    spectra_cfg = OmegaConf.load(
+        BASE_DIR / "configs" / "spec2mol" / "spectral_feat" / "baseline.yaml"
+    )
+
+    # Merge the configs
+    cfg = OmegaConf.merge(default_cfg, spectra_cfg)
+
+    if "spectra_fingerprint" not in cfg.model.extra_features:
+        cfg.model.extra_features.append("spectra_fingerprint")
+    return cfg
+
+
 def _make_dataset(**kwargs):
+    cfg = _load_cfg()
+    spectra_encoder = SpectraEncoderGrowing.init_from_cfg(cfg)
+
+    device = (
+        torch.device("cuda")
+        if torch.cuda.is_available()
+        else torch.device("mps")
+        if torch.mps.is_available()
+        else torch.device("cpu")
+    )
+
+    spectra_encoder = spectra_encoder.to(device)
+
     defaults = dict(
         data=DATA_PATH,
         spec_folder=SPEC_FOLDER,
@@ -22,9 +54,13 @@ def _make_dataset(**kwargs):
         spec_column="spec",
         formula_column="formula",
         instrument_column="instrument",
+        spectra_encoder=spectra_encoder,
+        device=device,
     )
     defaults.update(kwargs)
-    return GraphSpecDataset(**defaults)
+
+    dataset = GraphSpecDataset(**defaults)
+    return dataset
 
 
 def test_graph_spec_dataset():
@@ -35,30 +71,18 @@ def test_graph_spec_dataset():
     assert len(dataset) > 0
 
     # Test __getitem__
-    item = dataset[0]
-    expected_item_keys = [
-        "nodes",
-        "edges",
-        "smiles",
-        "spec_name",
-        "peak_type",
-        "form_vec",
-        "ion_vec",
-        "frag_intens",
-        "instrument",
-    ]
-    for key in expected_item_keys:
-        assert key in item, f"Missing key in item: {key}"
+    nodes, edges, fp = dataset[0]
 
     # Nodes and edges are tensors with correct ranks
-    assert isinstance(item["nodes"], Tensor)
-    assert isinstance(item["edges"], Tensor)
-    assert len(item["nodes"].size()) == 2  # (n, natoms)
-    assert len(item["edges"].size()) == 3  # (n, n, nbonds)
+    assert isinstance(nodes, Tensor)
+    assert isinstance(edges, Tensor)
+    assert isinstance(fp, Tensor)
+    assert len(nodes.size()) == 2  # (n, natoms)
+    assert len(edges.size()) == 3  # (n, n, nbonds)
 
     # Check that nodes and edges are one-hot encoded
-    assert (item["nodes"].sum(-1) == 1).all()
-    assert (item["edges"].sum(-1) == 1).all()
+    assert (nodes.sum(-1) == 1).all()
+    assert (edges.sum(-1) == 1).all()
 
 
 def test_dataset_distribution():

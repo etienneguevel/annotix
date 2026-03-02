@@ -1,7 +1,6 @@
 import os
-from typing import Literal, Any
+from typing import Literal
 
-import rdkit.Chem as Chem
 import torch
 from omegaconf import DictConfig
 from torch.distributed.pipelining import ScheduleGPipe
@@ -10,7 +9,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
 from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
-from annotix_ml.data.data_utils import mask_any_tensor, batch_graph_to_smiles
+from annotix_ml.data.data_utils import mask_any_tensor
 from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
@@ -23,7 +22,6 @@ from annotix_ml.graphtransf.math.extra_features import (
     weight,
 )
 from annotix_ml.graphtransf.math.losses import digress_loss
-from annotix_ml.graphtransf.math.metrics import mol_to_fingerprint
 from annotix_ml.graphtransf.math.noising import sample_discrete_features
 
 
@@ -189,6 +187,12 @@ class DigressMetaArch:
         if not valid_elements:
             valid_elements = list(VALID_ELEMENTS)
 
+        size_fp = (
+            cfg.spectra_encoder.get("output_size")
+            if cfg.get("spectra_encoder") is not None
+            else cfg.dataset.get("morgan_nbits")
+        )
+
         return cls(
             d=cfg.model.d,
             de=cfg.model.de,
@@ -207,6 +211,7 @@ class DigressMetaArch:
             nodes_distribution=nodes_distribution,
             edges_distribution=edges_distribution,
             max_weight=max_weight,
+            morgan_nbits=size_fp,
         )
 
     @classmethod
@@ -323,30 +328,12 @@ class DigressMetaArch:
 
         return node_features
 
-    def compute_fingerprint(self, nodes, edges, mask, *_):
-        smiles = batch_graph_to_smiles(nodes, edges, mask, self.valid_elements)
-        mols = [Chem.MolFromSmiles(sm) for sm in smiles]
-        fps = torch.stack(
-            [
-                torch.tensor(
-                    mol_to_fingerprint(mol)
-                    if mol is not None
-                    else [0] * self.morgan_nbits,
-                    dtype=torch.float,
-                    device=nodes.device,
-                )
-                for mol in mols
-            ]
-        )
-        return fps  # (bs, morgan_nbits)
-
     def compute_extra_features(
         self,
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
         t: torch.Tensor,
-        *args,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute extra node and global features for the current graph state.
@@ -395,8 +382,7 @@ class DigressMetaArch:
                 global_features = global_features_weight
 
             elif name == "spectra_fingerprint":
-                global_features = self.compute_fingerprint(nodes, edges, mask, *args)
-                node_features = None
+                continue
 
             else:
                 raise ValueError(f"{name} is not a recognized extra feature.")
@@ -409,9 +395,11 @@ class DigressMetaArch:
                 global_features_list.append(global_features)
 
         if node_features_list:
-            pos_emb = torch.cat(node_features_list, dim=-1)  # (bs, n, n_features)
+            pos_emb = torch.cat(node_features_list, dim=-1).to(
+                self.device
+            )  # (bs, n, n_features)
         else:
-            pos_emb = torch.zeros((*nodes.shape[:-1], 0), device=nodes.device)
+            pos_emb = torch.zeros((*nodes.shape[:-1], 0), device=self.device)
 
         if global_features_list:
             y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
@@ -420,7 +408,7 @@ class DigressMetaArch:
 
         # Add the noising step to y
         t = t.to(device=y.device, dtype=y.dtype) / self.noiser.T
-        y = torch.cat([y, t], dim=-1)
+        y = torch.cat([y, t], dim=-1).to(self.device)
 
         return pos_emb, y
 
@@ -429,8 +417,8 @@ class DigressMetaArch:
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
-        t: torch.Tensor | None = None,
-        *args,
+        t: torch.Tensor,
+        fp: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run the forward pass: noise the input batch, then predict the clean graph.
@@ -455,8 +443,11 @@ class DigressMetaArch:
                 # Only the first stage needs the extra features; non-first stages
                 # receive intermediate activations from the previous stage via P2P.
                 pos_emb, y = self.compute_extra_features(
-                    nodes, edges, mask, t, *args
+                    nodes, edges, mask, t
                 )  # (bs, node_features), (bs, global_features)
+                if fp is not None:
+                    y = torch.cat([y, fp], dim=-1)
+
                 input_args = (edges, mask, y, pos_emb, nodes)
                 out = self.eval_schedule.step(*input_args)
 
@@ -472,8 +463,13 @@ class DigressMetaArch:
         # no gradient sync is needed.
         else:
             pos_emb, y = self.compute_extra_features(
-                nodes, edges, mask, t, *args
+                nodes, edges, mask, t
             )  # (bs, node_features), (bs, global_features)
+
+            # Add the fp if is in the batch
+            if fp is not None:
+                y = torch.cat([y, fp], dim=-1)
+
             out = self.diffuser(edges, mask, y, pos_emb, nodes)
             pN, pE, *_ = out
 
@@ -487,7 +483,7 @@ class DigressMetaArch:
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
-        *args,
+        fp: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Noise the input batch, predict the clean graph, compute loss, and run backpropagation.
@@ -521,8 +517,12 @@ class DigressMetaArch:
                 # non-first stages receive intermediate activations via P2P.
                 N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
                 pos_emb, y = self.compute_extra_features(
-                    N_noised, E_noised, mask, sampled_t, *args
+                    N_noised, E_noised, mask, sampled_t
                 )  # (bs, node_features), (bs, global_features)
+
+                if fp is not None:
+                    y = torch.cat([y, fp], dim=-1)
+
                 input_args = (E_noised, mask, y, pos_emb, N_noised)
                 out = self.train_schedule.step(*input_args)
 
@@ -535,26 +535,22 @@ class DigressMetaArch:
             else:
                 out = self.train_schedule.step()
 
-        elif self.train_model is not None:
-            # Data parallelism: call through the DDP wrapper so that loss.backward()
-            # triggers the all-reduce gradient synchronisation across ranks.
-            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
-            pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t, *args
-            )  # (bs, node_features), (bs, global_features)
-            out = self.train_model(E_noised, mask, y, pos_emb, N_noised)
-            pN, pE, *_ = out
-            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
-            loss.backward()
-
         else:
-            # No distributed training
             N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
             pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t, *args
+                N_noised, E_noised, mask, sampled_t
             )  # (bs, node_features), (bs, global_features)
+            if fp is not None:
+                y = torch.cat([y, fp], dim=-1)
+
             input_args = (E_noised, mask, y, pos_emb, N_noised)
-            out = self.diffuser(*input_args)
+
+            if self.train_model is not None:
+                out = self.train_model(E_noised, mask, y, pos_emb, N_noised)
+
+            else:
+                out = self.diffuser(*input_args)
+
             pN, pE, *_ = out
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
             loss.backward()
@@ -572,7 +568,7 @@ class DigressMetaArch:
         min_nodes: int = 6,
         progress_bar=False,
         num_attempts: int = 3,
-        other_args: list[Any] = [],
+        fp: torch.Tensor | None = None,
     ):
         """
         Generate new graphs using the reverse diffusion process.
@@ -683,7 +679,7 @@ class DigressMetaArch:
                     )  # bs, 1
 
                     # Forward pass — all ranks must call this to drive the pipeline.
-                    pN, pE = self.forward(N, E, mask, t_tensor, *other_args)
+                    pN, pE = self.forward(N, E, mask, t_tensor, fp)
 
                     # Only the last pipeline rank gets valid predictions.
                     if pN is not None and pE is not None:
