@@ -237,6 +237,29 @@ def generate_samples_from_fp(
     num_samples: int,
     eval_dataloader: DataLoader,
 ):
+    """
+    Generate molecules conditioned on pre-computed fingerprints and compute retrieval metrics.
+
+    Iterates over `eval_dataloader`, where each batch is expected to unpack as
+    `(nodes, edges, mask, fp)`. For each batch, the model generates molecules with the same
+    number of nodes as the true graphs, conditioned on the provided fingerprint tensor.
+
+    Args:
+        model (DigressMetaArch): The diffusion model used for generation.
+        num_samples (int): Total number of samples to generate before stopping.
+        eval_dataloader (DataLoader): DataLoader yielding batches of
+            (nodes, edges, mask, fp) tensors.
+
+    Returns:
+        dict[str, list]: A dictionary with the following keys:
+            - "all_gen_smiles" (list[str]): Generated SMILES strings (standard method).
+            - "all_gen_smiles_digress" (list[str]): Generated SMILES strings (DiGress method).
+            - "true_smiles" (list[str]): Ground-truth SMILES from the dataset.
+            - "validity" (list[float]): Per-sample validity flags (1.0 or 0.0) for standard SMILES.
+            - "validity_digress" (list[float]): Per-sample validity flags for DiGress SMILES.
+            - "tan_sim" (list[float]): Tanimoto similarity between generated and true molecules.
+            - "mces" (list[float]): MCES (Maximum Common Edge Subgraph) distance scores.
+    """
     # Init the lists
     metrics = defaultdict(list)
     samples_generated = 0
@@ -263,7 +286,7 @@ def generate_samples_from_fp(
         try:
             gen_N, gen_E, gen_mask = model.generate(
                 num_samples=n,
-                max_nodes=n.max().item(),
+                max_nodes=int(n.max().item()),
                 progress_bar=True,
                 fp=fp,
             )

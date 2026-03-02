@@ -349,6 +349,21 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
 
 class GraphDatasetWithFP(GraphDatasetFromSMILEs):
     def __getitem__(self, idx):
+        """
+        Get a graph representation and Morgan fingerprint of a molecule by index.
+
+        Extends the base class by additionally computing the Morgan fingerprint
+        for the molecule directly from its SMILES string.
+
+        Args:
+            idx (int): The index of the molecule to fetch.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple (nodes, edges, fp) where:
+                - nodes (torch.Tensor): One-hot encoded nodes of shape (n, natoms).
+                - edges (torch.Tensor): One-hot encoded edges of shape (n, n, nbonds).
+                - fp (torch.Tensor): Morgan fingerprint of shape (morgan_nbits,).
+        """
         sm = self.smiles[idx]
 
         # Calculate the nodes and edges

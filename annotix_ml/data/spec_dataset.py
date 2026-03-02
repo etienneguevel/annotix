@@ -43,6 +43,38 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         max_nodes: int | None = None,
         **kwargs,
     ):
+        """
+        Initialize the GraphSpecDataset.
+
+        Args:
+            data (str | DataFrame): Path to a CSV/TSV file or a pandas DataFrame containing
+                molecule and spectra metadata.
+            spec_folder (str | Path): Directory where `.ms` spectra files are stored.
+            subform_folder (str | Path): Directory containing sub-formula annotation files
+                used by the `PeakFormula` featurizer.
+            spectra_encoder (nn.Module): Pre-loaded spectra encoder. Called in `__getitem__`
+                to compute a fingerprint from the spectrum of each molecule.
+            device (torch.device): Device on which encoder computations are performed.
+            smile_column (str): Name of the column containing SMILES strings. Defaults to "smiles".
+            spec_column (str): Name of the column containing spectrum file identifiers.
+                Defaults to "spec".
+            formula_column (str): Name of the column containing molecular formulas.
+                Defaults to "formula".
+            instrument_column (str): Name of the column containing instrument type information.
+                Defaults to "instrument".
+            valid_elements (list[str] | None): List of valid atom symbols. If None, elements
+                are auto-detected from the SMILES in the dataset.
+            sanitizer (Callable | None): Optional function to further filter molecules based
+                on their graph representation.
+            verbose (bool): Whether to print progress information. Defaults to True.
+            cache_path (str | None): Path to a `.pt` cache file for dataset statistics.
+                If the file exists it is loaded; otherwise the dataset is built and saved there.
+            save_cache (bool): Whether to write the cache file after building. Set to False
+                on non-main ranks in distributed training. Defaults to True.
+            max_nodes (int | None): Maximum number of atoms per molecule. Molecules with more
+                atoms are filtered out. Defaults to None (no limit).
+            **kwargs: Additional keyword arguments forwarded to `PeakFormula`.
+        """
         super().__init__()
         if isinstance(data, (str, Path)):
             self.data = pd.read_csv(
@@ -197,6 +229,22 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         return len(self.smiles)
 
     def __getitem__(self, idx):
+        """
+        Get a graph representation and spectra-derived fingerprint for a molecule by index.
+
+        Loads the corresponding `.ms` spectrum file, featurizes it with `PeakFormula`,
+        runs the spectra encoder to produce a fingerprint, and returns the graph alongside it.
+
+        Args:
+            idx (int): The index of the molecule to fetch.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple (nodes, edges, fp) where:
+                - nodes (torch.Tensor): One-hot encoded node features of shape (n, natoms).
+                - edges (torch.Tensor): One-hot encoded edge features of shape (n, n, nbonds).
+                - fp (torch.Tensor): Spectra-derived fingerprint of shape (output_size,),
+                  obtained by squeezing the batch dimension from the encoder output.
+        """
         sm = self.smiles[idx]
         spec_name = self.spec_names[idx]
         formula = self.formulas[idx]

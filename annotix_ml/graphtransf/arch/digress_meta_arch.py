@@ -50,6 +50,9 @@ class DigressMetaArch:
         k (int | None, optional): Number of eigenvectors for Laplacian embedding. Required if "laplacian_embedding" is in `extra_features`.
         extra_features (list[str] | None, optional): List of names of extra features to compute.
         max_weight (float | None, optional): Maximum molecular weight for normalization. Required if "valence_features" is in `extra_features`.
+        morgan_nbits (int, optional): Size of the fingerprint vector expected when
+            `"spectra_fingerprint"` is in `extra_features`. Determines the contribution
+            of the fingerprint to `global_features`. Defaults to 2048.
     """
 
     known_extra_features = [
@@ -348,6 +351,12 @@ class DigressMetaArch:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
                 - node_features (torch.Tensor): Computed node features of shape (bs, n, node_features).
                 - global_features (torch.Tensor): Computed global features of shape (bs, global_features).
+
+        Note:
+            When `"spectra_fingerprint"` appears in `self.extra_features`, it is **skipped**
+            here (via ``continue``). The fingerprint contribution to ``y`` is instead injected
+            directly by the callers (`forward`, `forward_backward`, `generate`) which append the
+            ``fp`` tensor to ``y`` after this method returns.
         """
         # Init the list of node and global_features
         node_features_list = []
@@ -430,7 +439,9 @@ class DigressMetaArch:
             edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
             mask (torch.Tensor): Mask tensor of shape (bs, n).
             t (torch.Tensor | None): Optional timestep tensor.
-            *args: Extra arguments passed to compute_extra_features.
+            fp (torch.Tensor | None): Pre-computed fingerprint of shape (bs, morgan_nbits).
+                If provided, concatenated to the global feature vector ``y`` after
+                `compute_extra_features`.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -496,7 +507,9 @@ class DigressMetaArch:
             nodes (torch.Tensor): Node features of shape (bs, n, natoms).
             edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
             mask (torch.Tensor): Mask tensor of shape (bs, n).
-            *args: Extra arguments passed to compute_extra_features.
+            fp (torch.Tensor | None): Pre-computed fingerprint of shape (bs, morgan_nbits).
+                If provided, concatenated to the global feature vector ``y`` after
+                `compute_extra_features`.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
@@ -589,7 +602,8 @@ class DigressMetaArch:
             min_nodes (int, optional): Minimum number of nodes for the generated graphs. Defaults to 6.
             progress_bar (bool, optional): Whether to show a progress bar during denoising. Defaults to False.
             num_attempts (int, optional): Number of attempts to generate graphs (to handle potential LinAlgError). Defaults to 3.
-            *args: Extra arguments passed to compute_extra_features (e.g. conditioning spectra).
+            fp (torch.Tensor | None): Pre-computed fingerprint of shape (bs, morgan_nbits).
+                If provided, passed to `forward` at each denoising step to condition generation.
 
         Raises:
             LinAlgError: If generation fails after all attempts due to numerical instability.

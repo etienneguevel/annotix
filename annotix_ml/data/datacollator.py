@@ -14,15 +14,22 @@ def collateGraph(
     plug it to a torch DataLoader.
 
     Args:
-    batch, which is a list of size 2 tuples made of :
-    - N: torch.Tensor, contains node of size (n_mol, natoms)
-    - E: torch.Tensor, contains edge of size (n_mol, n_mol, nbonds)
+        batch: A list of 2- or 3-element tuples, each containing:
+            - N (torch.Tensor): Node features of shape (natoms_i, natoms).
+            - E (torch.Tensor): Edge features of shape (natoms_i, natoms_i, nbonds).
+            - fp (torch.Tensor, optional): Pre-computed fingerprint of shape (nbits,).
+              Present when the dataset returns fingerprints (e.g. GraphDatasetWithFP).
 
     Returns:
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
-    - nodes: torch.Tensor of shape (bs, n_batch, natoms)
-    - edges: torch.Tensor of shape (bs, n_batch, n_batch, nbonds)
-    - mask: torch.Tensor of shape (bs, n_batch)
+        When no fingerprints are present:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: (nodes, edges, mask)
+        When fingerprints are present:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            (nodes, edges, mask, fps), where:
+            - nodes: torch.Tensor of shape (bs, n_batch, natoms)
+            - edges: torch.Tensor of shape (bs, n_batch, n_batch, nbonds)
+            - mask: torch.Tensor of shape (bs, n_batch)
+            - fps: torch.Tensor of shape (bs, nbits)
     """
     # Unpack the nodes, edges and pos_emb
     # bs = len(batch)

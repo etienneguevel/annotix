@@ -50,6 +50,26 @@ def setup(args):
 
 
 def setup_model_mode(cfg, device):
+    """
+    Build train/validation datasets and select the appropriate collate function based on config.
+
+    Branches on whether a `spectra_encoder` section is present in `cfg`:
+    - **Spec2Mol path** (`cfg.spectra_encoder` present): Loads and freezes a
+      `SpectraEncoderGrowing` model, then builds `GraphSpecDataset` instances via
+      `make_spec_datasets`. The encoder is passed into the dataset so fingerprints are
+      pre-computed at dataset time. Uses `collateGraph` as the collate function.
+    - **Graph-only path** (`cfg.spectra_encoder` absent): Uses `GraphDatasetWithFP` when
+      `"spectra_fingerprint"` is listed in `cfg.model.extra_features`, otherwise uses
+      `GraphDatasetFromSMILEs`. For pipeline-parallel training, switches to
+      `collateGraphStatic` with a fixed `n_max` derived from the training set.
+
+    Args:
+        cfg (DictConfig): Merged OmegaConf configuration object.
+        device (torch.device): Device on which the spectra encoder (if any) is placed.
+
+    Returns:
+        tuple[Dataset, Dataset, Callable]: A tuple (train_dataset, valid_dataset, collate_fn).
+    """
     if cfg.get("spectra_encoder") is not None:
         spectra_encoder = SpectraEncoderGrowing.init_from_cfg(cfg)
         if (ckpt_path := cfg.spectra_encoder.get("checkpoint_path")) is not None:
