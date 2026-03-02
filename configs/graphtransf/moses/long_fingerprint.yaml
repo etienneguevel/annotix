@@ -7,6 +7,7 @@ dataset:
   smile_column: SMILES
   split_column: SPLIT
   cache_path: data/cache/moses_san
+  morgan_nbits: 2048
 
 model:
   d: 256
