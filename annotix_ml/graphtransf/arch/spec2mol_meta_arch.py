@@ -6,7 +6,6 @@ from omegaconf import DictConfig
 from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch import DigressMetaArch
 from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowing
-from annotix_ml.graphtransf.math.extra_features import spectra_fingerprint
 
 
 class Spec2MolMetaArch(DigressMetaArch):
@@ -64,9 +63,6 @@ class Spec2MolMetaArch(DigressMetaArch):
         inten_transform: str = "float",
         no_diffs: bool = False,
     ):
-        # Store info specific to spectra before super().__init__ (which calls properties)
-        self.morgan_nbits = morgan_nbits
-
         super().__init__(
             d=d,
             de=de,
@@ -85,6 +81,7 @@ class Spec2MolMetaArch(DigressMetaArch):
             k=k,
             extra_features=extra_features,
             max_weight=max_weight,
+            morgan_nbits=morgan_nbits,
         )
 
         # Build the models for spectra treatment
@@ -139,13 +136,6 @@ class Spec2MolMetaArch(DigressMetaArch):
         ).to(device)
 
         return arch
-
-    @property
-    def global_features(self) -> int:
-        gf = super().global_features
-        if "spectra_fingerprint" in self.extra_features:
-            gf += self.morgan_nbits
-        return gf
 
     def forward(
         self,
@@ -223,50 +213,58 @@ class Spec2MolMetaArch(DigressMetaArch):
             intens,
         )
 
-    def compute_extra_features(
+    def compute_fingerprint(
         self,
-        nodes: torch.Tensor,
-        edges: torch.Tensor,
-        mask: torch.Tensor,
-        t: torch.Tensor,
-        num_peaks,
-        types,
-        instruments,
-        ion_vec,
-        form_vec,
-        intens,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        nodes,
+        edges,
+        mask,
+        num_peaks=None,
+        types=None,
+        instruments=None,
+        ion_vec=None,
+        form_vec=None,
+        intens=None,
+    ):
         """
-        Compute extra node and global features for the current graph state.
+        Compute the fingerprint for a batch using spectral data when available,
+        or fall back to graph-based Morgan fingerprints.
 
-        Delegates standard features (laplacian, node_cycle, valence) to the parent,
-        then appends the spectra fingerprint if configured.
+        When `num_peaks` is None, delegates to the parent `DigressMetaArch.compute_fingerprint`
+        which derives fingerprints from the graph structure via RDKit.
+
+        Args:
+            nodes (torch.Tensor): Node features of shape (bs, n, natoms).
+            edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
+            mask (torch.Tensor): Mask tensor of shape (bs, n).
+            num_peaks (torch.Tensor | None): Number of peaks for each spectrum (bs).
+                If None, falls back to graph-based fingerprints.
+            types (torch.Tensor | None): Peak types for each spectrum (bs, max_len).
+            instruments (torch.Tensor | None): Instrument indices for each spectrum (bs).
+            ion_vec (torch.Tensor | None): Ion/adduct indices for each peak (bs, max_len).
+            form_vec (torch.Tensor | None): Formula embeddings for each peak (bs, max_len, formula_dim).
+            intens (torch.Tensor | None): Intensity values for each peak (bs, max_len).
+
+        Returns:
+            torch.Tensor: Fingerprints of shape (bs, morgan_nbits).
         """
-        # Temporarily hide spectra_fingerprint so the parent doesn't hit ValueError
-        all_features = self.extra_features
-        self.extra_features = [
-            f for f in all_features if f in DigressMetaArch.known_extra_features
-        ]
+        if num_peaks is None:
+            return super().compute_fingerprint(nodes, edges, mask)
 
-        pos_emb, y = super().compute_extra_features(nodes, edges, mask, t)
+        batch = {
+            "num_peaks": num_peaks,
+            "types": types,
+            "instruments": instruments,
+            "ion_vec": ion_vec,
+            "form_vec": form_vec,
+            "intens": intens,
+        }
 
-        # Restore full feature list
-        self.extra_features = all_features
+        # Freeze the spectra encoder; only merge_function receives gradients.
+        with torch.no_grad():
+            enc_output, _ = self.spectra_encoder(batch)
+        fingerprint = self.merge_function(enc_output)
 
-        if "spectra_fingerprint" in all_features:
-            fp = spectra_fingerprint(
-                num_peaks,
-                types,
-                instruments,
-                ion_vec,
-                form_vec,
-                intens,
-                self.spectra_encoder,
-                self.merge_function,
-            )
-            y = torch.cat([y, fp], dim=-1)
-
-        return pos_emb, y
+        return fingerprint
 
     def trainable_parameters(self):
         """Yield from the trainable parameters of the model."""

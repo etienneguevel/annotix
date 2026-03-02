@@ -1,6 +1,7 @@
 import os
 from typing import Literal, Any
 
+import rdkit.Chem as Chem
 import torch
 from omegaconf import DictConfig
 from torch.distributed.pipelining import ScheduleGPipe
@@ -8,10 +9,10 @@ from torch.linalg import LinAlgError
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
+from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
+from annotix_ml.data.data_utils import mask_any_tensor, batch_graph_to_smiles
 from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
-from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
-from annotix_ml.data.data_utils import mask_any_tensor
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.math.extra_features import (
@@ -22,6 +23,7 @@ from annotix_ml.graphtransf.math.extra_features import (
     weight,
 )
 from annotix_ml.graphtransf.math.losses import digress_loss
+from annotix_ml.graphtransf.math.metrics import mol_to_fingerprint
 from annotix_ml.graphtransf.math.noising import sample_discrete_features
 
 
@@ -52,7 +54,12 @@ class DigressMetaArch:
         max_weight (float | None, optional): Maximum molecular weight for normalization. Required if "valence_features" is in `extra_features`.
     """
 
-    known_extra_features = ["laplacian_embedding", "node_cycle", "valence_features"]
+    known_extra_features = [
+        "laplacian_embedding",
+        "node_cycle",
+        "valence_features",
+        "spectra_fingerprint",
+    ]
 
     def __init__(
         self,
@@ -73,6 +80,7 @@ class DigressMetaArch:
         k: int | None = None,
         extra_features: list[str] | None = None,
         max_weight: float | None = None,
+        morgan_nbits: int = 2048,
     ):
         # Store information
         self.loss_ratio = loss_ratio
@@ -82,6 +90,7 @@ class DigressMetaArch:
         self.extra_features = extra_features or []
         self.num_ev = k
         self.max_weight = max_weight
+        self.morgan_nbits = morgan_nbits
 
         for name in self.extra_features:
             if name not in self.known_extra_features:
@@ -294,6 +303,9 @@ class DigressMetaArch:
             elif name == "valence_features":
                 global_features += 1
 
+            elif name == "spectra_fingerprint":
+                global_features += self.morgan_nbits
+
         return global_features
 
     @property
@@ -311,12 +323,30 @@ class DigressMetaArch:
 
         return node_features
 
+    def compute_fingerprint(self, nodes, edges, mask, *_):
+        smiles = batch_graph_to_smiles(nodes, edges, mask, self.valid_elements)
+        mols = [Chem.MolFromSmiles(sm) for sm in smiles]
+        fps = torch.stack(
+            [
+                torch.tensor(
+                    mol_to_fingerprint(mol)
+                    if mol is not None
+                    else [0] * self.morgan_nbits,
+                    dtype=torch.float,
+                    device=nodes.device,
+                )
+                for mol in mols
+            ]
+        )
+        return fps  # (bs, morgan_nbits)
+
     def compute_extra_features(
         self,
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
         t: torch.Tensor,
+        *args,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute extra node and global features for the current graph state.
@@ -364,6 +394,10 @@ class DigressMetaArch:
                 )
                 global_features = global_features_weight
 
+            elif name == "spectra_fingerprint":
+                global_features = self.compute_fingerprint(nodes, edges, mask, *args)
+                node_features = None
+
             else:
                 raise ValueError(f"{name} is not a recognized extra feature.")
 
@@ -373,9 +407,6 @@ class DigressMetaArch:
 
             if global_features is not None:
                 global_features_list.append(global_features)
-
-            global_features = None
-            node_features = None
 
         if node_features_list:
             pos_emb = torch.cat(node_features_list, dim=-1)  # (bs, n, n_features)

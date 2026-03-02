@@ -6,6 +6,8 @@ dataset:
   val_tag: test
   cache_path: null
   max_nodes: null
+  morgan_nbits: 2048
+  morgan_radius: 3
 
 model:
   d: 256

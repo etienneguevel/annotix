@@ -145,6 +145,11 @@ def train(cfg):
     # TODO : find a way to rm that dependency
     if cfg.train.get("distributed") == "pipeline":
         cfg.valid.batch_size = cfg.train.batch_size
+        data_rank = 0
+        data_size = 1
+        print(
+            f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
+        )
 
     sampler_type = InfiniteSampler(
         sample_count=sample_count,

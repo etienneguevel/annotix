@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
@@ -5,27 +6,53 @@ from torch.utils.data import DataLoader
 from annotix_ml import BASE_DIR
 from annotix_ml.graphtransf.arch.spec2mol_meta_arch import Spec2MolMetaArch
 from annotix_ml.data.spec_dataset import GraphSpecDataset
-from annotix_ml.data.datacollator import collateGraphSpec
 from annotix_ml.data.atoms_data import TYPE_EDGES
+from annotix_ml.data.datacollator import collateGraphSpec
+from annotix_ml.data.data_utils import graph_to_smiles_digress
 
 
 def _load_cfg():
-    cfg = OmegaConf.load(BASE_DIR / "configs" / "default_config.yaml")
+    # Load default config
+    default_cfg_path = BASE_DIR / "configs" / "default_config.yaml"
+    default_cfg = OmegaConf.load(default_cfg_path)
+
+    # Load the spec2mol config
+    spectra_cfg = OmegaConf.load(
+        BASE_DIR / "configs" / "spec2mol" / "spectral_feat" / "baseline.yaml"
+    )
+
+    # Merge the configs
+    cfg = OmegaConf.merge(default_cfg, spectra_cfg)
+
     if "spectra_fingerprint" not in cfg.model.extra_features:
         cfg.model.extra_features.append("spectra_fingerprint")
     return cfg
 
 
 def _make_dataset(cfg):
-    return GraphSpecDataset(
-        data=BASE_DIR / cfg.dataset.labels_file,
-        spec_folder=BASE_DIR / cfg.dataset.spec_folder,
-        subform_folder=cfg.dataset.subform_folder,
-        smile_column="smiles",
-        spec_column="spec",
-        formula_column="formula",
-        instrument_column="instrument",
+    data = pd.read_csv(
+        cfg.dataset.data_path,
+        sep="\t" if str(cfg.dataset.data_path).endswith(".tsv") else ",",
     )
+
+    split_column = cfg.dataset.split_column
+    val_tag = cfg.dataset.val_tag
+
+    train_df = data[data[split_column] != val_tag].reset_index(drop=True).sample(1000)
+
+    max_nodes = cfg.dataset.get("max_nodes")
+    dataset = GraphSpecDataset(
+        data=train_df,
+        save_cache=False,
+        spec_folder=cfg.dataset.spec_folder,
+        subform_folder=cfg.dataset.subform_folder,
+        smile_column=cfg.dataset.smile_column,
+        sanitizer=graph_to_smiles_digress,
+        verbose=True,
+        max_nodes=max_nodes,
+    )
+
+    return dataset
 
 
 def _make_model(cfg, dataset):
@@ -51,7 +78,6 @@ def _load_batch(dataset, bs=2):
         ion_vec,
         form_vec,
         intens,
-        smiles,
     ) = next(iter(loader))
     return dict(
         nodes=nodes.float(),
@@ -63,13 +89,12 @@ def _load_batch(dataset, bs=2):
         ion_vec=ion_vec,
         form_vec=form_vec,
         intens=intens,
-        smiles=smiles,
     )
 
 
 def test_spec2mol_meta_arch_initialization():
     """Test basic initialization of Spec2MolMetaArch."""
-    cfg = OmegaConf.load(BASE_DIR / "configs" / "default_config.yaml")
+    cfg = _load_cfg()
 
     valid_elements = ["C", "H", "O", "N"]
     nodes_distribution = torch.ones(len(valid_elements)) / len(valid_elements)
@@ -102,7 +127,8 @@ def test_spec2mol_meta_arch_initialization_from_config():
     assert model.noiser is not None
     assert model.spectra_encoder is not None
     assert model.merge_function is not None
-    assert model.diffuser.dy == cfg.model.dy
+    if not cfg.model.no_y:
+        assert model.diffuser.dy == cfg.model.dy
 
 
 def test_compute_extra_features():
@@ -115,17 +141,17 @@ def test_compute_extra_features():
     bs = batch["nodes"].shape[0]
     t = torch.randint(1, cfg.model.diffusion_steps, (bs, 1))
 
+    args = (
+        batch["num_peaks"],
+        batch["types"],
+        batch["instruments"],
+        batch["ion_vec"],
+        batch["form_vec"],
+        batch["intens"],
+    )
+
     pos_emb, y = model.compute_extra_features(
-        nodes=batch["nodes"],
-        edges=batch["edges"],
-        mask=batch["mask"],
-        t=t,
-        num_peaks=batch["num_peaks"],
-        types=batch["types"],
-        instruments=batch["instruments"],
-        ion_vec=batch["ion_vec"],
-        form_vec=batch["form_vec"],
-        intens=batch["intens"],
+        batch["nodes"], batch["edges"], batch["mask"], t, *args
     )
 
     assert pos_emb.shape[0] == bs
@@ -144,18 +170,16 @@ def test_forward():
     bs = batch["nodes"].shape[0]
     t = torch.randint(1, cfg.model.diffusion_steps, (bs, 1))
 
-    pN, pE = model.forward(
-        nodes=batch["nodes"],
-        edges=batch["edges"],
-        mask=batch["mask"],
-        t=t,
-        num_peaks=batch["num_peaks"],
-        types=batch["types"],
-        instruments=batch["instruments"],
-        ion_vec=batch["ion_vec"],
-        form_vec=batch["form_vec"],
-        intens=batch["intens"],
+    args = (
+        batch["num_peaks"],
+        batch["types"],
+        batch["instruments"],
+        batch["ion_vec"],
+        batch["form_vec"],
+        batch["intens"],
     )
+
+    pN, pE = model.forward(batch["nodes"], batch["edges"], batch["mask"], t, *args)
 
     assert pN.shape[0] == bs
     assert pE.shape[0] == bs
@@ -172,17 +196,18 @@ def test_forward_backward():
 
     bs = batch["nodes"].shape[0]
 
+    args = (
+        batch["num_peaks"],
+        batch["types"],
+        batch["instruments"],
+        batch["ion_vec"],
+        batch["form_vec"],
+        batch["intens"],
+    )
+
     model.spectra_encoder.train()
     pN, pE, loss = model.forward_backward(
-        nodes=batch["nodes"],
-        edges=batch["edges"],
-        mask=batch["mask"],
-        num_peaks=batch["num_peaks"],
-        types=batch["types"],
-        instruments=batch["instruments"],
-        ion_vec=batch["ion_vec"],
-        form_vec=batch["form_vec"],
-        intens=batch["intens"],
+        batch["nodes"], batch["edges"], batch["mask"], *args
     )
 
     assert pN is not None
@@ -206,16 +231,16 @@ def test_generate():
     max_nodes = 9
 
     # Generate with spectral conditioning
-    N, E, gen_mask = model.generate(
-        num_samples=batch_size,
-        max_nodes=max_nodes,
-        num_peaks=batch["num_peaks"][:batch_size],
-        types=batch["types"][:batch_size],
-        instruments=batch["instruments"][:batch_size],
-        ion_vec=batch["ion_vec"][:batch_size],
-        form_vec=batch["form_vec"][:batch_size],
-        intens=batch["intens"][:batch_size],
+    args = (
+        batch["num_peaks"][:batch_size],
+        batch["types"][:batch_size],
+        batch["instruments"][:batch_size],
+        batch["ion_vec"][:batch_size],
+        batch["form_vec"][:batch_size],
+        batch["intens"][:batch_size],
     )
+
+    N, E, gen_mask = model.generate(batch_size, max_nodes, other_args=args)
 
     # Verify output shapes
     assert N.shape[0] == batch_size

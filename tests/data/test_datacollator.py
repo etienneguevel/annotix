@@ -59,7 +59,6 @@ def test_collate_graph_spec():
         ion_vec,
         form_vec,
         intens,
-        smiles,
     ) = next(iter(loader))
 
     # Batch dimension
@@ -68,7 +67,6 @@ def test_collate_graph_spec():
     assert mask.shape[0] == bs
     assert num_peaks.shape[0] == bs
     assert types.shape[0] == bs
-    assert len(smiles) == bs
 
     # Tensor ranks
     assert len(nodes.shape) == 3  # (bs, n, natoms)

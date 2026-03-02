@@ -67,13 +67,6 @@ def setup_model_mode(cfg):
         arch = DigressMetaArch
 
         if cfg.train.get("distributed") == "pipeline":
-            # In Pipeline Parallelism, all ranks in the same pipeline
-            # (which is the whole world here) must see the same data.
-            data_rank = 0
-            data_size = 1
-            print(
-                f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
-            )
             # Derive n_max from the distribution of number of atoms
             n_max = len(train_dataset.num_atoms_dist)
             collate_fn = partial(collateGraphStatic, n_max=n_max)
