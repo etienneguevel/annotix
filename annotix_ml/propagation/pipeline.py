@@ -24,6 +24,9 @@ from typing import Optional
 from matchms import Spectrum
 from matchms.similarity import ModifiedCosine
 from tqdm import tqdm
+import json
+
+from store import graph_to_json
 
 
 # =============================================================================
@@ -56,7 +59,7 @@ def build_molecular_network(
     min_matched_peaks: int = 6,
     top_k: int = 10,
     mz_tolerance: float = 0.02,
-    path="net.adjlist"
+    path=""
 ) -> nx.Graph:
     """
     Build a molecular network from a list of Spectrum objects.
@@ -133,7 +136,8 @@ def build_molecular_network(
           f"{n_annotated} annotated nodes")
 
     if path:
-        write_adjacency(net, path)
+        with open(path, "w") as f:
+            json.dump(graph_to_json(net), f)
 
     return net
 
@@ -512,9 +516,3 @@ def export_results(df: pd.DataFrame, output_path: str, format: str = "tsv"):
     else:
         raise ValueError(f"Unsupported format: {format}")
     print(f"Results exported to {output_path}")
-
-def write_adjacency(network, path="net.adjlist"):
-    nx.write_adjlist(network, path)
-
-def read_adjacency(path="net.adjlist"):
-    return nx.read_adjlist(path)

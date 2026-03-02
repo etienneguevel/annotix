@@ -10,11 +10,8 @@ Adapt the file paths to your data.
 from argparse import ArgumentParser
 from pathlib import Path
 
-from matchms import Spectrum
-from matchms.importing import load_from_mgf
-from matchms.filtering import default_filters, normalize_intensities, select_by_mz, select_by_relative_intensity, add_precursor_mz
-from pipeline import build_molecular_network, annotate, annotate_batch, export_results, write_adjacency
-
+from pipeline import build_molecular_network, annotate, annotate_batch, export_results
+from load_spectra import load_spectra
 
 def get_arguments():
     """
@@ -27,32 +24,6 @@ def get_arguments():
     parser.add_argument("--ref_path", type=str)
     parser.add_argument("--query_path", type=str)
     return parser.parse_args()
-
-def clean_spectrum(spec: Spectrum) -> Spectrum:
-    """Apply standard filters to a spectrum."""
-    spec = default_filters(spec)
-    spec = add_precursor_mz(spec)
-    spec = normalize_intensities(spec)
-    spec = select_by_mz(spec, mz_from=10.0, mz_to=2000.0)
-    spec = select_by_relative_intensity(spec, intensity_from=0.01)  # remove <1% peaks
-    return spec
-
-# Load and clean reference spectra
-def load_spectra(ref_path):
-    assert ref_path.suffix == ".mgf", "Only MGF files are supported"
-    print("Loading spectra...")
-    spec = list(load_from_mgf(ref_path)) #OR USE Spectrum CLASS FOR JSON DATA
-    spec = [clean_spectrum(s) for s in spec]
-    spec = [s for s in spec if s is not None and s.peaks.mz.size >= 4]  # need enough fragments
-    print(f"Loaded {len(spec)} spectra")
-    return spec
-
-
-
-# REFERENCE_MGF = "../../resources/mzmine_export_iimn_gnps.mgf"
-# REFERENCE_MGF = "../../resources/pesticides.mgf"
-# QUERY_MGF = "../../resources/pesticides.mgf"
-
 
 if __name__ == "__main__":
 
@@ -72,10 +43,11 @@ if __name__ == "__main__":
         min_matched_peaks=6,
         top_k=10,
         mz_tolerance=0.02,
-        path="./net.adjlist"
+        path="./net.json"
     )
-
-    print(network.nodes.data())
+    import json
+    from store import graph_to_json
+    print(json.dumps(graph_to_json(network), indent=4))
 
     # # STEP 3: LOAD UNKNOWN SPECTRA
     # query_spectra = load_spectra(Path(args.query_path))
