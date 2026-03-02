@@ -12,7 +12,7 @@ from annotix_ml.data.data_utils import (
     batch_graph_to_smiles,
     batch_graph_to_smiles_digress,
 )
-from annotix_ml.graphtransf.arch import DigressMetaArch, Spec2MolMetaArch
+from annotix_ml.graphtransf.arch import DigressMetaArch
 from annotix_ml.graphtransf.math.metrics import (
     compute_MCES_distance,
     compute_metrics,
@@ -199,7 +199,7 @@ def generate_samples(
 
         try:
             gen_N, gen_E, gen_mask = model.generate(
-                num_samples=n, max_nodes=n.max(), progress_bar=True
+                num_samples=n, max_nodes=n.max().item(), progress_bar=True
             )
 
             # Convert to smiles
@@ -233,7 +233,7 @@ def generate_samples(
 
 
 def generate_samples_from_fp(
-    model: Spec2MolMetaArch,
+    model: DigressMetaArch,
     num_samples: int,
     eval_dataloader: DataLoader,
 ):
@@ -263,7 +263,7 @@ def generate_samples_from_fp(
         try:
             gen_N, gen_E, gen_mask = model.generate(
                 num_samples=n,
-                max_nodes=n.max(),
+                max_nodes=n.max().item(),
                 progress_bar=True,
                 fp=fp,
             )

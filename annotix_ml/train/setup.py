@@ -10,7 +10,6 @@ from annotix_ml.data.datacollator import (
     collateGraphStatic,
 )
 from annotix_ml.data.loaders import make_datasets, make_spec_datasets
-from annotix_ml.graphtransf.arch import DigressMetaArch, Spec2MolMetaArch
 from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowing
 
 
@@ -69,7 +68,6 @@ def setup_model_mode(cfg, device):
         )
 
         print("Using the Spec2MolMetaArch\n")
-        arch = Spec2MolMetaArch
         collate_fn = collateGraph
 
     else:
@@ -94,7 +92,6 @@ def setup_model_mode(cfg, device):
         )
 
         print("Using the DigressMetaArch.\n")
-        arch = DigressMetaArch
 
         if cfg.train.get("distributed") == "pipeline":
             # Derive n_max from the distribution of number of atoms
@@ -105,4 +102,4 @@ def setup_model_mode(cfg, device):
         else:
             collate_fn = collateGraph
 
-    return train_dataset, valid_dataset, arch, collate_fn
+    return train_dataset, valid_dataset, collate_fn

@@ -5,7 +5,7 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
 from annotix_ml import BASE_DIR
-from annotix_ml.graphtransf.arch.spec2mol_meta_arch import Spec2MolMetaArch
+from annotix_ml.graphtransf.arch import DigressMetaArch
 from annotix_ml.data.spec_dataset import GraphSpecDataset
 from annotix_ml.data.atoms_data import TYPE_EDGES
 from annotix_ml.data.datacollator import collateGraph
@@ -77,7 +77,7 @@ def _make_dataset(cfg):
 
 def _make_model(cfg, dataset):
     # Move to the local device
-    return Spec2MolMetaArch.init_from_cfg(
+    return DigressMetaArch.init_from_cfg(
         cfg=cfg,
         device=DEVICE,
         valid_elements=dataset.valid_elements,
@@ -95,14 +95,14 @@ def _load_batch(dataset, bs=2):
 
 
 def test_spec2mol_meta_arch_initialization():
-    """Test basic initialization of Spec2MolMetaArch."""
+    """Test basic initialization of DigressMetaArch."""
     cfg = _load_cfg()
 
     valid_elements = ["C", "H", "O", "N"]
     nodes_distribution = torch.ones(len(valid_elements)) / len(valid_elements)
     edges_distribution = torch.ones(len(TYPE_EDGES)) / len(TYPE_EDGES)
 
-    model = Spec2MolMetaArch.init_from_cfg(
+    model = DigressMetaArch.init_from_cfg(
         cfg=cfg,
         device=DEVICE,
         valid_elements=valid_elements,
