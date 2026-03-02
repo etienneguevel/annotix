@@ -24,7 +24,7 @@ from annotix_ml.train.eval import (
     allreduce_gen_metrics,
     do_eval,
     generate_samples,
-    generate_samples_from_spec,
+    generate_samples_from_fp,
 )
 from annotix_ml.train.setup import setup, setup_model_mode
 from annotix_ml.train.log_utils import create_gen_samples_table
@@ -407,7 +407,7 @@ def train(cfg):
                     samples_per_rank = cfg.valid.num_samples
 
                 if "spectra_fingerprint" in cfg.model.get("extra_features"):
-                    gen_metrics = generate_samples_from_spec(
+                    gen_metrics = generate_samples_from_fp(
                         digress, samples_per_rank, valid_loader
                     )
                 else:
