@@ -20,12 +20,13 @@ def _parse_peaks(peaks_str: str):
 def load_from_annotix_json(path: Path):
     with open(path) as f:
         entries = json.load(f)
+    peaks_key = "PEAKS_LIST"
     for entry in entries:
-        peaks_str = entry.get("peaks_json", "")
+        peaks_str = entry.get(peaks_key, "")
         if not peaks_str:
             continue
         mz, intensities = _parse_peaks(peaks_str)
-        metadata = {_KEY_MAP.get(k, k.lower()): v for k, v in entry.items() if k != "peaks_json"}
+        metadata = {_KEY_MAP.get(k, k.lower()): v for k, v in entry.items() if k != peaks_key}
         yield Spectrum(mz=mz, intensities=intensities, metadata=metadata)
 
 def clean_spectrum(spec: Spectrum) -> Spectrum:

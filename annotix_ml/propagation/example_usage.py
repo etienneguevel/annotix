@@ -47,24 +47,24 @@ if __name__ == "__main__":
     )
 
     # STEP 3: LOAD UNKNOWN SPECTRA
-    query_spectra = load_spectra(Path(args.query_path))
+    # query_spectra = load_spectra(Path(args.query_path))
 
-    # STEP 4a: ANNOTATE A SINGLE SPECTRUM
-    if query_spectra:
-        print("\n--- Single spectrum annotation ---")
-        result_df = annotate(
-            query=query_spectra[0],
-            network=network,
-            direct_score_threshold=0.7,
-            direct_min_matched=6,
-            prop_score_threshold=0.5,
-            prop_min_matched=4,
-            max_depth=2,
-            decay_factor=0.7,
-            mz_tolerance=0.02,
-            top_n=10,
-        )
-        print(result_df.to_string(index=False))
+    # # STEP 4a: ANNOTATE A SINGLE SPECTRUM
+    # if query_spectra:
+    #     print("\n--- Single spectrum annotation ---")
+    #     result_df = annotate(
+    #         query=query_spectra[0],
+    #         network=network,
+    #         direct_score_threshold=0.7,
+    #         direct_min_matched=6,
+    #         prop_score_threshold=0.5,
+    #         prop_min_matched=4,
+    #         max_depth=2,
+    #         decay_factor=0.7,
+    #         mz_tolerance=0.02,
+    #         top_n=10,
+    #     )
+    #     print(result_df.to_string(index=False))
 
     # # STEP 4b: ANNOTATE ALL UNKNOWNS (batch)
     # print("\n--- Batch annotation ---")
