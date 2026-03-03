@@ -17,10 +17,12 @@ Output:
     - Ranked candidate annotations with confidence scores and provenance
 """
 
+import heapq
 import multiprocessing as mp
+from multiprocessing import shared_memory
 import os
 import sys
-from collections import defaultdict
+from collections import OrderedDict
 
 import pandas as pd
 import networkx as nx
@@ -32,51 +34,107 @@ from matchms.similarity import ModifiedCosine
 from tqdm import tqdm
 import json
 
-from store import graph_to_json
+from store import json_to_graph, _serialize_value
 
 
 # =============================================================================
-# PARALLEL PAIRWISE SIMILARITY HELPERS
-# Module-level so they are picklable under multiprocessing "spawn" (macOS/Win)
+# PARALLEL PAIRWISE SIMILARITY HELPERS (shared-memory version)
 # =============================================================================
 
 def _mp_context():
-    """Return a fork-based multiprocessing context when possible (COW memory)."""
+    """Return a fork-based multiprocessing context when possible."""
     if sys.platform != "win32":
         return mp.get_context("fork")
     return mp.get_context("spawn")
 
 
-_worker_spectra = None   # set once per worker via initializer
-_worker_mzs = None
-_worker_node_ids = None
+def _pack_into_shared_memory(
+    spectra: list[Spectrum],
+) -> tuple[shared_memory.SharedMemory, shared_memory.SharedMemory, shared_memory.SharedMemory, np.ndarray]:
+    all_mz = []
+    all_int = []
+    offsets = [0]
+    for s in spectra:
+        mz = np.asarray(s.mz, dtype=np.float64)
+        ints = np.asarray(s.intensities, dtype=np.float64)
+        all_mz.append(mz)
+        all_int.append(ints)
+        offsets.append(offsets[-1] + len(mz))
+    flat_mz = np.concatenate(all_mz) if all_mz else np.array([], dtype=np.float64)
+    flat_int = np.concatenate(all_int) if all_int else np.array([], dtype=np.float64)
+    offsets = np.array(offsets, dtype=np.int64)
+
+    shm_mz = shared_memory.SharedMemory(create=True, size=max(8, flat_mz.nbytes))
+    shm_int = shared_memory.SharedMemory(create=True, size=max(8, flat_int.nbytes))
+    shm_off = shared_memory.SharedMemory(create=True, size=max(8, offsets.nbytes))
+
+    np.ndarray(flat_mz.shape, dtype=np.float64, buffer=shm_mz.buf)[:] = flat_mz
+    np.ndarray(flat_int.shape, dtype=np.float64, buffer=shm_int.buf)[:] = flat_int
+    np.ndarray(offsets.shape, dtype=np.int64, buffer=shm_off.buf)[:] = offsets
+
+    return shm_mz, shm_int, shm_off, offsets
 
 
-def _init_worker(spectra, mzs, node_ids):
-    global _worker_spectra, _worker_mzs, _worker_node_ids
-    _worker_spectra = spectra
-    _worker_mzs = mzs
-    _worker_node_ids = node_ids
+# --- Per-worker globals (attached via initializer, not pickled) ---
+_shm_mz_view: np.ndarray | None = None
+_shm_int_view: np.ndarray | None = None
+_shm_off_view: np.ndarray | None = None
+_shm_handles: list = []
+_worker_n: int = 0
+_worker_pmzs: np.ndarray | None = None
+_worker_cache: OrderedDict | None = None
+_CACHE_MAX = 256
 
 
-def _score_row(args):
-    """Compute similarities for spectrum i against all j > i.
+def _init_worker_shm(
+    shm_mz_name: str, shm_int_name: str, shm_off_name: str,
+    total_peaks: int, n: int, precursor_mzs: list[float],
+):
+    global _shm_mz_view, _shm_int_view, _shm_off_view, _shm_handles
+    global _worker_n, _worker_pmzs, _worker_cache
 
-    m/z pre-filter: skip pairs where |mz_i - mz_j| > max_mz_diff.
-    ModifiedCosine is instantiated per-call to avoid pickling issues.
-    """
+    shm_mz = shared_memory.SharedMemory(name=shm_mz_name, create=False)
+    shm_int = shared_memory.SharedMemory(name=shm_int_name, create=False)
+    shm_off = shared_memory.SharedMemory(name=shm_off_name, create=False)
+    _shm_handles = [shm_mz, shm_int, shm_off]
+
+    _shm_mz_view = np.ndarray((total_peaks,), dtype=np.float64, buffer=shm_mz.buf)
+    _shm_int_view = np.ndarray((total_peaks,), dtype=np.float64, buffer=shm_int.buf)
+    _shm_off_view = np.ndarray((n + 1,), dtype=np.int64, buffer=shm_off.buf)
+    _worker_n = n
+    _worker_pmzs = np.array(precursor_mzs, dtype=np.float64)
+    _worker_cache = OrderedDict()
+
+
+def _get_spectrum(i: int) -> Spectrum:
+    global _worker_cache
+    if i in _worker_cache:
+        _worker_cache.move_to_end(i)
+        return _worker_cache[i]
+    lo, hi = int(_shm_off_view[i]), int(_shm_off_view[i + 1])
+    mz = _shm_mz_view[lo:hi].copy()
+    intensities = _shm_int_view[lo:hi].copy()
+    spec = Spectrum(mz=mz, intensities=intensities,
+                    metadata={"precursor_mz": float(_worker_pmzs[i])})
+    if len(_worker_cache) >= _CACHE_MAX:
+        _worker_cache.popitem(last=False)
+    _worker_cache[i] = spec
+    return spec
+
+
+def _score_row_shm(args: tuple) -> list[tuple[int, int, float, int]]:
     i, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff = args
-    node_ids = _worker_node_ids
     pair = ModifiedCosine(tolerance=mz_tolerance).pair
-    mz_i = _worker_mzs[i]
-    n = len(_worker_spectra)
+    mz_i = float(_worker_pmzs[i])
+    n = _worker_n
     results = []
+    spec_i = _get_spectrum(i)
     for j in range(i + 1, n):
-        if max_mz_diff > 0 and abs(mz_i - _worker_mzs[j]) > max_mz_diff:
-            continue  # skip clearly unrelated pairs (standard GNPS practice)
-        r = pair(_worker_spectra[i], _worker_spectra[j])
+        if max_mz_diff > 0 and abs(mz_i - _worker_pmzs[j]) > max_mz_diff:
+            continue
+        r = pair(spec_i, _get_spectrum(j))
         if r['score'] >= cosine_threshold and r['matches'] >= min_matched_peaks:
-            results.append((node_ids[i], node_ids[j], float(r['score']), int(r['matches'])))
+            results.append((i, j, float(r['score']), int(r['matches'])))
     return results
 
 
@@ -104,26 +162,59 @@ class Annotation:
 # 2. MOLECULAR NETWORK BUILDER
 # =============================================================================
 
+def _serialize_node_attrs(spec: Spectrum, node_id: str) -> dict:
+    """Build a JSON-serializable node dict (node-link format)."""
+    return {
+        "id": node_id,
+        "spectrum": _serialize_value(spec),
+        "node_id": node_id,
+        "precursor_mz": _serialize_value(spec.get("precursor_mz")),
+        "compound_name": spec.get("compound_name") or spec.get("name"),
+        "smiles": spec.get("smiles"),
+        "inchi": spec.get("inchi"),
+        "molecular_formula": spec.get("molecular_formula") or spec.get("formula"),
+        "adduct": spec.get("adduct"),
+    }
+
+
+def _heap_push(
+    heaps: list[list], node_idx: int, score: float,
+    other_idx: int, matches: int, top_k: int,
+):
+    """Push (score, other_idx, matches) into a min-heap, evict if over top_k."""
+    h = heaps[node_idx]
+    entry = (score, other_idx, matches)
+    if len(h) < top_k:
+        heapq.heappush(h, entry)
+    elif score > h[0][0]:
+        heapq.heapreplace(h, entry)
+
+
 def build_molecular_network(
     spectra: list[Spectrum],
     cosine_threshold: float = 0.7,
     min_matched_peaks: int = 6,
     top_k: int = 10,
     mz_tolerance: float = 0.02,
-    max_mz_diff: float = 500.0,  # skip pairs with |mz_i - mz_j| > this (Da)
-    n_workers: int = None,       # parallel workers (default: all CPU cores)
-    path=""
+    max_mz_diff: float = 500.0,
+    n_workers: int = None,
+    path: str = "",
 ) -> nx.Graph:
-    net = nx.Graph()
-    for i, spec in enumerate(spectra):
-        node_id = spec.get("spectrum_id") or f"spec_{i}"
-        net.add_node(node_id, **_extract_node_attributes(spec, node_id))
+    n = len(spectra)
+    if n == 0:
+        return nx.Graph()
 
-    node_ids = list(net.nodes)
-    n = len(node_ids)
-    n_workers = n_workers or os.cpu_count()
+    node_ids = [s.get("spectrum_id") or f"spec_{i}" for i, s in enumerate(spectra)]
     precursor_mzs = [float(s.get("precursor_mz") or 0.0) for s in spectra]
 
+    # Build JSON nodes
+    json_nodes = [_serialize_node_attrs(s, nid) for s, nid in zip(spectra, node_ids)]
+
+    # Pack peak arrays into shared memory
+    shm_mz, shm_int, shm_off, offsets = _pack_into_shared_memory(spectra)
+    total_peaks = int(offsets[-1])
+
+    n_workers = n_workers or os.cpu_count()
     print(f"Computing pairwise similarities for {n} spectra on {n_workers} workers...")
 
     tasks = [
@@ -132,60 +223,60 @@ def build_molecular_network(
     ]
     chunksize = max(1, n // (n_workers * 4))
 
+    # Per-node min-heaps for top-K accumulation
+    heaps: list[list] = [[] for _ in range(n)]
+
     ctx = _mp_context()
-    with ctx.Pool(
-        processes=n_workers,
-        initializer=_init_worker,
-        initargs=(spectra, precursor_mzs, node_ids),
-    ) as pool:
-        row_results = list(tqdm(pool.imap(_score_row, tasks, chunksize=chunksize), total=n))
+    try:
+        with ctx.Pool(
+            processes=n_workers,
+            initializer=_init_worker_shm,
+            initargs=(shm_mz.name, shm_int.name, shm_off.name,
+                      total_peaks, n, precursor_mzs),
+        ) as pool:
+            for row in tqdm(
+                pool.imap(_score_row_shm, tasks, chunksize=chunksize),
+                total=n,
+            ):
+                for i, j, score, matches in row:
+                    _heap_push(heaps, i, score, j, matches, top_k)
+                    _heap_push(heaps, j, score, i, matches, top_k)
+    finally:
+        for shm in (shm_mz, shm_int, shm_off):
+            shm.close()
+            shm.unlink()
 
-    # Flatten: list[(u, v, score, matches)]
-    all_matches = [m for row in row_results for m in row]
-    scores_dict = {(u, v): {"weight": s, "matched_peaks": k} for u, v, s, k in all_matches}
+    # Collect unique edges from heaps
+    seen_edges: set[tuple[int, int]] = set()
+    json_links = []
+    for idx in range(n):
+        for score, other, matches in heaps[idx]:
+            edge_key = (min(idx, other), max(idx, other))
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                json_links.append({
+                    "source": node_ids[edge_key[0]],
+                    "target": node_ids[edge_key[1]],
+                    "weight": score,
+                    "matched_peaks": matches,
+                })
 
-    # --- Top-K filtering with np.argpartition (O(n) per node vs O(n log n)) ---
-    node_neighbors: dict[str, list] = defaultdict(list)
-    for u, v, score, _ in all_matches:
-        node_neighbors[u].append((score, v))
-        node_neighbors[v].append((score, u))
+    json_data = {
+        "directed": False,
+        "multigraph": False,
+        "graph": {},
+        "nodes": json_nodes,
+        "edges": json_links,
+    }
 
-    kept_edges: set = set()
-    for nid, neighbors in node_neighbors.items():
-        if len(neighbors) > top_k:
-            arr = np.array([s for s, _ in neighbors])
-            top_idx = np.argpartition(arr, -top_k)[-top_k:]
-            neighbors = [neighbors[i] for i in top_idx]
-        for _, neighbor in neighbors:
-            kept_edges.add(tuple(sorted([nid, neighbor])))
-
-    for u, v in kept_edges:
-        attrs = scores_dict.get((u, v)) or scores_dict.get((v, u), {})
-        net.add_edge(u, v, **attrs)
-
-    n_annotated = sum(1 for _, d in net.nodes(data=True) if d.get("compound_name"))
-    print(f"Network: {net.number_of_nodes()} nodes, {net.number_of_edges()} edges, "
-          f"{n_annotated} annotated nodes")
+    n_annotated = sum(1 for nd in json_nodes if nd.get("compound_name"))
+    print(f"Network: {n} nodes, {len(json_links)} edges, {n_annotated} annotated nodes")
 
     if path:
         with open(path, "w") as f:
-            json.dump(graph_to_json(net), f)
+            json.dump(json_data, f)
 
-    return net
-
-
-def _extract_node_attributes(spec: Spectrum, node_id: str) -> dict:
-    """Extract relevant metadata from a Spectrum for graph storage."""
-    return {
-        "spectrum": spec,
-        "node_id": node_id,
-        "precursor_mz": spec.get("precursor_mz"),
-        "compound_name": spec.get("compound_name") or spec.get("name"),
-        "smiles": spec.get("smiles"),
-        "inchi": spec.get("inchi"),
-        "molecular_formula": spec.get("molecular_formula") or spec.get("formula"),
-        "adduct": spec.get("adduct"),
-    }
+    return json_to_graph(json_data)
 
 
 # =============================================================================
