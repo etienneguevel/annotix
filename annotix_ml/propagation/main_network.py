@@ -42,7 +42,7 @@ if __name__ == "__main__":
 
     current = time()
     duration_seconds = current - start
-    print(f"Load spectra done in {duration_seconds:.2f} seconds ({duration_seconds / 60:.2f} hours)")
+    print(f"Load spectra done in {duration_seconds:.2f} seconds ({duration_seconds / 3600:.2f} hours)")
 
     # STEP 2: BUILD THE MOLECULAR NETWORK
     print("Building molecular network...")
@@ -58,6 +58,6 @@ if __name__ == "__main__":
 
     end = time()
     duration_seconds = end - current
-    print(f"Build network done in {duration_seconds:.2f} seconds ({duration_seconds / 60:.2f} hours)")
+    print(f"Build network done in {duration_seconds:.2f} seconds ({duration_seconds / 3600:.2f} hours)")
 
     draw(network)
