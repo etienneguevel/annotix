@@ -137,8 +137,6 @@ def allreduce_eval_metrics(
     eval_metrics: dict[str, float],
 ) -> dict[str, float]:
     """Average eval metrics across all distributed ranks via all_gather_object."""
-    if not dist.is_enabled() or not eval_metrics:
-        return eval_metrics
 
     world_size = dist.get_global_size()
     all_metrics = [None] * world_size
@@ -147,11 +145,12 @@ def allreduce_eval_metrics(
     # Merge: for each key, average over ranks that reported it
     all_keys: set[str] = set()
     for m in all_metrics:
-        all_keys.update(m.keys())
+        if m:
+            all_keys.update(m.keys())
 
     result = {}
     for k in all_keys:
-        values = [m[k] for m in all_metrics if k in m]
+        values = [m[k] for m in all_metrics if m and k in m]
         result[k] = sum(values) / len(values)
 
     return result
@@ -159,16 +158,18 @@ def allreduce_eval_metrics(
 
 def allreduce_gen_metrics(gen_metrics: dict[str, list]) -> dict[str, list]:
     """Gather per-sample gen_metrics lists from all DDP ranks and concatenate."""
-    if not dist.is_enabled() or not gen_metrics:
-        return gen_metrics
 
     world_size = dist.get_global_size()
     all_metrics = [None] * world_size
     torch.distributed.all_gather_object(all_metrics, gen_metrics)
 
+    non_empty = [m for m in all_metrics if m]
+    if not non_empty:
+        return gen_metrics
+
     result: dict[str, list] = {}
-    for k in all_metrics[0].keys():
-        result[k] = [item for rank_dict in all_metrics for item in rank_dict[k]]
+    for k in non_empty[0].keys():
+        result[k] = [item for rank_dict in all_metrics for item in rank_dict.get(k, [])]
     return result
 
 
