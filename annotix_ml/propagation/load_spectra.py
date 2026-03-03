@@ -17,7 +17,7 @@ def _parse_peaks(peaks_str: str):
     intensities = np.array([float(p[1]) for p in pairs])
     return mz, intensities
 
-def load_from_annotix_json(path: Path):
+def load_from_json(path: Path):
     with open(path) as f:
         entries = json.load(f)
     peaks_key = "PEAKS_LIST"
@@ -43,7 +43,7 @@ def load_spectra(ref_path, n_workers: int = None):
     if ref_path.suffix == ".mgf":
         raw = list(load_from_mgf(ref_path))
     elif ref_path.suffix == ".json":
-        raw = list(load_from_annotix_json(ref_path))
+        raw = list(load_from_json(ref_path))
     else:
         raise ValueError(f"Unsupported format: {ref_path.suffix} (use .mgf or .json)")
 

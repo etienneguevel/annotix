@@ -312,17 +312,19 @@ def propagate_annotations(
     anchors = []
     for node_id, data in network.nodes(data=True):
         ref_spectrum = data["spectrum"]
+
         try:
             result = similarity_function.pair(query, ref_spectrum)
-            if hasattr(result, "__iter__"):
-                score, n_matched = float(result[0]), int(result[1])
-            else:
-                score, n_matched = float(result), 0
-        except Exception:
+            # ModifiedCosine returns a structured numpy array with fields 'score' and 'matches'
+            score = float(result['score'])
+            n_matched = int(result['matches'])
+        except Exception as err:
+            print(err)
             continue
 
         if score >= score_threshold and n_matched >= min_matched_peaks:
             anchors.append((node_id, score))
+            print(node_id, score)
 
     if not anchors:
         return []
