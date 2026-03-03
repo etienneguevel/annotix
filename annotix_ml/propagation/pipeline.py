@@ -19,6 +19,7 @@ Output:
 
 import multiprocessing as mp
 import os
+import sys
 from collections import defaultdict
 
 import pandas as pd
@@ -39,14 +40,23 @@ from store import graph_to_json
 # Module-level so they are picklable under multiprocessing "spawn" (macOS/Win)
 # =============================================================================
 
+def _mp_context():
+    """Return a fork-based multiprocessing context when possible (COW memory)."""
+    if sys.platform != "win32":
+        return mp.get_context("fork")
+    return mp.get_context("spawn")
+
+
 _worker_spectra = None   # set once per worker via initializer
 _worker_mzs = None
+_worker_node_ids = None
 
 
-def _init_worker(spectra, mzs):
-    global _worker_spectra, _worker_mzs
+def _init_worker(spectra, mzs, node_ids):
+    global _worker_spectra, _worker_mzs, _worker_node_ids
     _worker_spectra = spectra
     _worker_mzs = mzs
+    _worker_node_ids = node_ids
 
 
 def _score_row(args):
@@ -55,7 +65,8 @@ def _score_row(args):
     m/z pre-filter: skip pairs where |mz_i - mz_j| > max_mz_diff.
     ModifiedCosine is instantiated per-call to avoid pickling issues.
     """
-    i, node_ids, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff = args
+    i, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff = args
+    node_ids = _worker_node_ids
     pair = ModifiedCosine(tolerance=mz_tolerance).pair
     mz_i = _worker_mzs[i]
     n = len(_worker_spectra)
@@ -115,17 +126,17 @@ def build_molecular_network(
 
     print(f"Computing pairwise similarities for {n} spectra on {n_workers} workers...")
 
-    # Each task is one row i; workers share spectra via initializer (pickled once per worker)
     tasks = [
-        (i, node_ids, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff)
+        (i, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff)
         for i in range(n)
     ]
     chunksize = max(1, n // (n_workers * 4))
 
-    with mp.Pool(
+    ctx = _mp_context()
+    with ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
-        initargs=(spectra, precursor_mzs),
+        initargs=(spectra, precursor_mzs, node_ids),
     ) as pool:
         row_results = list(tqdm(pool.imap(_score_row, tasks, chunksize=chunksize), total=n))
 

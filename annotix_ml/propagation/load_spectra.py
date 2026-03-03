@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import multiprocessing as mp
 import os
+import sys
 
 import numpy as np
 from matchms import Spectrum
@@ -47,11 +48,13 @@ def load_spectra(ref_path, n_workers: int = None):
     else:
         raise ValueError(f"Unsupported format: {ref_path.suffix} (use .mgf or .json)")
 
-    # clean_spectrum is CPU-bound: parallelize across cores
     n_workers = n_workers or os.cpu_count()
     chunksize = max(1, len(raw) // (n_workers * 4))
-    with mp.Pool(processes=n_workers) as pool:
+    ctx = mp.get_context("fork") if sys.platform != "win32" else mp.get_context("spawn")
+    with ctx.Pool(processes=n_workers) as pool:
         cleaned = pool.map(clean_spectrum, raw, chunksize=chunksize)
+
+    del raw
 
     spec = [s for s in cleaned if s is not None and s.peaks.mz.size >= 4]
     print(f"Loaded {len(spec)} spectra")
