@@ -9,6 +9,7 @@ Adapt the file paths to your data.
 """
 from argparse import ArgumentParser
 from pathlib import Path
+from time import time
 
 from pipeline import build_molecular_network
 from load_spectra import load_spectra
@@ -33,8 +34,14 @@ if __name__ == "__main__":
 
     args = get_arguments()
 
+    start = time()
+
     # STEP 1: LOAD REFERENCE SPECTRA (your molecular network database)
     reference_spectra = load_spectra(Path(args.ref_path))
+
+    current = time()
+    duration_seconds = current - start
+    print(f"Load spectra done in {duration_seconds:.2f} seconds ({duration_seconds / 60:.2f} hours)")
 
     # STEP 2: BUILD THE MOLECULAR NETWORK
     print("Building molecular network...")
@@ -46,5 +53,9 @@ if __name__ == "__main__":
         mz_tolerance=0.02,
         path="./net.json"
     )
+
+    end = time()
+    duration_seconds = end - current
+    print(f"Build network done in {duration_seconds:.2f} seconds ({duration_seconds / 60:.2f} hours)")
 
     draw(network)
