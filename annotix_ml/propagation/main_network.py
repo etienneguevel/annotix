@@ -25,6 +25,7 @@ def get_arguments():
     """
     parser = ArgumentParser(prog="Annotix")
     parser.add_argument("--ref_path", type=str)
+    parser.add_argument("--n_workers", type=int, default=4)
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     start = time()
 
     # STEP 1: LOAD REFERENCE SPECTRA (your molecular network database)
-    reference_spectra = load_spectra(Path(args.ref_path))
+    reference_spectra = load_spectra(Path(args.ref_path), n_workers=args.n_workers)
 
     current = time()
     duration_seconds = current - start
@@ -51,7 +52,8 @@ if __name__ == "__main__":
         min_matched_peaks=6,
         top_k=10,
         mz_tolerance=0.02,
-        path="./net.json"
+        path="./net.json",
+        n_workers=args.n_workers
     )
 
     end = time()
