@@ -396,6 +396,7 @@ def train(cfg):
                 )
 
                 if cfg.train.get("distributed") == "data":
+                    torch.distributed.barrier()
                     eval_metrics = allreduce_eval_metrics(eval_metrics)
 
                 # If DDP then we make each rank generates a part of the samples
