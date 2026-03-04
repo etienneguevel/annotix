@@ -90,8 +90,6 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         self.formula_column = formula_column
         self.instrument_column = instrument_column
         self.max_nodes = max_nodes
-        self.spectra_encoder = spectra_encoder
-        self.device = device
 
         # SMILES list
         smiles_list = self.data[smile_column].to_list()
@@ -118,6 +116,12 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
             self.edges_distribution = cache["edges_distribution"]
             self.num_atoms_dist = cache["num_atoms_dist"]
             self.max_weight = cache["max_weight"]
+            if "fingerprints" in cache:
+                self.fingerprints = cache["fingerprints"]
+            else:
+                self.fingerprints = self._precompute_fingerprints(
+                    spectra_encoder, device, verbose
+                )
 
         else:
             smiles, spec_names, formulas, instruments, nodes, edges = self._build(
@@ -154,6 +158,11 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
                 ]
             )
 
+            # Pre-compute fingerprints
+            self.fingerprints = self._precompute_fingerprints(
+                spectra_encoder, device, verbose
+            )
+
             # Save to cache (only if requested, e.g. main rank in distributed mode)
             if cache_path is not None and save_cache:
                 os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
@@ -169,9 +178,45 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
                         "edges_distribution": self.edges_distribution,
                         "num_atoms_dist": self.num_atoms_dist,
                         "max_weight": self.max_weight,
+                        "fingerprints": self.fingerprints,
                     },
                     cache_path,
                 )
+
+    def _precompute_fingerprints(
+        self,
+        spectra_encoder: nn.Module,
+        device: torch.device,
+        verbose: bool,
+    ) -> list[torch.Tensor]:
+        """Pre-compute all spectra fingerprints and store them as CPU tensors."""
+        fingerprints = []
+        spectra_encoder.eval()
+        with torch.no_grad():
+            for i in tqdm(
+                range(len(self.smiles)),
+                desc="Pre-computing fingerprints",
+                disable=not verbose,
+            ):
+                spec_name = self.spec_names[i]
+                formula = self.formulas[i]
+                instrument = self.instruments[i]
+
+                spec_obj = Spectra(
+                    spectra_name=spec_name,
+                    spectra_file=str(self.spec_folder / f"{spec_name}.ms"),
+                    spectra_formula=formula,
+                    instrument=instrument,
+                )
+                spec_features = self.spec_featurizer.featurize(spec_obj)
+                spec_dict = self.spec_featurizer.collate_fn([spec_features])
+                spec_dict = {
+                    k: v.to(device) if isinstance(v, torch.Tensor) else v
+                    for k, v in spec_dict.items()
+                }
+                fp, _ = spectra_encoder(spec_dict)
+                fingerprints.append(fp.squeeze(0).cpu())
+        return fingerprints
 
     def _build(self, sanitizer: Callable | None, verbose: bool):
         smiles_nodes_edges = []
@@ -230,10 +275,7 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
 
     def __getitem__(self, idx):
         """
-        Get a graph representation and spectra-derived fingerprint for a molecule by index.
-
-        Loads the corresponding `.ms` spectrum file, featurizes it with `PeakFormula`,
-        runs the spectra encoder to produce a fingerprint, and returns the graph alongside it.
+        Get a graph representation and pre-computed fingerprint for a molecule by index.
 
         Args:
             idx (int): The index of the molecule to fetch.
@@ -242,32 +284,9 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple (nodes, edges, fp) where:
                 - nodes (torch.Tensor): One-hot encoded node features of shape (n, natoms).
                 - edges (torch.Tensor): One-hot encoded edge features of shape (n, n, nbonds).
-                - fp (torch.Tensor): Spectra-derived fingerprint of shape (output_size,),
-                  obtained by squeezing the batch dimension from the encoder output.
+                - fp (torch.Tensor): Pre-computed spectra fingerprint of shape (output_size,).
         """
         sm = self.smiles[idx]
-        spec_name = self.spec_names[idx]
-        formula = self.formulas[idx]
-        instrument = self.instruments[idx]
-
-        # Graph
         nodes, edges = self.smilesToGraph(sm)
-
-        # Spectra
-        spec_obj = Spectra(
-            spectra_name=spec_name,
-            spectra_file=str(self.spec_folder / f"{spec_name}.ms"),
-            spectra_formula=formula,
-            instrument=instrument,
-        )
-        spec_features = self.spec_featurizer.featurize(spec_obj)
-        spec_dict = self.spec_featurizer.collate_fn([spec_features])
-
-        # Compute the fingerprint from the spec_features
-        spec_dict = {
-            k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-            for k, v in spec_dict.items()
-        }
-        fp, _ = self.spectra_encoder(spec_dict)
-
-        return nodes, edges, fp.squeeze(0)
+        fp = self.fingerprints[idx]
+        return nodes, edges, fp

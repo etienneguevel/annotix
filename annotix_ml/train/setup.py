@@ -87,7 +87,6 @@ def setup_model_mode(cfg, device):
             verbose=dist.is_main_process(),
         )
 
-        print("Using the Spec2MolMetaArch\n")
         collate_fn = collateGraph
 
     else:
@@ -110,8 +109,6 @@ def setup_model_mode(cfg, device):
             save_cache=dist.is_main_process(),
             max_nodes=cfg.dataset.get("max_nodes"),
         )
-
-        print("Using the DigressMetaArch.\n")
 
         if cfg.train.get("distributed") == "pipeline":
             # Derive n_max from the distribution of number of atoms
