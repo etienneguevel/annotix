@@ -35,6 +35,7 @@ from tqdm import tqdm
 import json
 
 from store import json_to_graph, _serialize_value
+from analog_inference import infer_analog_structure, StructureCandidate
 
 
 # =============================================================================
@@ -641,3 +642,102 @@ def export_results(df: pd.DataFrame, output_path: str, format: str = "tsv"):
     else:
         raise ValueError(f"Unsupported format: {format}")
     print(f"Results exported to {output_path}")
+
+
+def infer_structure(
+    query: Spectrum,
+    result_df: pd.DataFrame,
+    network: nx.Graph,
+    mz_tolerance: float = 0.02,
+    delta_mass_tolerance: float = 0.02,
+    max_candidates_per_mod: int = 10,
+    top_n: int = 5,
+) -> list[StructureCandidate]:
+    """
+    Attempt to infer the modified structure of an unknown analog.
+
+    This is the third step after annotate() + select_annotation().
+    It should be called when select_annotation() returns type="analog"
+    or type="putative" — i.e. when the unknown is not directly identified
+    but a close neighbor is known.
+
+    Pipeline (delegated to analog_inference.py)
+    -------------------------------------------
+    1. Resolve the precursor Δm to a biochemical formula delta (+CH2, +O, …).
+    2. Fragment differential analysis: conserved vs. shifted peaks.
+    3. Enumerate structurally modified SMILES from the reference SMILES (RDKit).
+    4. Simplified in silico fragmentation by bond cleavage.
+    5. Score predicted fragments against the query spectrum.
+
+    Parameters
+    ----------
+    query : Spectrum
+        The unknown spectrum (must carry precursor_mz).
+    result_df : pd.DataFrame
+        Output of annotate(). The best candidate (row 0) supplies the
+        reference SMILES and network node id.
+    network : nx.Graph
+        The molecular network (nodes carry the reference Spectrum objects).
+    mz_tolerance : float
+        Fragment matching tolerance in Da.
+    delta_mass_tolerance : float
+        Tolerance for Δm → modification lookup.
+    max_candidates_per_mod : int
+        Maximum structural variants explored per modification type.
+    top_n : int
+        Number of top candidates to return.
+
+    Returns
+    -------
+    List of StructureCandidate ranked by fragmentation_score.
+    Empty list if: RDKit is unavailable, the best candidate has no SMILES,
+    the Δm is not resolved, or the result_df is empty.
+    """
+    if result_df.empty:
+        return []
+
+    best = result_df.iloc[0]
+    reference_smiles = best.get("smiles")
+    node_id = best.get("network_node_id")
+
+    if not reference_smiles or not node_id:
+        return []
+
+    node_data = network.nodes.get(node_id)
+    if node_data is None:
+        return []
+
+    reference_spectrum = node_data.get("spectrum")
+    if reference_spectrum is None:
+        return []
+
+    return infer_analog_structure(
+        query=query,
+        reference_smiles=reference_smiles,
+        reference_spectrum=reference_spectrum,
+        mz_tolerance=mz_tolerance,
+        delta_mass_tolerance=delta_mass_tolerance,
+        max_candidates_per_mod=max_candidates_per_mod,
+        top_n=top_n,
+    )
+
+
+def select_annotation(result_df: pd.DataFrame) -> dict | None:
+    if result_df.empty:
+        return None  # Scenario 3: truly unknown
+
+    best = result_df.iloc[0]  # already ranked by score
+
+    # Scenario 1: confident direct match, same compound
+    if best["source"] == "direct_match" and best["score"] >= 0.7 and best["mass_shift_da"] < 0.02:
+        return {"annotation": best["compound_name"], "confidence": best["confidence_level"], "type": "identified"}
+
+    # Scenario 2a: direct match but mass-shifted → structural analog
+    if best["source"] == "direct_match" and best["mass_shift_da"] >= 0.02:
+        return {"annotation": f"analog of {best['compound_name']}", "confidence": "MSI-3", "type": "analog"}
+
+    # Scenario 2b: propagated → putative class member
+    if best["source"] == "propagation" and best["propagation_depth"] <= 1 and best["score"] >= 0.3:
+        return {"annotation": f"putative: {best['compound_name']}", "confidence": "MSI-3", "type": "putative"}
+
+    return None  # not confident enough
