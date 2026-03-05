@@ -11,10 +11,9 @@ from argparse import ArgumentParser
 from pathlib import Path
 import json
 
-from pipeline import annotate, annotate_batch, export_results
+from annotix_ml.propagation.inference import annotate, annotate_batch, export_results
 from load_spectra import load_spectra
 from store import json_to_graph
-from plot import draw
 
 def get_arguments():
     """

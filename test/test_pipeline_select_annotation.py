@@ -17,7 +17,7 @@ import matchms.similarity as _ms_sim
 if not hasattr(_ms_sim, "ModifiedCosine"):
     _ms_sim.ModifiedCosine = _ms_sim.ModifiedCosineGreedy
 
-from annotix_ml.propagation.pipeline import select_annotation
+from annotix_ml.propagation.inference import select_annotation
 
 
 # ---------------------------------------------------------------------------

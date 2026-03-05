@@ -11,7 +11,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 from time import time
 
-from pipeline import build_molecular_network
+from annotix_ml.propagation.network import build_molecular_network
 from load_spectra import load_spectra
 from plot import draw
 
