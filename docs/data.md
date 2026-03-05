@@ -58,6 +58,23 @@ nodes, edges = dataset[0]
 | `save_cache` | `bool` | `True` | Whether to write the cache file (set `False` on non-main DDP ranks) |
 | `max_nodes` | `int \| None` | `None` | Discard molecules with more atoms than this |
 
+### `GraphDatasetWithFP`
+
+Subclass of `GraphDatasetFromSMILEs` that additionally returns a **Morgan fingerprint** for each molecule. Accepts the same constructor parameters as the base class. Used in graphtransf training when the model also conditions on a molecular fingerprint.
+
+```python
+dataset = GraphDatasetWithFP(
+    data="data/train.csv",
+    smile_column="smiles",
+    max_nodes=50,
+)
+nodes, edges, fp = dataset[0]
+# nodes: (n_atoms, len(valid_elements)), edges: (n_atoms, n_atoms, 5)
+# fp: (morgan_nbits,) — computed on-the-fly from the SMILES via mol_to_fingerprint
+```
+
+The fingerprint is computed at `__getitem__` time (not cached) by calling `mol_to_fingerprint` from `graphtransf.math.metrics`.
+
 ### The `sanitizer` argument
 
 The `sanitizer` is an optional callable applied to every molecule after the graph is built from
@@ -118,24 +135,29 @@ dataset = GraphDatasetFromSMILEs(data="data/train.csv", sanitizer=my_sanitizer)
 
 ### `GraphSpecDataset`
 
-Paired dataset that returns `(graph, spectra)` items. Used in **spec2mol** training.
+Paired dataset that returns `(nodes, edges, fp)` items for **spec2mol** training. A pre-trained
+`spectra_encoder` is required at construction time; it is called once per spectrum to
+**pre-compute fingerprints** for the entire dataset, which are then stored in memory (and
+optionally written to a cache file).
 
 Requires a **CSV file** with SMILES and spectrum name columns. Spectra are read as `.ms` files
 from `spec_folder`; subformula annotations are read from `subform_folder`.
 
 ```python
 dataset = GraphSpecDataset(
-    data="data/paired.csv",          # CSV with smiles + spectrum name columns
-    spec_folder="data/spectra/",     # folder containing <spec_name>.ms files
-    subform_folder="data/subforms/", # folder with subformula JSON annotations
+    data="data/paired.csv",
+    spec_folder="data/spectra/",
+    subform_folder="data/subforms/",
+    spectra_encoder=encoder,          # pre-loaded nn.Module; used for fingerprint pre-computation
+    device=torch.device("cuda"),
     smile_column="smiles",
     spec_column="spec",
     max_nodes=50,
 )
-item = dataset[0]
-# item["nodes"], item["edges"], item["smiles"], item["spec_name"],
-# item["peak_type"], item["form_vec"], item["ion_vec"],
-# item["frag_intens"], item["instrument"], item["magma_fps"], ...
+nodes, edges, fp = dataset[0]
+# nodes: (n_atoms, len(valid_elements))
+# edges: (n_atoms, n_atoms, 5)
+# fp:    (output_size,) — pre-computed spectra fingerprint
 ```
 
 **Constructor parameters:**
@@ -145,6 +167,8 @@ item = dataset[0]
 | `data` | `str \| DataFrame` | required | Path to a CSV/TSV file or a pandas DataFrame |
 | `spec_folder` | `str \| Path` | required | Folder containing `<spec_name>.ms` spectrum files |
 | `subform_folder` | `str \| Path` | required | Folder with subformula JSON annotations for each spectrum |
+| `spectra_encoder` | `nn.Module` | required | Pre-loaded spectra encoder used to pre-compute fingerprints |
+| `device` | `torch.device` | required | Device used for encoder inference during fingerprint pre-computation |
 | `smile_column` | `str` | `"smiles"` | Column name for SMILES strings |
 | `spec_column` | `str` | `"spec"` | Column name for spectrum identifiers |
 | `formula_column` | `str` | `"formula"` | Column name for molecular formula |
@@ -157,20 +181,24 @@ item = dataset[0]
 | `max_nodes` | `int \| None` | `None` | Discard molecules with more atoms than this |
 | `**kwargs` | | | Extra kwargs forwarded to `PeakFormula` (the spectra featurizer) |
 
-**Item dict keys** (from `__getitem__`):
+**Fingerprint pre-computation**
 
-| Key | Description |
-|-----|-------------|
-| `nodes` | `(n_atoms, len(valid_elements))` one-hot atom tensor |
-| `edges` | `(n_atoms, n_atoms, 5)` one-hot bond tensor |
-| `smiles` | SMILES string |
-| `spec_name` | Spectrum identifier |
-| `peak_type` | Peak type indices array |
-| `form_vec` | Subformula element count vectors array |
-| `ion_vec` | Ion mode index per peak |
-| `frag_intens` | Peak intensities array |
-| `instrument` | Instrument type index |
-| `magma_fps` | Fragment fingerprints from MAGMA (zeros if unavailable) |
+At construction time, `_precompute_fingerprints(spectra_encoder, device, verbose)` is called. It
+iterates over all items, runs the encoder in `eval` / `no_grad` mode, and stores the resulting
+`(output_size,)` CPU tensors in `self.fingerprints`. The pre-computed tensors are included in the
+cache file under the `"fingerprints"` key. If a cache file exists but was written before this
+feature was added (i.e. the key is absent), the fingerprints are re-computed and the cache is
+**not** automatically updated — the caller should re-generate the cache.
+
+**`__getitem__` return value:**
+
+Returns a `(nodes, edges, fp)` 3-tuple:
+
+| Position | Shape | Description |
+|----------|-------|-------------|
+| `nodes` | `(n_atoms, len(valid_elements))` | One-hot atom tensor |
+| `edges` | `(n_atoms, n_atoms, 5)` | One-hot bond tensor |
+| `fp` | `(output_size,)` | Pre-computed spectra fingerprint (CPU tensor) |
 
 ---
 
@@ -180,16 +208,27 @@ All collators are designed to be passed to `torch.utils.data.DataLoader` as `col
 
 ### `collateGraph(batch)`
 
-Dynamic-padding collator for `GraphDatasetFromSMILEs`. Pads all graphs in a batch to the maximum number of atoms in that batch.
+Dynamic-padding collator for `GraphDatasetFromSMILEs` and `GraphDatasetWithFP` (and `GraphSpecDataset`). Pads all graphs in a batch to the maximum number of atoms in that batch. Also handles an optional third fingerprint element in each tuple.
 
 ```python
+# Without fingerprints (GraphDatasetFromSMILEs)
 loader = DataLoader(dataset, batch_size=32, collate_fn=collateGraph)
 nodes, edges, mask = next(iter(loader))
 # nodes: (32, max_n, 17), edges: (32, max_n, max_n, 5), mask: (32, max_n)
+
+# With fingerprints (GraphDatasetWithFP or GraphSpecDataset)
+loader = DataLoader(fp_dataset, batch_size=32, collate_fn=collateGraph)
+nodes, edges, mask, fps = next(iter(loader))
+# fps: (32, nbits)
 ```
 
-**Input:** list of `(nodes, edges)` 2-tuples.
-**Output:** `(nodes, edges, mask)` where `mask[i, j] = 1` if atom `j` is real in molecule `i`.
+**Input:** list of `(nodes, edges)` 2-tuples **or** `(nodes, edges, fp)` 3-tuples.
+
+**Output:**
+- `(nodes, edges, mask)` when no fingerprints are present
+- `(nodes, edges, mask, fps)` when fingerprints are present, where `fps` is shape `(bs, nbits)`
+
+`mask[i, j] = 1` if atom `j` is real in molecule `i`.
 
 ---
 
@@ -207,31 +246,6 @@ collate_fn = partial(collateGraphStatic, n_max=50)
 ### `collateGraphJagged(batch)`
 
 Experimental jagged-tensor collator. Stacks all graphs into one flat `(1, L, d)` tensor and computes a `FlexAttention` block mask. Not used in the main training pipeline.
-
----
-
-### `collateGraphSpec(batch)`
-
-Joint graph + spectra collator for `GraphSpecDataset`. Pads graphs to the batch maximum and delegates spectra collation to `PeakFormula.collate_fn`.
-
-```python
-loader = DataLoader(spec_dataset, batch_size=16, collate_fn=collateGraphSpec)
-nodes, edges, mask, num_peaks, types, instruments, ion_vec, form_vec, intens = next(iter(loader))
-```
-
-**Output tuple (9 elements):**
-
-| Index | Name | Shape | Description |
-|-------|------|-------|-------------|
-| 0 | `nodes` | `(bs, max_n, 17)` | Padded atom one-hot features |
-| 1 | `edges` | `(bs, max_n, max_n, 5)` | Padded bond one-hot features |
-| 2 | `mask` | `(bs, max_n)` | Bool mask — True for real atoms |
-| 3 | `num_peaks` | `(bs,)` | Number of peaks per spectrum |
-| 4 | `types` | `(bs, max_peaks)` | Peak type indices |
-| 5 | `instruments` | `(bs,)` | Instrument type indices |
-| 6 | `ion_vec` | `(bs, ion_dim)` | Ionization mode embedding |
-| 7 | `form_vec` | `(bs, form_dim)` | Molecular formula embedding |
-| 8 | `intens` | `(bs, max_peaks)` | Peak intensities |
 
 ---
 
@@ -291,24 +305,31 @@ sampler = InfiniteSampler(
 
 ## `loaders.py` — Dataset Factory
 
-### `make_datasets(...) -> tuple[GraphDatasetFromSMILEs, GraphDatasetFromSMILEs]`
+### `make_datasets(...) -> tuple[Dataset, Dataset]`
 
-Builds train and validation `GraphDatasetFromSMILEs` objects from a single CSV file,
-splitting on a fold column. Returns the two *datasets* — `DataLoader` wrapping is done
-by the training code.
+Builds train and validation graph datasets from a single CSV file, splitting on a fold column.
+Returns either `GraphDatasetFromSMILEs` or `GraphDatasetWithFP` objects depending on the
+`fingerprint` flag. `DataLoader` wrapping is done by the training code.
 
 ```python
 from annotix_ml.data.loaders import make_datasets
 
+# Without fingerprints (default)
 train_dataset, valid_dataset = make_datasets(
     data_path="data/molecules.csv",
-    smile_column="smiles",    # default
-    split_column="fold",      # default — column used to split train vs val
-    val_tag="test",           # default — value in split_column that marks val rows
+    smile_column="smiles",
+    split_column="fold",
+    val_tag="test",
     verbose=True,
     cache_path="cache/mol",   # produces cache/mol_train.pt and cache/mol_valid.pt
     save_cache=True,
     max_nodes=50,
+)
+
+# With Morgan fingerprints
+train_dataset, valid_dataset = make_datasets(
+    data_path="data/molecules.csv",
+    fingerprint=True,         # uses GraphDatasetWithFP; items return (nodes, edges, fp)
 )
 ```
 
@@ -320,6 +341,7 @@ train_dataset, valid_dataset = make_datasets(
 | `smile_column` | `str` | `"smiles"` | Column containing SMILES strings |
 | `split_column` | `str` | `"fold"` | Column used to split train vs validation |
 | `val_tag` | `str \| None` | `"test"` | Value in `split_column` that identifies validation rows; all other rows become train |
+| `fingerprint` | `bool` | `False` | If `True`, use `GraphDatasetWithFP`; items return `(nodes, edges, fp)`. If `False`, use `GraphDatasetFromSMILEs`; items return `(nodes, edges)`. |
 | `verbose` | `bool` | `True` | Show progress bar during build |
 | `cache_path` | `str \| None` | `None` | Base path for cache files; `_train.pt` and `_valid.pt` are appended |
 | `save_cache` | `bool` | `True` | Whether to write cache files after building |
@@ -329,20 +351,37 @@ train_dataset, valid_dataset = make_datasets(
 
 ---
 
-### `make_spec_datasets(cfg, save_cache, verbose) -> tuple[GraphSpecDataset, GraphSpecDataset]`
+### `make_spec_datasets(cfg, spectra_encoder, device, save_cache, verbose) -> tuple[GraphSpecDataset, GraphSpecDataset]`
 
 Builds train and validation `GraphSpecDataset` objects from a config object.
 Splits the CSV at `cfg.dataset.data_path` on the `cfg.dataset.split_column` column,
 using `cfg.dataset.val_tag` to identify validation rows. Returns two *datasets*.
 
 The `valid_elements` vocabulary is derived from the train split and reused for the
-validation split to ensure consistency.
+validation split to ensure consistency. The `spectra_encoder` is forwarded to each
+`GraphSpecDataset` so that fingerprints are pre-computed at construction time.
 
 ```python
 from annotix_ml.data.loaders import make_spec_datasets
 
-train_dataset, valid_dataset = make_spec_datasets(cfg, save_cache=True, verbose=True)
+train_dataset, valid_dataset = make_spec_datasets(
+    cfg,
+    spectra_encoder=encoder,
+    device=device,
+    save_cache=True,
+    verbose=True,
+)
 ```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cfg` | `DictConfig` | OmegaConf config object (see config keys below) |
+| `spectra_encoder` | `nn.Module` | Pre-loaded encoder passed to `GraphSpecDataset` for fingerprint pre-computation |
+| `device` | `torch.device` | Device used for encoder inference during pre-computation |
+| `save_cache` | `bool` | Whether to write dataset cache files |
+| `verbose` | `bool` | Whether to print progress information |
 
 **Config keys read:**
 
