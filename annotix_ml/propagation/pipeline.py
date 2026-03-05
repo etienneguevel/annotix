@@ -36,8 +36,8 @@ import json
 
 from scipy import sparse
 
-from store import json_to_graph, _serialize_value
-from analog_inference import infer_analog_structure, StructureCandidate
+from .store import json_to_graph, _serialize_value
+from .analog_inference import infer_analog_structure, StructureCandidate
 
 
 # =============================================================================

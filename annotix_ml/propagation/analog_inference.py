@@ -320,8 +320,8 @@ def _enumerate_plus_acetyl(mol) -> list:
     """
     +C2H2O / acetylation (+42.011 Da): add CH3C(=O)- to each OH or NH group.
     """
-    rxn_oh = AllChem.ReactionFromSmarts("[O:1]H>>[O:1]C(=O)C")
-    rxn_nh = AllChem.ReactionFromSmarts("[N:1]H>>[N:1]C(=O)C")
+    rxn_oh = AllChem.ReactionFromSmarts("[OH:1]>>[O:1]C(=O)C")
+    rxn_nh = AllChem.ReactionFromSmarts("[NH:1]>>[N:1]C(=O)C")
     results = []
     for rxn in (rxn_oh, rxn_nh):
         for products_set in rxn.RunReactants((mol,)):
