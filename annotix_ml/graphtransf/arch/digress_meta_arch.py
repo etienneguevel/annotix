@@ -12,6 +12,7 @@ from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.data.data_utils import mask_any_tensor
 from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
+from annotix_ml.graphtransf.layers.mlp import MLP
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.math.extra_features import (
@@ -53,6 +54,13 @@ class DigressMetaArch:
         morgan_nbits (int, optional): Size of the fingerprint vector expected when
             `"spectra_fingerprint"` is in `extra_features`. Determines the contribution
             of the fingerprint to `global_features`. Defaults to 2048.
+        encoder_output_size (int | None, optional): Dimension of the spectra encoder output.
+            When set and `"spectra_fingerprint"` is in `extra_features`, a projection
+            network (`fp_projector`) maps encoder outputs from this dimension to
+            `morgan_nbits` before appending to ``y``. Defaults to None (no projection).
+        fp_projector_type (str, optional): Architecture of the FP projection network.
+            ``"linear"`` uses a single ``nn.Linear``; ``"mlp"`` uses a two-layer MLP
+            with SiLU activation. Defaults to ``"linear"``.
     """
 
     known_extra_features = [
@@ -82,6 +90,8 @@ class DigressMetaArch:
         extra_features: list[str] | None = None,
         max_weight: float | None = None,
         morgan_nbits: int = 2048,
+        encoder_output_size: int | None = None,
+        fp_projector_type: str = "linear",
     ):
         # Store information
         self.loss_ratio = loss_ratio
@@ -154,6 +164,26 @@ class DigressMetaArch:
         )
         self.noiser.move_to(device)
 
+        # Build FP projector when spectra fingerprint conditioning is used
+        self.fp_projector: torch.nn.Module | None = None
+        if (
+            "spectra_fingerprint" in self.extra_features
+            and encoder_output_size is not None
+        ):
+            if fp_projector_type == "linear":
+                self.fp_projector = torch.nn.Linear(
+                    encoder_output_size, morgan_nbits
+                ).to(device)
+            elif fp_projector_type == "mlp":
+                hidden = (encoder_output_size + morgan_nbits) // 2
+                self.fp_projector = MLP(
+                    d=encoder_output_size, d_hidden=hidden, d_out=morgan_nbits
+                ).to(device)
+            else:
+                raise ValueError(
+                    f"Unknown fp_projector_type: {fp_projector_type!r}. Expected 'linear' or 'mlp'."
+                )
+
         # Put some variables in case of distributed training
         self.rank = -1
         self.train_schedule = None
@@ -190,10 +220,11 @@ class DigressMetaArch:
         if not valid_elements:
             valid_elements = list(VALID_ELEMENTS)
 
-        size_fp = (
+        morgan_nbits = cfg.dataset.get("morgan_nbits") or 0
+        encoder_output_size = (
             cfg.spectra_encoder.get("output_size")
             if cfg.get("spectra_encoder") is not None
-            else cfg.dataset.get("morgan_nbits")
+            else None
         )
 
         return cls(
@@ -214,7 +245,9 @@ class DigressMetaArch:
             nodes_distribution=nodes_distribution,
             edges_distribution=edges_distribution,
             max_weight=max_weight,
-            morgan_nbits=size_fp,
+            morgan_nbits=morgan_nbits,
+            encoder_output_size=encoder_output_size,
+            fp_projector_type=cfg.model.get("fp_projector_type", "linear"),
         )
 
     @classmethod
@@ -272,20 +305,34 @@ class DigressMetaArch:
     def trainable_parameters(self):
         """Yield from the trainable parameters of the model."""
         yield from self.diffuser.parameters()
+        if self.fp_projector is not None:
+            yield from self.fp_projector.parameters()
 
     def checkpoint_state_dict(self) -> dict:
         """Return the state dict for checkpointing."""
-        return {"model": self.diffuser.state_dict()}
+        diffuser = getattr(self.diffuser, "module", self.diffuser)
+        state = {"model": diffuser.state_dict()}
+        if self.fp_projector is not None:
+            projector = getattr(self.fp_projector, "module", self.fp_projector)
+            state["fp_projector"] = projector.state_dict()
+        return state
 
     def load_checkpoint_state_dict(self, state: dict):
         """Load the model state from a checkpoint state dict."""
         # Support both the old format (bare state_dict) and the new format
         # ({"model": state_dict, "optimizer": ...}).
+        diffuser = getattr(self.diffuser, "module", self.diffuser)
         if isinstance(state, dict) and "model" in state:
-            saved_model = state["model"]
+            diffuser.load_state_dict(state["model"])
         else:
-            saved_model = state
-        self.diffuser.load_state_dict(saved_model)
+            diffuser.load_state_dict(state)
+        if (
+            self.fp_projector is not None
+            and isinstance(state, dict)
+            and "fp_projector" in state
+        ):
+            projector = getattr(self.fp_projector, "module", self.fp_projector)
+            projector.load_state_dict(state["fp_projector"])
 
     def sync_extra_gradients(self):
         """
@@ -457,6 +504,8 @@ class DigressMetaArch:
                     nodes, edges, mask, t
                 )  # (bs, node_features), (bs, global_features)
                 if fp is not None:
+                    if self.fp_projector is not None:
+                        fp = self.fp_projector(fp)
                     y = torch.cat([y, fp], dim=-1)
 
                 input_args = (edges, mask, y, pos_emb, nodes)
@@ -479,6 +528,8 @@ class DigressMetaArch:
 
             # Add the fp if is in the batch
             if fp is not None:
+                if self.fp_projector is not None:
+                    fp = self.fp_projector(fp)
                 y = torch.cat([y, fp], dim=-1)
 
             out = self.diffuser(edges, mask, y, pos_emb, nodes)
@@ -534,6 +585,8 @@ class DigressMetaArch:
                 )  # (bs, node_features), (bs, global_features)
 
                 if fp is not None:
+                    if self.fp_projector is not None:
+                        fp = self.fp_projector(fp)
                     y = torch.cat([y, fp], dim=-1)
 
                 input_args = (E_noised, mask, y, pos_emb, N_noised)
@@ -554,15 +607,12 @@ class DigressMetaArch:
                 N_noised, E_noised, mask, sampled_t
             )  # (bs, node_features), (bs, global_features)
             if fp is not None:
+                if self.fp_projector is not None:
+                    fp = self.fp_projector(fp)
                 y = torch.cat([y, fp], dim=-1)
 
             input_args = (E_noised, mask, y, pos_emb, N_noised)
-
-            if self.train_model is not None:
-                out = self.train_model(E_noised, mask, y, pos_emb, N_noised)
-
-            else:
-                out = self.diffuser(*input_args)
+            out = self.diffuser(*input_args)
 
             pN, pE, *_ = out
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
@@ -789,10 +839,11 @@ class DigressMetaArch:
             self.eval_schedule = ScheduleGPipe(eval_model, num_microbatches)
 
         elif mode == "data":
-            self.train_model = DDP(
-                self.diffuser,
-                device_ids=[get_local_rank()],
-            )
+            self.diffuser = DDP(self.diffuser, device_ids=[get_local_rank()])
+            if self.fp_projector is not None:
+                self.fp_projector = DDP(
+                    self.fp_projector, device_ids=[get_local_rank()]
+                )
 
         elif mode == "tensor":
             pass

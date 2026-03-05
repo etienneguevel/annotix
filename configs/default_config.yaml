@@ -24,6 +24,7 @@ model:
     - laplacian_embedding
     - node_cycle
     - valence_features
+  fp_projector_type: linear
 
 train:
   batch_size: 512

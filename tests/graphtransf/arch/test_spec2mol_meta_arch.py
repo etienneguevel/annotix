@@ -1,6 +1,5 @@
 import pandas as pd
 import torch
-import torch.nn as nn
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
@@ -89,7 +88,7 @@ def _make_model(cfg, dataset):
 
 def _load_batch(dataset, bs=2):
     loader = DataLoader(dataset, batch_size=bs, collate_fn=collateGraph)
-    batch = (i.to(dataset.device) for i in next(iter(loader)))
+    batch = tuple(i.to(DEVICE) for i in next(iter(loader)))
 
     return batch
 
@@ -128,7 +127,7 @@ def test_spec2mol_meta_arch_initialization_from_config():
     if not cfg.model.no_y:
         assert model.diffuser.dy == cfg.model.dy
 
-    assert isinstance(dataset.spectra_encoder, nn.Module)
+    assert hasattr(dataset, "fingerprints") and len(dataset.fingerprints) > 0
 
 
 def test_compute_extra_features():
@@ -146,7 +145,7 @@ def test_compute_extra_features():
     assert pos_emb.shape[0] == bs
     assert pos_emb.shape[-1] == model.node_features
     assert y.shape[0] == bs
-    assert (y.shape[-1] + fingerprints.shape[-1]) == model.global_features
+    assert (y.shape[-1] + model.morgan_nbits) == model.global_features
 
 
 def test_forward():
