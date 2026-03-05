@@ -180,7 +180,7 @@ def propagate_annotations(
 
         if score >= score_threshold and n_matched >= min_matched_peaks:
             anchors.append((node_id, score))
-            print(node_id, score)
+            # print(node_id, round(score, 2))
 
     if not anchors:
         return []
@@ -254,7 +254,7 @@ def propagate_annotations(
     results = sorted(propagated.values(), key=lambda a: -a.score)
     return results[:top_n]
 
-def annotate(
+def find_candidates(
     query: Spectrum,
     network: nx.Graph,
     # Direct match params
@@ -345,7 +345,7 @@ def _assign_msi_level(ann: Annotation) -> str:
     else:
         return "MSI-4 (unknown)"
 
-def annotate_batch(
+def find_candidates_batch(
     queries: list[Spectrum],
     network: nx.Graph,
     **kwargs,
@@ -361,7 +361,7 @@ def annotate_batch(
         query_id = query.get("spectrum_id") or f"query_{i}"
         print(f"Annotating {query_id} ({i+1}/{len(queries)})...")
 
-        df = annotate(query, network, **kwargs)
+        df = find_candidates(query, network, **kwargs)
         df.insert(0, "query_id", query_id)
         all_results.append(df)
 
@@ -399,7 +399,7 @@ def infer_structure(
     """
     Attempt to infer the modified structure of an unknown analog.
 
-    This is the third step after annotate() + select_annotation().
+    This is the third step after find_candidates() + select_annotation().
     It should be called when select_annotation() returns type="analog"
     or type="putative" — i.e. when the unknown is not directly identified
     but a close neighbor is known.
@@ -417,7 +417,7 @@ def infer_structure(
     query : Spectrum
         The unknown spectrum (must carry precursor_mz).
     result_df : pd.DataFrame
-        Output of annotate(). The best candidate (row 0) supplies the
+        Output of find_candidates(). The best candidate (row 0) supplies the
         reference SMILES and network node id.
     network : nx.Graph
         The molecular network (nodes carry the reference Spectrum objects).
@@ -439,30 +439,40 @@ def infer_structure(
     if result_df.empty:
         return []
 
-    best = result_df.iloc[0]
-    reference_smiles = best.get("smiles")
-    node_id = best.get("network_node_id")
+    all_candidates: list[StructureCandidate] = []
 
-    if not reference_smiles or not node_id:
-        return []
+    for _, row in result_df.iterrows():
+        reference_smiles = row.get("smiles")
+        node_id = row.get("network_node_id")
 
-    node_data = network.nodes.get(node_id)
-    if node_data is None:
-        return []
+        if not reference_smiles or not node_id:
+            continue
 
-    reference_spectrum = node_data.get("spectrum")
-    if reference_spectrum is None:
-        return []
+        node_data = network.nodes.get(node_id)
+        if node_data is None:
+            continue
 
-    return infer_analog_structure(
-        query=query,
-        reference_smiles=reference_smiles,
-        reference_spectrum=reference_spectrum,
-        mz_tolerance=mz_tolerance,
-        delta_mass_tolerance=delta_mass_tolerance,
-        max_candidates_per_mod=max_candidates_per_mod,
-        top_n=top_n,
-    )
+        reference_spectrum = node_data.get("spectrum")
+        if reference_spectrum is None:
+            continue
+
+        if row.get("mass_shift_da", 0.0) < delta_mass_tolerance:
+            print(f"  [direct match] {row.get('compound_name', '?')} → {reference_smiles}")
+            continue
+
+        candidates = infer_analog_structure(
+            query=query,
+            reference_smiles=reference_smiles,
+            reference_spectrum=reference_spectrum,
+            mz_tolerance=mz_tolerance,
+            delta_mass_tolerance=delta_mass_tolerance,
+            max_candidates_per_mod=max_candidates_per_mod,
+            top_n=top_n,
+        )
+        all_candidates.extend(candidates)
+
+    all_candidates.sort(key=lambda c: -c.fragmentation_score)
+    return all_candidates[:top_n]
 
 
 def select_annotation(result_df: pd.DataFrame) -> dict | None:

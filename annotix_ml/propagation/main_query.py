@@ -7,7 +7,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 import json
 
-from annotix_ml.propagation.inference import annotate, annotate_batch, export_results, select_annotation
+from annotix_ml.propagation.inference import find_candidates, find_candidates_batch, export_results
 from load_spectra import load_spectra
 from store import json_to_graph
 
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     # ANNOTATE A SINGLE SPECTRUM
     if query_spectra:
         print("\n--- Single spectrum annotation ---")
-        result_df = annotate(
+        result_df = find_candidates(
             query=query_spectra[0],
             network=network,
             direct_score_threshold=0.7,
@@ -53,7 +53,7 @@ if __name__ == "__main__":
 
     # ANNOTATE ALL UNKNOWNS (batch)
     print("\n--- Batch annotation ---")
-    batch_results = annotate_batch(
+    batch_results = find_candidates_batch(
         queries=query_spectra,
         network=network,
         direct_score_threshold=0.7,

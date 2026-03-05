@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 import json
 
-from annotix_ml.propagation.inference import annotate, select_annotation
+from annotix_ml.propagation.inference import find_candidates, infer_structure
 from load_spectra import load_spectra
 from store import json_to_graph
 
@@ -39,8 +39,8 @@ if __name__ == "__main__":
 
     # Infer each new molecule
     for query in query_spectra:
-        print(f"\n*** Annotating {query.get('spectrum_id')} ***")
-        result_df = annotate(
+        print(f"\n\033[95m*** Annotating {query.get('spectrum_id')} ***\033[0m")
+        result_df = find_candidates(
             query=query,
             network=network,
             direct_score_threshold=0.7,
@@ -53,5 +53,8 @@ if __name__ == "__main__":
             top_n=10
         )
 
-        decision = select_annotation(result_df)
-        print(decision)
+        print("Candidates:")
+        print(result_df)
+
+        all_candidates = infer_structure(query=query, result_df=result_df, network=network)
+        print(all_candidates)

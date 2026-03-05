@@ -83,6 +83,7 @@ def resolve_delta_mass(
     direction = "gain" if delta_da >= 0 else "loss"
     hits = []
     for exact, formula, name in _DELTA_MASS_TABLE:
+        print(formula, delta_da, abs(abs_delta - exact), tolerance_da)
         if abs(abs_delta - exact) <= tolerance_da:
             hits.append({
                 "exact_mass_da": exact,
@@ -576,6 +577,7 @@ def infer_analog_structure(
     query_mz = float(query.get("precursor_mz") or 0.0)
     ref_mz = float(reference_spectrum.get("precursor_mz") or 0.0)
     if not query_mz or not ref_mz:
+        warnings.warn("query_mz or ref_mz if empty")
         return []
 
     delta_mz = query_mz - ref_mz  # signed
@@ -583,6 +585,7 @@ def infer_analog_structure(
     # Step 1: resolve Δm
     modifications = resolve_delta_mass(delta_mz, tolerance_da=delta_mass_tolerance)
     if not modifications:
+        warnings.warn("No modification in delta mass")
         return []
 
     # Step 2: fragment differential (shared across all modifications)
