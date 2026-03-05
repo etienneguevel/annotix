@@ -96,6 +96,7 @@ class DigressMetaArch:
         # Store information
         self.loss_ratio = loss_ratio
         self.device = device
+        self.scaler = torch.amp.GradScaler(self.device)
 
         # Store extra features information
         self.extra_features = extra_features or []
@@ -612,11 +613,12 @@ class DigressMetaArch:
                 y = torch.cat([y, fp], dim=-1)
 
             input_args = (E_noised, mask, y, pos_emb, N_noised)
-            out = self.diffuser(*input_args)
+            with torch.autocast(device_type=self.device, dtype=torch.float16):
+                out = self.diffuser(*input_args)
+                pN, pE, *_ = out
+                loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
 
-            pN, pE, *_ = out
-            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
-            loss.backward()
+            self.scaler.scale(loss).backward()
 
         if out is None:
             pN, pE, loss = None, None, None

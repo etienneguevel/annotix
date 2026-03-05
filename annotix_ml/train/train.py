@@ -290,9 +290,6 @@ def train(cfg):
         # Make the model in train mode
         digress.diffuser.train()
 
-        # zero grad before forward pass
-        optimizer.zero_grad()
-
         # Reset memory tracker for this step
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
@@ -358,8 +355,10 @@ def train(cfg):
             if dist.is_main_process():
                 wandb.log(train_log, step=global_step)
 
-        # Update the parameters
-        optimizer.step()
+        # Update the parameters with the scaler
+        digress.scaler.step(optimizer)
+        digress.scaler.update()
+        optimizer.zero_grad()
 
         # Step the scheduler
         if scheduler is not None:
