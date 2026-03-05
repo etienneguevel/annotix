@@ -34,6 +34,8 @@ from matchms.similarity import ModifiedCosine
 from tqdm import tqdm
 import json
 
+from scipy import sparse
+
 from store import json_to_graph, _serialize_value
 from analog_inference import infer_analog_structure, StructureCandidate
 
@@ -84,15 +86,21 @@ _shm_handles: list = []
 _worker_n: int = 0
 _worker_pmzs: np.ndarray | None = None
 _worker_cache: OrderedDict | None = None
+_worker_fp: sparse.csr_matrix | None = None
+_worker_fp_thresh: float = 0.0
 _CACHE_MAX = 256
 
 
 def _init_worker_shm(
     shm_mz_name: str, shm_int_name: str, shm_off_name: str,
     total_peaks: int, n: int, precursor_mzs: list[float],
+    fp_shm_names: tuple[str, str, str] | None = None,
+    fp_shapes: tuple[int, int, int, int] | None = None,
+    fingerprint_threshold: float = 0.0,
 ):
     global _shm_mz_view, _shm_int_view, _shm_off_view, _shm_handles
     global _worker_n, _worker_pmzs, _worker_cache
+    global _worker_fp, _worker_fp_thresh
 
     shm_mz = shared_memory.SharedMemory(name=shm_mz_name, create=False)
     shm_int = shared_memory.SharedMemory(name=shm_int_name, create=False)
@@ -105,6 +113,19 @@ def _init_worker_shm(
     _worker_n = n
     _worker_pmzs = np.array(precursor_mzs, dtype=np.float64)
     _worker_cache = OrderedDict()
+
+    _worker_fp = None
+    _worker_fp_thresh = fingerprint_threshold
+    if fp_shm_names is not None and fp_shapes is not None:
+        nnz, n_rows, n_cols = fp_shapes[0], fp_shapes[1], fp_shapes[2]
+        shm_d = shared_memory.SharedMemory(name=fp_shm_names[0], create=False)
+        shm_i = shared_memory.SharedMemory(name=fp_shm_names[1], create=False)
+        shm_p = shared_memory.SharedMemory(name=fp_shm_names[2], create=False)
+        _shm_handles.extend([shm_d, shm_i, shm_p])
+        data = np.ndarray((nnz,), dtype=np.float64, buffer=shm_d.buf)
+        indices = np.ndarray((nnz,), dtype=np.int32, buffer=shm_i.buf)
+        indptr = np.ndarray((n_rows + 1,), dtype=np.int64, buffer=shm_p.buf)
+        _worker_fp = sparse.csr_matrix((data, indices, indptr), shape=(n_rows, n_cols))
 
 
 def _get_spectrum(i: int) -> Spectrum:
@@ -123,6 +144,35 @@ def _get_spectrum(i: int) -> Spectrum:
     return spec
 
 
+def _build_fingerprints(
+    shm_mz_view: np.ndarray, shm_int_view: np.ndarray,
+    shm_off_view: np.ndarray, n: int,
+    bin_width: float = 0.1, mz_max: float = 2000.0,
+) -> sparse.csr_matrix:
+    n_bins = int(mz_max / bin_width) + 1
+    rows, cols, vals = [], [], []
+    for i in range(n):
+        lo, hi = int(shm_off_view[i]), int(shm_off_view[i + 1])
+        if lo == hi:
+            continue
+        mz = shm_mz_view[lo:hi]
+        ints = shm_int_view[lo:hi]
+        bins = np.clip((mz / bin_width).astype(np.int32), 0, n_bins - 1)
+        rows.extend([i] * len(bins))
+        cols.extend(bins.tolist())
+        vals.extend(ints.tolist())
+    fp = sparse.csr_matrix((vals, (rows, cols)), shape=(n, n_bins), dtype=np.float64)
+    # L2-normalize rows
+    norms = sparse.linalg.norm(fp, axis=1)
+    norms[norms == 0] = 1.0
+    fp = fp.multiply(1.0 / norms[:, np.newaxis]).tocsr()
+    return fp
+
+
+def _fingerprint_cosine(i: int, j: int) -> float:
+    return float(_worker_fp[i].dot(_worker_fp[j].T).toarray()[0, 0])
+
+
 def _score_row_shm(args: tuple) -> list[tuple[int, int, float, int]]:
     i, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff = args
     pair = ModifiedCosine(tolerance=mz_tolerance).pair
@@ -130,9 +180,15 @@ def _score_row_shm(args: tuple) -> list[tuple[int, int, float, int]]:
     n = _worker_n
     results = []
     spec_i = _get_spectrum(i)
-    for j in range(i + 1, n):
-        if max_mz_diff > 0 and abs(mz_i - _worker_pmzs[j]) > max_mz_diff:
-            continue
+    if max_mz_diff > 0:
+        j_hi = int(np.searchsorted(_worker_pmzs, mz_i + max_mz_diff, side='right'))
+    else:
+        j_hi = n
+    for j in range(i + 1, j_hi):
+        if _worker_fp is not None:
+            fp_score = _fingerprint_cosine(i, j)
+            if fp_score < _worker_fp_thresh:
+                continue
         r = pair(spec_i, _get_spectrum(j))
         if r['score'] >= cosine_threshold and r['matches'] >= min_matched_peaks:
             results.append((i, j, float(r['score']), int(r['matches'])))
@@ -200,13 +256,20 @@ def build_molecular_network(
     max_mz_diff: float = 500.0,
     n_workers: int = None,
     path: str = "",
+    fingerprint_threshold: float = 0.1,
 ) -> nx.Graph:
     n = len(spectra)
     if n == 0:
         return nx.Graph()
 
     node_ids = [s.get("spectrum_id") or f"spec_{i}" for i, s in enumerate(spectra)]
-    precursor_mzs = [float(s.get("precursor_mz") or 0.0) for s in spectra]
+    precursor_mzs = np.array([float(s.get("precursor_mz") or 0.0) for s in spectra])
+
+    # Sort by precursor m/z for bisect-based window pruning
+    order = np.argsort(precursor_mzs)
+    spectra = [spectra[k] for k in order]
+    node_ids = [node_ids[k] for k in order]
+    precursor_mzs = precursor_mzs[order]
 
     # Build JSON nodes
     json_nodes = [_serialize_node_attrs(s, nid) for s, nid in zip(spectra, node_ids)]
@@ -214,9 +277,29 @@ def build_molecular_network(
     # Pack peak arrays into shared memory
     shm_mz, shm_int, shm_off, offsets = _pack_into_shared_memory(spectra)
     total_peaks = int(offsets[-1])
+    del spectra
 
     n_workers = n_workers or os.cpu_count()
     print(f"Computing pairwise similarities for {n} spectra on {n_workers} workers...")
+
+    # Build sparse fingerprints for pre-filtering
+    mz_view = np.ndarray((total_peaks,), dtype=np.float64, buffer=shm_mz.buf)
+    int_view = np.ndarray((total_peaks,), dtype=np.float64, buffer=shm_int.buf)
+    off_view = np.ndarray((n + 1,), dtype=np.int64, buffer=shm_off.buf)
+    fp = _build_fingerprints(mz_view, int_view, off_view, n)
+
+    fp_data = np.ascontiguousarray(fp.data, dtype=np.float64)
+    fp_indices = np.ascontiguousarray(fp.indices, dtype=np.int32)
+    fp_indptr = np.ascontiguousarray(fp.indptr, dtype=np.int64)
+    shm_fp_d = shared_memory.SharedMemory(create=True, size=max(8, fp_data.nbytes))
+    shm_fp_i = shared_memory.SharedMemory(create=True, size=max(8, fp_indices.nbytes))
+    shm_fp_p = shared_memory.SharedMemory(create=True, size=max(8, fp_indptr.nbytes))
+    np.ndarray(fp_data.shape, dtype=fp_data.dtype, buffer=shm_fp_d.buf)[:] = fp_data
+    np.ndarray(fp_indices.shape, dtype=fp_indices.dtype, buffer=shm_fp_i.buf)[:] = fp_indices
+    np.ndarray(fp_indptr.shape, dtype=fp_indptr.dtype, buffer=shm_fp_p.buf)[:] = fp_indptr
+    fp_shm_names = (shm_fp_d.name, shm_fp_i.name, shm_fp_p.name)
+    fp_shapes = (len(fp_data), fp.shape[0], fp.shape[1])
+    del fp, fp_data, fp_indices, fp_indptr, mz_view, int_view, off_view
 
     tasks = [
         (i, cosine_threshold, min_matched_peaks, mz_tolerance, max_mz_diff)
@@ -233,7 +316,8 @@ def build_molecular_network(
             processes=n_workers,
             initializer=_init_worker_shm,
             initargs=(shm_mz.name, shm_int.name, shm_off.name,
-                      total_peaks, n, precursor_mzs),
+                      total_peaks, n, precursor_mzs.tolist(),
+                      fp_shm_names, fp_shapes, fingerprint_threshold),
         ) as pool:
             for row in tqdm(
                 pool.imap(_score_row_shm, tasks, chunksize=chunksize),
@@ -243,7 +327,7 @@ def build_molecular_network(
                     _heap_push(heaps, i, score, j, matches, top_k)
                     _heap_push(heaps, j, score, i, matches, top_k)
     finally:
-        for shm in (shm_mz, shm_int, shm_off):
+        for shm in (shm_mz, shm_int, shm_off, shm_fp_d, shm_fp_i, shm_fp_p):
             shm.close()
             shm.unlink()
 
