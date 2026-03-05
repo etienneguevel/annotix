@@ -1,17 +1,13 @@
 """
-Example Usage
-=============
-Shows how to use the spectral annotation pipeline with:
-  (a) GNPS .mgf library files
-  (b) Your unknown spectra
+Query the molecular network from unknown MS/MS spectra
 
-Adapt the file paths to your data.
+Two usages: single molecule or batch
 """
 from argparse import ArgumentParser
 from pathlib import Path
 import json
 
-from annotix_ml.propagation.inference import annotate, annotate_batch, export_results
+from annotix_ml.propagation.inference import annotate, annotate_batch, export_results, select_annotation
 from load_spectra import load_spectra
 from store import json_to_graph
 
