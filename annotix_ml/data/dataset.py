@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
+from annotix_ml.graphtransf.math.metrics import mol_to_fingerprint
 
 
 def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
@@ -344,3 +345,32 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
         nodes, edges = self.smilesToGraph(sm)  # (n, natoms), (n, n, nbonds)
 
         return nodes, edges
+
+
+class GraphDatasetWithFP(GraphDatasetFromSMILEs):
+    def __getitem__(self, idx):
+        """
+        Get a graph representation and Morgan fingerprint of a molecule by index.
+
+        Extends the base class by additionally computing the Morgan fingerprint
+        for the molecule directly from its SMILES string.
+
+        Args:
+            idx (int): The index of the molecule to fetch.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple (nodes, edges, fp) where:
+                - nodes (torch.Tensor): One-hot encoded nodes of shape (n, natoms).
+                - edges (torch.Tensor): One-hot encoded edges of shape (n, n, nbonds).
+                - fp (torch.Tensor): Morgan fingerprint of shape (morgan_nbits,).
+        """
+        sm = self.smiles[idx]
+
+        # Calculate the nodes and edges
+        nodes, edges = self.smilesToGraph(sm)
+
+        # Calculate the fingerprint from the smiles
+        mol = Chem.MolFromSmiles(sm)
+        fp = torch.from_numpy(mol_to_fingerprint(mol))
+
+        return nodes, edges, fp

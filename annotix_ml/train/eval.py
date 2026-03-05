@@ -12,7 +12,7 @@ from annotix_ml.data.data_utils import (
     batch_graph_to_smiles,
     batch_graph_to_smiles_digress,
 )
-from annotix_ml.graphtransf.arch import DigressMetaArch, Spec2MolMetaArch
+from annotix_ml.graphtransf.arch import DigressMetaArch
 from annotix_ml.graphtransf.math.metrics import (
     compute_MCES_distance,
     compute_metrics,
@@ -137,8 +137,6 @@ def allreduce_eval_metrics(
     eval_metrics: dict[str, float],
 ) -> dict[str, float]:
     """Average eval metrics across all distributed ranks via all_gather_object."""
-    if not dist.is_enabled() or not eval_metrics:
-        return eval_metrics
 
     world_size = dist.get_global_size()
     all_metrics = [None] * world_size
@@ -147,11 +145,12 @@ def allreduce_eval_metrics(
     # Merge: for each key, average over ranks that reported it
     all_keys: set[str] = set()
     for m in all_metrics:
-        all_keys.update(m.keys())
+        if m:
+            all_keys.update(m.keys())
 
     result = {}
     for k in all_keys:
-        values = [m[k] for m in all_metrics if k in m]
+        values = [m[k] for m in all_metrics if m and k in m]
         result[k] = sum(values) / len(values)
 
     return result
@@ -159,16 +158,18 @@ def allreduce_eval_metrics(
 
 def allreduce_gen_metrics(gen_metrics: dict[str, list]) -> dict[str, list]:
     """Gather per-sample gen_metrics lists from all DDP ranks and concatenate."""
-    if not dist.is_enabled() or not gen_metrics:
-        return gen_metrics
 
     world_size = dist.get_global_size()
     all_metrics = [None] * world_size
     torch.distributed.all_gather_object(all_metrics, gen_metrics)
 
+    non_empty = [m for m in all_metrics if m]
+    if not non_empty:
+        return gen_metrics
+
     result: dict[str, list] = {}
-    for k in all_metrics[0].keys():
-        result[k] = [item for rank_dict in all_metrics for item in rank_dict[k]]
+    for k in non_empty[0].keys():
+        result[k] = [item for rank_dict in all_metrics for item in rank_dict.get(k, [])]
     return result
 
 
@@ -199,7 +200,7 @@ def generate_samples(
 
         try:
             gen_N, gen_E, gen_mask = model.generate(
-                num_samples=n, max_nodes=n.max(), progress_bar=True
+                num_samples=n, max_nodes=n.max().item(), progress_bar=True
             )
 
             # Convert to smiles
@@ -232,11 +233,34 @@ def generate_samples(
     }
 
 
-def generate_samples_from_spec(
-    model: Spec2MolMetaArch,
+def generate_samples_from_fp(
+    model: DigressMetaArch,
     num_samples: int,
     eval_dataloader: DataLoader,
 ):
+    """
+    Generate molecules conditioned on pre-computed fingerprints and compute retrieval metrics.
+
+    Iterates over `eval_dataloader`, where each batch is expected to unpack as
+    `(nodes, edges, mask, fp)`. For each batch, the model generates molecules with the same
+    number of nodes as the true graphs, conditioned on the provided fingerprint tensor.
+
+    Args:
+        model (DigressMetaArch): The diffusion model used for generation.
+        num_samples (int): Total number of samples to generate before stopping.
+        eval_dataloader (DataLoader): DataLoader yielding batches of
+            (nodes, edges, mask, fp) tensors.
+
+    Returns:
+        dict[str, list]: A dictionary with the following keys:
+            - "all_gen_smiles" (list[str]): Generated SMILES strings (standard method).
+            - "all_gen_smiles_digress" (list[str]): Generated SMILES strings (DiGress method).
+            - "true_smiles" (list[str]): Ground-truth SMILES from the dataset.
+            - "validity" (list[float]): Per-sample validity flags (1.0 or 0.0) for standard SMILES.
+            - "validity_digress" (list[float]): Per-sample validity flags for DiGress SMILES.
+            - "tan_sim" (list[float]): Tanimoto similarity between generated and true molecules.
+            - "mces" (list[float]): MCES (Maximum Common Edge Subgraph) distance scores.
+    """
     # Init the lists
     metrics = defaultdict(list)
     samples_generated = 0
@@ -254,7 +278,7 @@ def generate_samples_from_spec(
         batch = [
             k.to(model.device) if isinstance(k, torch.Tensor) else k for k in batch
         ]
-        nodes, edges, mask, *spectra_args = batch
+        nodes, edges, mask, fp = batch
         bs = nodes.shape[0]
 
         # Generate the samples from the spectra_args
@@ -263,9 +287,9 @@ def generate_samples_from_spec(
         try:
             gen_N, gen_E, gen_mask = model.generate(
                 num_samples=n,
-                max_nodes=n.max(),
+                max_nodes=int(n.max().item()),
                 progress_bar=True,
-                other_args=spectra_args,
+                fp=fp,
             )
 
             # Convert to smiles

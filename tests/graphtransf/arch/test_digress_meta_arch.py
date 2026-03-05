@@ -134,6 +134,53 @@ def test_compute_extra_features():
     assert y.shape[-1] == meta_arch.global_features
 
 
+def test_forward_with_extra_features():
+    """Test forward_backward method with extra features"""
+    bs = 8
+    n = 20
+    d = 128
+    de = 64
+    dy = 32
+    n_heads = 4
+    n_layers = 2
+    k = 8
+
+    diffusion_steps = 10
+    loss_ratio = 0.5
+    device = torch.device("cpu")
+
+    meta_arch = DigressMetaArch(
+        d=d,
+        de=de,
+        dy=dy,
+        n_heads=n_heads,
+        n_layers=n_layers,
+        noise_strategy="uniform",
+        diffusion_steps=diffusion_steps,
+        loss_ratio=loss_ratio,
+        device=device,
+        valid_elements=train_dataset.valid_elements,
+        k=k,
+        extra_features=["laplacian_embedding", "node_cycle", "valence_features"],
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
+    )
+
+    # Create random batch
+    N, E, mask = create_random_start(
+        bs, n, len(TYPE_EDGES), len(train_dataset.valid_elements)
+    )
+
+    # Test forward
+    sampled_t = torch.randint(1, diffusion_steps, (bs, 1))
+    pN, pE = meta_arch.forward(N, E, mask, t=sampled_t)
+
+    assert pN is not None
+    assert pE is not None
+    assert pN.shape == (bs, n, len(train_dataset.valid_elements))
+    assert pE.shape == (bs, n, n, len(TYPE_EDGES))
+
+
 def test_forward_backward_with_extra_features():
     """Test forward_backward method with extra features"""
     bs = 8
@@ -170,11 +217,9 @@ def test_forward_backward_with_extra_features():
     N, E, mask = create_random_start(
         bs, n, len(TYPE_EDGES), len(train_dataset.valid_elements)
     )
-    batch = {"nodes": N, "edges": E, "mask": mask}
 
-    # Test forward
-    sampled_t = torch.randint(1, diffusion_steps, (bs, 1))
-    pN, pE = meta_arch.forward(N, E, mask, t=sampled_t)
+    # Do the forward backward pass
+    pN, pE, loss = meta_arch.forward_backward(N, E, mask)
 
     assert pN is not None
     assert pE is not None
@@ -238,6 +283,165 @@ def test_generate():
     assert (N >= 0).all() and (N <= 1).all()
     assert (E >= 0).all() and (E <= 1).all()
 
-    # Verify the generated graphs respect the mask
-    # (nodes beyond the randomly sampled size should be zero)
-    # This is implicitly tested by the one-hot property above
+
+def test_forward_with_fp():
+    """Test forward_backward method with extra features"""
+    bs = 8
+    n = 20
+    d = 128
+    de = 64
+    dy = 32
+    n_heads = 4
+    n_layers = 2
+    k = 8
+
+    diffusion_steps = 10
+    loss_ratio = 0.5
+    device = torch.device("cpu")
+
+    meta_arch = DigressMetaArch(
+        d=d,
+        de=de,
+        dy=dy,
+        n_heads=n_heads,
+        n_layers=n_layers,
+        noise_strategy="uniform",
+        diffusion_steps=diffusion_steps,
+        loss_ratio=loss_ratio,
+        device=device,
+        valid_elements=train_dataset.valid_elements,
+        k=k,
+        extra_features=[
+            "laplacian_embedding",
+            "node_cycle",
+            "valence_features",
+            "spectra_fingerprint",
+        ],
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
+    )
+
+    # Create random batch
+    N, E, mask = create_random_start(
+        bs, n, len(TYPE_EDGES), len(train_dataset.valid_elements)
+    )
+    fp = torch.ones((bs, meta_arch.morgan_nbits))
+
+    # Test forward
+    sampled_t = torch.randint(1, diffusion_steps, (bs, 1))
+    pN, pE = meta_arch.forward(N, E, mask, t=sampled_t, fp=fp)
+
+    assert pN is not None
+    assert pE is not None
+    assert pN.shape == (bs, n, len(train_dataset.valid_elements))
+    assert pE.shape == (bs, n, n, len(TYPE_EDGES))
+
+
+def test_forward_backward_with_extra_features_with_fp():
+    """Test forward_backward method with extra features"""
+    bs = 8
+    n = 20
+    d = 128
+    de = 64
+    dy = 32
+    n_heads = 4
+    n_layers = 2
+    k = 8
+
+    diffusion_steps = 10
+    loss_ratio = 0.5
+    device = torch.device("cpu")
+
+    meta_arch = DigressMetaArch(
+        d=d,
+        de=de,
+        dy=dy,
+        n_heads=n_heads,
+        n_layers=n_layers,
+        noise_strategy="uniform",
+        diffusion_steps=diffusion_steps,
+        loss_ratio=loss_ratio,
+        device=device,
+        valid_elements=train_dataset.valid_elements,
+        k=k,
+        extra_features=[
+            "laplacian_embedding",
+            "node_cycle",
+            "valence_features",
+            "spectra_fingerprint",
+        ],
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
+    )
+
+    # Create random batch
+    N, E, mask = create_random_start(
+        bs, n, len(TYPE_EDGES), len(train_dataset.valid_elements)
+    )
+    fp = torch.ones((bs, meta_arch.morgan_nbits))
+
+    # Do the forward backward pass
+    pN, pE, loss = meta_arch.forward_backward(N, E, mask, fp=fp)
+
+    assert pN is not None
+    assert pE is not None
+    assert pN.shape == (bs, n, len(train_dataset.valid_elements))
+    assert pE.shape == (bs, n, n, len(TYPE_EDGES))
+
+
+def test_generate_with_fp():
+    """Test the generate method of DigressMetaArch"""
+    # Model parameters
+    d = 64
+    de = 32
+    dy = 16
+    n_heads = 2
+    n_layers = 2
+    k = 4
+    diffusion_steps = 5  # Small number for faster testing
+    loss_ratio = 0.5
+    device = torch.device("cpu")
+
+    # Create the model
+    meta_arch = DigressMetaArch(
+        d=d,
+        de=de,
+        dy=dy,
+        n_heads=n_heads,
+        n_layers=n_layers,
+        noise_strategy="uniform",
+        diffusion_steps=diffusion_steps,
+        loss_ratio=loss_ratio,
+        device=device,
+        valid_elements=train_dataset.valid_elements,
+        k=k,
+        extra_features=["laplacian_embedding", "spectra_fingerprint"],
+        nodes_distribution=train_dataset.nodes_distribution,
+        edges_distribution=train_dataset.edges_distribution,
+    )
+
+    # Generation parameters
+    batch_size = 4
+    max_nodes = 9
+    fp = torch.ones((batch_size, meta_arch.morgan_nbits))
+
+    # Generate graphs
+    N, E, _ = meta_arch.generate(batch_size, max_nodes, fp=fp)
+
+    # Verify output shapes
+    assert N.shape[0] == batch_size
+    assert E.shape[0] == batch_size
+    assert N.shape[-1] == len(train_dataset.valid_elements)
+    assert E.shape[-1] == len(TYPE_EDGES)
+
+    # Verify outputs are one-hot encoded
+    n = N.shape[1]
+
+    assert torch.allclose(N.sum(dim=-1).float(), torch.ones(batch_size, n), atol=1e-5)
+    assert torch.allclose(
+        E.sum(dim=-1).float(), torch.ones(batch_size, n, n), atol=1e-5
+    )
+
+    # Verify outputs are valid probabilities (all values between 0 and 1)
+    assert (N >= 0).all() and (N <= 1).all()
+    assert (E >= 0).all() and (E <= 1).all()

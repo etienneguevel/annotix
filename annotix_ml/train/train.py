@@ -13,7 +13,7 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import annotix_ml.distributed as dist
-from annotix_ml.graphtransf.arch import Spec2MolMetaArch
+from annotix_ml.graphtransf.arch import DigressMetaArch
 from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import (
@@ -24,7 +24,7 @@ from annotix_ml.train.eval import (
     allreduce_gen_metrics,
     do_eval,
     generate_samples,
-    generate_samples_from_spec,
+    generate_samples_from_fp,
 )
 from annotix_ml.train.setup import setup, setup_model_mode
 from annotix_ml.train.log_utils import create_gen_samples_table
@@ -60,7 +60,7 @@ def train(cfg):
     data_size = dist.get_global_size()
 
     # Make the training objects from the cfg mode (graphtransf or spec2mol)
-    train_dataset, valid_dataset, arch, collate_fn = setup_model_mode(cfg)
+    train_dataset, valid_dataset, collate_fn = setup_model_mode(cfg, device)
 
     # Prepare the save path & check if there is already some existing checkpoints
     save_path = cfg.train.save_path
@@ -86,7 +86,7 @@ def train(cfg):
         last_epoch = int(last_checkpoint.split(".")[0])
 
         print(f"Checkpoints found, loading from the weights at {checkpoint_path}.")
-        digress = arch.load_pretrained(
+        digress = DigressMetaArch.load_pretrained(
             cfg,
             device,
             checkpoint_path,
@@ -99,7 +99,7 @@ def train(cfg):
     else:
         # Define the model
         print("No checkpoints found, init from zero.")
-        digress = arch.init_from_cfg(
+        digress = DigressMetaArch.init_from_cfg(
             cfg,
             device,
             train_dataset.valid_elements,
@@ -396,6 +396,7 @@ def train(cfg):
                 )
 
                 if cfg.train.get("distributed") == "data":
+                    torch.distributed.barrier()
                     eval_metrics = allreduce_eval_metrics(eval_metrics)
 
                 # If DDP then we make each rank generates a part of the samples
@@ -406,8 +407,8 @@ def train(cfg):
                 else:
                     samples_per_rank = cfg.valid.num_samples
 
-                if isinstance(digress, Spec2MolMetaArch):
-                    gen_metrics = generate_samples_from_spec(
+                if "spectra_fingerprint" in cfg.model.get("extra_features"):
+                    gen_metrics = generate_samples_from_fp(
                         digress, samples_per_rank, valid_loader
                     )
                 else:
@@ -449,7 +450,9 @@ def train(cfg):
                         for k, v in eval_metrics.items():
                             eval_log[f"eval/{k}"] = v
 
-                        if isinstance(digress, Spec2MolMetaArch) and gen_metrics:
+                        if (
+                            "spectra_fingerprint" in cfg.model.extra_features
+                        ) and gen_metrics:
                             eval_log["generated_samples"] = create_gen_samples_table(
                                 gen_metrics
                             )

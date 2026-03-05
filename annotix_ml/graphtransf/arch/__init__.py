@@ -1,2 +1,1 @@
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
-from annotix_ml.graphtransf.arch.spec2mol_meta_arch import Spec2MolMetaArch

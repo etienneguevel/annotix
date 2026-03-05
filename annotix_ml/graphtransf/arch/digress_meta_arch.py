@@ -1,7 +1,6 @@
 import os
-from typing import Literal, Any
+from typing import Literal
 
-import rdkit.Chem as Chem
 import torch
 from omegaconf import DictConfig
 from torch.distributed.pipelining import ScheduleGPipe
@@ -10,9 +9,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
 from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
-from annotix_ml.data.data_utils import mask_any_tensor, batch_graph_to_smiles
+from annotix_ml.data.data_utils import mask_any_tensor
 from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
+from annotix_ml.graphtransf.layers.mlp import MLP
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
 from annotix_ml.graphtransf.models.noising import NoisingModel
 from annotix_ml.graphtransf.math.extra_features import (
@@ -23,7 +23,6 @@ from annotix_ml.graphtransf.math.extra_features import (
     weight,
 )
 from annotix_ml.graphtransf.math.losses import digress_loss
-from annotix_ml.graphtransf.math.metrics import mol_to_fingerprint
 from annotix_ml.graphtransf.math.noising import sample_discrete_features
 
 
@@ -52,6 +51,16 @@ class DigressMetaArch:
         k (int | None, optional): Number of eigenvectors for Laplacian embedding. Required if "laplacian_embedding" is in `extra_features`.
         extra_features (list[str] | None, optional): List of names of extra features to compute.
         max_weight (float | None, optional): Maximum molecular weight for normalization. Required if "valence_features" is in `extra_features`.
+        morgan_nbits (int, optional): Size of the fingerprint vector expected when
+            `"spectra_fingerprint"` is in `extra_features`. Determines the contribution
+            of the fingerprint to `global_features`. Defaults to 2048.
+        encoder_output_size (int | None, optional): Dimension of the spectra encoder output.
+            When set and `"spectra_fingerprint"` is in `extra_features`, a projection
+            network (`fp_projector`) maps encoder outputs from this dimension to
+            `morgan_nbits` before appending to ``y``. Defaults to None (no projection).
+        fp_projector_type (str, optional): Architecture of the FP projection network.
+            ``"linear"`` uses a single ``nn.Linear``; ``"mlp"`` uses a two-layer MLP
+            with SiLU activation. Defaults to ``"linear"``.
     """
 
     known_extra_features = [
@@ -81,6 +90,8 @@ class DigressMetaArch:
         extra_features: list[str] | None = None,
         max_weight: float | None = None,
         morgan_nbits: int = 2048,
+        encoder_output_size: int | None = None,
+        fp_projector_type: str = "linear",
     ):
         # Store information
         self.loss_ratio = loss_ratio
@@ -153,6 +164,26 @@ class DigressMetaArch:
         )
         self.noiser.move_to(device)
 
+        # Build FP projector when spectra fingerprint conditioning is used
+        self.fp_projector: torch.nn.Module | None = None
+        if (
+            "spectra_fingerprint" in self.extra_features
+            and encoder_output_size is not None
+        ):
+            if fp_projector_type == "linear":
+                self.fp_projector = torch.nn.Linear(
+                    encoder_output_size, morgan_nbits
+                ).to(device)
+            elif fp_projector_type == "mlp":
+                hidden = (encoder_output_size + morgan_nbits) // 2
+                self.fp_projector = MLP(
+                    d=encoder_output_size, d_hidden=hidden, d_out=morgan_nbits
+                ).to(device)
+            else:
+                raise ValueError(
+                    f"Unknown fp_projector_type: {fp_projector_type!r}. Expected 'linear' or 'mlp'."
+                )
+
         # Put some variables in case of distributed training
         self.rank = -1
         self.train_schedule = None
@@ -189,6 +220,13 @@ class DigressMetaArch:
         if not valid_elements:
             valid_elements = list(VALID_ELEMENTS)
 
+        morgan_nbits = cfg.dataset.get("morgan_nbits") or 0
+        encoder_output_size = (
+            cfg.spectra_encoder.get("output_size")
+            if cfg.get("spectra_encoder") is not None
+            else None
+        )
+
         return cls(
             d=cfg.model.d,
             de=cfg.model.de,
@@ -207,6 +245,9 @@ class DigressMetaArch:
             nodes_distribution=nodes_distribution,
             edges_distribution=edges_distribution,
             max_weight=max_weight,
+            morgan_nbits=morgan_nbits,
+            encoder_output_size=encoder_output_size,
+            fp_projector_type=cfg.model.get("fp_projector_type", "linear"),
         )
 
     @classmethod
@@ -264,20 +305,34 @@ class DigressMetaArch:
     def trainable_parameters(self):
         """Yield from the trainable parameters of the model."""
         yield from self.diffuser.parameters()
+        if self.fp_projector is not None:
+            yield from self.fp_projector.parameters()
 
     def checkpoint_state_dict(self) -> dict:
         """Return the state dict for checkpointing."""
-        return {"model": self.diffuser.state_dict()}
+        diffuser = getattr(self.diffuser, "module", self.diffuser)
+        state = {"model": diffuser.state_dict()}
+        if self.fp_projector is not None:
+            projector = getattr(self.fp_projector, "module", self.fp_projector)
+            state["fp_projector"] = projector.state_dict()
+        return state
 
     def load_checkpoint_state_dict(self, state: dict):
         """Load the model state from a checkpoint state dict."""
         # Support both the old format (bare state_dict) and the new format
         # ({"model": state_dict, "optimizer": ...}).
+        diffuser = getattr(self.diffuser, "module", self.diffuser)
         if isinstance(state, dict) and "model" in state:
-            saved_model = state["model"]
+            diffuser.load_state_dict(state["model"])
         else:
-            saved_model = state
-        self.diffuser.load_state_dict(saved_model)
+            diffuser.load_state_dict(state)
+        if (
+            self.fp_projector is not None
+            and isinstance(state, dict)
+            and "fp_projector" in state
+        ):
+            projector = getattr(self.fp_projector, "module", self.fp_projector)
+            projector.load_state_dict(state["fp_projector"])
 
     def sync_extra_gradients(self):
         """
@@ -323,30 +378,12 @@ class DigressMetaArch:
 
         return node_features
 
-    def compute_fingerprint(self, nodes, edges, mask, *_):
-        smiles = batch_graph_to_smiles(nodes, edges, mask, self.valid_elements)
-        mols = [Chem.MolFromSmiles(sm) for sm in smiles]
-        fps = torch.stack(
-            [
-                torch.tensor(
-                    mol_to_fingerprint(mol)
-                    if mol is not None
-                    else [0] * self.morgan_nbits,
-                    dtype=torch.float,
-                    device=nodes.device,
-                )
-                for mol in mols
-            ]
-        )
-        return fps  # (bs, morgan_nbits)
-
     def compute_extra_features(
         self,
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
         t: torch.Tensor,
-        *args,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute extra node and global features for the current graph state.
@@ -361,6 +398,12 @@ class DigressMetaArch:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
                 - node_features (torch.Tensor): Computed node features of shape (bs, n, node_features).
                 - global_features (torch.Tensor): Computed global features of shape (bs, global_features).
+
+        Note:
+            When `"spectra_fingerprint"` appears in `self.extra_features`, it is **skipped**
+            here (via ``continue``). The fingerprint contribution to ``y`` is instead injected
+            directly by the callers (`forward`, `forward_backward`, `generate`) which append the
+            ``fp`` tensor to ``y`` after this method returns.
         """
         # Init the list of node and global_features
         node_features_list = []
@@ -395,8 +438,7 @@ class DigressMetaArch:
                 global_features = global_features_weight
 
             elif name == "spectra_fingerprint":
-                global_features = self.compute_fingerprint(nodes, edges, mask, *args)
-                node_features = None
+                continue
 
             else:
                 raise ValueError(f"{name} is not a recognized extra feature.")
@@ -409,9 +451,11 @@ class DigressMetaArch:
                 global_features_list.append(global_features)
 
         if node_features_list:
-            pos_emb = torch.cat(node_features_list, dim=-1)  # (bs, n, n_features)
+            pos_emb = torch.cat(node_features_list, dim=-1).to(
+                self.device
+            )  # (bs, n, n_features)
         else:
-            pos_emb = torch.zeros((*nodes.shape[:-1], 0), device=nodes.device)
+            pos_emb = torch.zeros((*nodes.shape[:-1], 0), device=self.device)
 
         if global_features_list:
             y = torch.cat(global_features_list, dim=-1)  # (bs, n_global_features)
@@ -420,7 +464,7 @@ class DigressMetaArch:
 
         # Add the noising step to y
         t = t.to(device=y.device, dtype=y.dtype) / self.noiser.T
-        y = torch.cat([y, t], dim=-1)
+        y = torch.cat([y, t], dim=-1).to(self.device)
 
         return pos_emb, y
 
@@ -429,8 +473,8 @@ class DigressMetaArch:
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
-        t: torch.Tensor | None = None,
-        *args,
+        t: torch.Tensor,
+        fp: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run the forward pass: noise the input batch, then predict the clean graph.
@@ -442,7 +486,9 @@ class DigressMetaArch:
             edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
             mask (torch.Tensor): Mask tensor of shape (bs, n).
             t (torch.Tensor | None): Optional timestep tensor.
-            *args: Extra arguments passed to compute_extra_features.
+            fp (torch.Tensor | None): Pre-computed fingerprint of shape (bs, morgan_nbits).
+                If provided, concatenated to the global feature vector ``y`` after
+                `compute_extra_features`.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -455,8 +501,13 @@ class DigressMetaArch:
                 # Only the first stage needs the extra features; non-first stages
                 # receive intermediate activations from the previous stage via P2P.
                 pos_emb, y = self.compute_extra_features(
-                    nodes, edges, mask, t, *args
+                    nodes, edges, mask, t
                 )  # (bs, node_features), (bs, global_features)
+                if fp is not None:
+                    if self.fp_projector is not None:
+                        fp = self.fp_projector(fp)
+                    y = torch.cat([y, fp], dim=-1)
+
                 input_args = (edges, mask, y, pos_emb, nodes)
                 out = self.eval_schedule.step(*input_args)
 
@@ -472,8 +523,15 @@ class DigressMetaArch:
         # no gradient sync is needed.
         else:
             pos_emb, y = self.compute_extra_features(
-                nodes, edges, mask, t, *args
+                nodes, edges, mask, t
             )  # (bs, node_features), (bs, global_features)
+
+            # Add the fp if is in the batch
+            if fp is not None:
+                if self.fp_projector is not None:
+                    fp = self.fp_projector(fp)
+                y = torch.cat([y, fp], dim=-1)
+
             out = self.diffuser(edges, mask, y, pos_emb, nodes)
             pN, pE, *_ = out
 
@@ -487,7 +545,7 @@ class DigressMetaArch:
         nodes: torch.Tensor,
         edges: torch.Tensor,
         mask: torch.Tensor,
-        *args,
+        fp: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Noise the input batch, predict the clean graph, compute loss, and run backpropagation.
@@ -500,7 +558,9 @@ class DigressMetaArch:
             nodes (torch.Tensor): Node features of shape (bs, n, natoms).
             edges (torch.Tensor): Edge features of shape (bs, n, n, nedges).
             mask (torch.Tensor): Mask tensor of shape (bs, n).
-            *args: Extra arguments passed to compute_extra_features.
+            fp (torch.Tensor | None): Pre-computed fingerprint of shape (bs, morgan_nbits).
+                If provided, concatenated to the global feature vector ``y`` after
+                `compute_extra_features`.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
@@ -521,8 +581,14 @@ class DigressMetaArch:
                 # non-first stages receive intermediate activations via P2P.
                 N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
                 pos_emb, y = self.compute_extra_features(
-                    N_noised, E_noised, mask, sampled_t, *args
+                    N_noised, E_noised, mask, sampled_t
                 )  # (bs, node_features), (bs, global_features)
+
+                if fp is not None:
+                    if self.fp_projector is not None:
+                        fp = self.fp_projector(fp)
+                    y = torch.cat([y, fp], dim=-1)
+
                 input_args = (E_noised, mask, y, pos_emb, N_noised)
                 out = self.train_schedule.step(*input_args)
 
@@ -535,26 +601,19 @@ class DigressMetaArch:
             else:
                 out = self.train_schedule.step()
 
-        elif self.train_model is not None:
-            # Data parallelism: call through the DDP wrapper so that loss.backward()
-            # triggers the all-reduce gradient synchronisation across ranks.
-            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
-            pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t, *args
-            )  # (bs, node_features), (bs, global_features)
-            out = self.train_model(E_noised, mask, y, pos_emb, N_noised)
-            pN, pE, *_ = out
-            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
-            loss.backward()
-
         else:
-            # No distributed training
             N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
             pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t, *args
+                N_noised, E_noised, mask, sampled_t
             )  # (bs, node_features), (bs, global_features)
+            if fp is not None:
+                if self.fp_projector is not None:
+                    fp = self.fp_projector(fp)
+                y = torch.cat([y, fp], dim=-1)
+
             input_args = (E_noised, mask, y, pos_emb, N_noised)
             out = self.diffuser(*input_args)
+
             pN, pE, *_ = out
             loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
             loss.backward()
@@ -572,7 +631,7 @@ class DigressMetaArch:
         min_nodes: int = 6,
         progress_bar=False,
         num_attempts: int = 3,
-        other_args: list[Any] = [],
+        fp: torch.Tensor | None = None,
     ):
         """
         Generate new graphs using the reverse diffusion process.
@@ -593,7 +652,8 @@ class DigressMetaArch:
             min_nodes (int, optional): Minimum number of nodes for the generated graphs. Defaults to 6.
             progress_bar (bool, optional): Whether to show a progress bar during denoising. Defaults to False.
             num_attempts (int, optional): Number of attempts to generate graphs (to handle potential LinAlgError). Defaults to 3.
-            *args: Extra arguments passed to compute_extra_features (e.g. conditioning spectra).
+            fp (torch.Tensor | None): Pre-computed fingerprint of shape (bs, morgan_nbits).
+                If provided, passed to `forward` at each denoising step to condition generation.
 
         Raises:
             LinAlgError: If generation fails after all attempts due to numerical instability.
@@ -683,7 +743,7 @@ class DigressMetaArch:
                     )  # bs, 1
 
                     # Forward pass — all ranks must call this to drive the pipeline.
-                    pN, pE = self.forward(N, E, mask, t_tensor, *other_args)
+                    pN, pE = self.forward(N, E, mask, t_tensor, fp)
 
                     # Only the last pipeline rank gets valid predictions.
                     if pN is not None and pE is not None:
@@ -779,10 +839,11 @@ class DigressMetaArch:
             self.eval_schedule = ScheduleGPipe(eval_model, num_microbatches)
 
         elif mode == "data":
-            self.train_model = DDP(
-                self.diffuser,
-                device_ids=[get_local_rank()],
-            )
+            self.diffuser = DDP(self.diffuser, device_ids=[get_local_rank()])
+            if self.fp_projector is not None:
+                self.fp_projector = DDP(
+                    self.fp_projector, device_ids=[get_local_rank()]
+                )
 
         elif mode == "tensor":
             pass

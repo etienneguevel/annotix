@@ -6,6 +6,7 @@ from typing import Callable
 
 import pandas as pd
 import torch
+import torch.nn as nn
 from pandas.core.frame import DataFrame
 from rdkit.RDLogger import DisableLog
 from torch.utils.data import Dataset
@@ -28,6 +29,8 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         data: str | DataFrame,
         spec_folder: str | Path,
         subform_folder: str | Path,
+        spectra_encoder: nn.Module,
+        device: torch.device,
         smile_column: str = "smiles",
         spec_column: str = "spec",
         formula_column: str = "formula",
@@ -40,6 +43,38 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         max_nodes: int | None = None,
         **kwargs,
     ):
+        """
+        Initialize the GraphSpecDataset.
+
+        Args:
+            data (str | DataFrame): Path to a CSV/TSV file or a pandas DataFrame containing
+                molecule and spectra metadata.
+            spec_folder (str | Path): Directory where `.ms` spectra files are stored.
+            subform_folder (str | Path): Directory containing sub-formula annotation files
+                used by the `PeakFormula` featurizer.
+            spectra_encoder (nn.Module): Pre-loaded spectra encoder. Called in `__getitem__`
+                to compute a fingerprint from the spectrum of each molecule.
+            device (torch.device): Device on which encoder computations are performed.
+            smile_column (str): Name of the column containing SMILES strings. Defaults to "smiles".
+            spec_column (str): Name of the column containing spectrum file identifiers.
+                Defaults to "spec".
+            formula_column (str): Name of the column containing molecular formulas.
+                Defaults to "formula".
+            instrument_column (str): Name of the column containing instrument type information.
+                Defaults to "instrument".
+            valid_elements (list[str] | None): List of valid atom symbols. If None, elements
+                are auto-detected from the SMILES in the dataset.
+            sanitizer (Callable | None): Optional function to further filter molecules based
+                on their graph representation.
+            verbose (bool): Whether to print progress information. Defaults to True.
+            cache_path (str | None): Path to a `.pt` cache file for dataset statistics.
+                If the file exists it is loaded; otherwise the dataset is built and saved there.
+            save_cache (bool): Whether to write the cache file after building. Set to False
+                on non-main ranks in distributed training. Defaults to True.
+            max_nodes (int | None): Maximum number of atoms per molecule. Molecules with more
+                atoms are filtered out. Defaults to None (no limit).
+            **kwargs: Additional keyword arguments forwarded to `PeakFormula`.
+        """
         super().__init__()
         if isinstance(data, (str, Path)):
             self.data = pd.read_csv(
@@ -81,6 +116,12 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
             self.edges_distribution = cache["edges_distribution"]
             self.num_atoms_dist = cache["num_atoms_dist"]
             self.max_weight = cache["max_weight"]
+            if "fingerprints" in cache:
+                self.fingerprints = cache["fingerprints"]
+            else:
+                self.fingerprints = self._precompute_fingerprints(
+                    spectra_encoder, device, verbose
+                )
 
         else:
             smiles, spec_names, formulas, instruments, nodes, edges = self._build(
@@ -117,6 +158,11 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
                 ]
             )
 
+            # Pre-compute fingerprints
+            self.fingerprints = self._precompute_fingerprints(
+                spectra_encoder, device, verbose
+            )
+
             # Save to cache (only if requested, e.g. main rank in distributed mode)
             if cache_path is not None and save_cache:
                 os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
@@ -132,9 +178,45 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
                         "edges_distribution": self.edges_distribution,
                         "num_atoms_dist": self.num_atoms_dist,
                         "max_weight": self.max_weight,
+                        "fingerprints": self.fingerprints,
                     },
                     cache_path,
                 )
+
+    def _precompute_fingerprints(
+        self,
+        spectra_encoder: nn.Module,
+        device: torch.device,
+        verbose: bool,
+    ) -> list[torch.Tensor]:
+        """Pre-compute all spectra fingerprints and store them as CPU tensors."""
+        fingerprints = []
+        spectra_encoder.eval()
+        with torch.no_grad():
+            for i in tqdm(
+                range(len(self.smiles)),
+                desc="Pre-computing fingerprints",
+                disable=not verbose,
+            ):
+                spec_name = self.spec_names[i]
+                formula = self.formulas[i]
+                instrument = self.instruments[i]
+
+                spec_obj = Spectra(
+                    spectra_name=spec_name,
+                    spectra_file=str(self.spec_folder / f"{spec_name}.ms"),
+                    spectra_formula=formula,
+                    instrument=instrument,
+                )
+                spec_features = self.spec_featurizer.featurize(spec_obj)
+                spec_dict = self.spec_featurizer.collate_fn([spec_features])
+                spec_dict = {
+                    k: v.to(device) if isinstance(v, torch.Tensor) else v
+                    for k, v in spec_dict.items()
+                }
+                fp, _ = spectra_encoder(spec_dict)
+                fingerprints.append(fp.squeeze(0).cpu())
+        return fingerprints
 
     def _build(self, sanitizer: Callable | None, verbose: bool):
         smiles_nodes_edges = []
@@ -192,24 +274,19 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         return len(self.smiles)
 
     def __getitem__(self, idx):
+        """
+        Get a graph representation and pre-computed fingerprint for a molecule by index.
+
+        Args:
+            idx (int): The index of the molecule to fetch.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple (nodes, edges, fp) where:
+                - nodes (torch.Tensor): One-hot encoded node features of shape (n, natoms).
+                - edges (torch.Tensor): One-hot encoded edge features of shape (n, n, nbonds).
+                - fp (torch.Tensor): Pre-computed spectra fingerprint of shape (output_size,).
+        """
         sm = self.smiles[idx]
-        spec_name = self.spec_names[idx]
-        formula = self.formulas[idx]
-        instrument = self.instruments[idx]
-
-        # Graph
         nodes, edges = self.smilesToGraph(sm)
-
-        # Spectra
-        spec_obj = Spectra(
-            spectra_name=spec_name,
-            spectra_file=str(self.spec_folder / f"{spec_name}.ms"),
-            spectra_formula=formula,
-            instrument=instrument,
-        )
-        spec_features = self.spec_featurizer.featurize(spec_obj)
-
-        # Return merged dict
-        res = {"nodes": nodes, "edges": edges, "smiles": sm, "spec_name": spec_name}
-        res.update(spec_features)
-        return res
+        fp = self.fingerprints[idx]
+        return nodes, edges, fp

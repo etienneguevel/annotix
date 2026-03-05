@@ -3,8 +3,6 @@ from torch.nn.attention.flex_attention import create_block_mask
 from torch.nn.functional import pad
 from torch.nn.utils.rnn import pad_sequence
 
-from annotix_ml.spectraencoder.data.featurizers import PeakFormula
-
 
 def collateGraph(
     batch: list[tuple[torch.Tensor]],
@@ -16,19 +14,28 @@ def collateGraph(
     plug it to a torch DataLoader.
 
     Args:
-    batch, which is a list of size 2 tuples made of :
-    - N: torch.Tensor, contains node of size (n_mol, natoms)
-    - E: torch.Tensor, contains edge of size (n_mol, n_mol, nbonds)
+        batch: A list of 2- or 3-element tuples, each containing:
+            - N (torch.Tensor): Node features of shape (natoms_i, natoms).
+            - E (torch.Tensor): Edge features of shape (natoms_i, natoms_i, nbonds).
+            - fp (torch.Tensor, optional): Pre-computed fingerprint of shape (nbits,).
+              Present when the dataset returns fingerprints (e.g. GraphDatasetWithFP).
 
     Returns:
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
-    - nodes: torch.Tensor of shape (bs, n_batch, natoms)
-    - edges: torch.Tensor of shape (bs, n_batch, n_batch, nbonds)
-    - mask: torch.Tensor of shape (bs, n_batch)
+        When no fingerprints are present:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: (nodes, edges, mask)
+        When fingerprints are present:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            (nodes, edges, mask, fps), where:
+            - nodes: torch.Tensor of shape (bs, n_batch, natoms)
+            - edges: torch.Tensor of shape (bs, n_batch, n_batch, nbonds)
+            - mask: torch.Tensor of shape (bs, n_batch)
+            - fps: torch.Tensor of shape (bs, nbits)
     """
     # Unpack the nodes, edges and pos_emb
     # bs = len(batch)
-    list_N, list_E = zip(*batch)
+    items = list(zip(*batch))
+    list_N, list_E = items[0], items[1]
+    fingerprints = items[2] if len(items) > 2 else None
 
     # Look at the number of atoms in each graph
     num_atoms = [N.shape[0] for N in list_N]
@@ -52,6 +59,10 @@ def collateGraph(
     mask = torch.stack(
         [torch.cat([torch.ones(m), torch.zeros(n_batch - m)]) for m in num_atoms]
     )  # (bs, n_batch)
+
+    if fingerprints is not None:
+        fps = torch.stack(list(fingerprints))
+        return N_padded, E_padded, mask, fps
 
     return N_padded, E_padded, mask
 
@@ -133,62 +144,3 @@ def collateGraphStatic(
     )  # (bs, n_max)
 
     return N_padded, E_padded, mask
-
-
-def collateGraphSpec(batch: list[dict]) -> tuple:
-    """
-    Collate function for GraphSpecDataset.
-    Handles graph padding and spectra feature collation.
-
-    Returns:
-        tuple: (nodes, edges, mask, num_peaks, types, instruments, ion_vec, form_vec, intens)
-    """
-    # Collate spectra features using PeakFormula.collate_fn logic
-    spec_batch = PeakFormula.collate_fn(batch)
-
-    # Collate graph features
-    # Since nodes and edges have different sizes (N), we need padding
-    node_tensors = [d["nodes"] for d in batch]
-    edge_tensors = [d["edges"] for d in batch]
-
-    num_nodes = torch.tensor([n.shape[0] for n in node_tensors])
-    max_n = num_nodes.max()
-
-    padded_nodes = []
-    padded_edges = []
-    node_masks = []
-
-    for n, e in zip(node_tensors, edge_tensors):
-        curr_n = n.shape[0]
-        # Nodes: (n, natoms) -> (max_n, natoms)
-        padded_n = torch.nn.functional.pad(n, (0, 0, 0, max_n - curr_n))
-        padded_nodes.append(padded_n)
-
-        # Edges: (n, n, nbonds) -> (max_n, max_n, nbonds)
-        padded_e = torch.nn.functional.pad(
-            e, (0, 0, 0, max_n - curr_n, 0, max_n - curr_n)
-        )
-        # Set NoBond (index 0) for padded areas
-        padded_e[curr_n:, :, 0] = 1
-        padded_e[:, curr_n:, 0] = 1
-        padded_edges.append(padded_e)
-
-        mask = torch.zeros(max_n, dtype=torch.bool)
-        mask[:curr_n] = True
-        node_masks.append(mask)
-
-    nodes = torch.stack(padded_nodes).to(torch.float32)
-    edges = torch.stack(padded_edges).to(torch.float32)
-    mask = torch.stack(node_masks)
-
-    return (
-        nodes,
-        edges,
-        mask,
-        spec_batch["num_peaks"],
-        spec_batch["types"],
-        spec_batch["instruments"],
-        spec_batch["ion_vec"],
-        spec_batch["form_vec"],
-        spec_batch["intens"],
-    )

@@ -1,11 +1,11 @@
 import pandas as pd
+import rdkit.Chem as Chem
 import torch
 from torch import Tensor
 
 from annotix_ml import BASE_DIR
-from annotix_ml.data.dataset import GraphDatasetFromSMILEs
+from annotix_ml.data.dataset import GraphDatasetFromSMILEs, GraphDatasetWithFP
 from annotix_ml.data.atoms_data import VALID_ELEMENTS, TYPE_EDGES
-import rdkit.Chem as Chem
 
 
 def test_dataset_msg():
@@ -26,8 +26,8 @@ def test_dataset_msg():
     assert isinstance(edges, Tensor)
 
     # Check the correct unpacking
-    assert len(nodes.size()) == 2
-    assert len(edges.size()) == 3
+    assert nodes.dim() == 2
+    assert edges.dim() == 3
 
     # Check that the nodes and edges are well one-hot encoded
     assert (nodes.sum(-1) == 1).all()
@@ -86,3 +86,20 @@ def test_graph_to_smiles():
         assert original_canon == reconstructed_canon, (
             f"Failed for {sm}: {original_canon} != {reconstructed_canon}"
         )
+
+
+def test_graph_dataset_withfp():
+    # Open the MSG dataset
+    df = pd.read_csv(BASE_DIR / "data" / "MassSpecGym.csv")
+
+    # Select a part of the dataset
+    df = df[df.fold == "train"].sample(100)
+
+    # Create the dataset
+    dataset = GraphDatasetWithFP(df)
+
+    # Test the elements in the dataset
+    nodes, edges, fp = dataset[0]
+    assert nodes.dim() == 2
+    assert edges.dim() == 3
+    assert fp.dim() == 1
