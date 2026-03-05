@@ -3,7 +3,8 @@
 *.model
 *.csv
 outputs/
-resources/
+resources/POS_LC.json
+resources/POS_LC_sample_2.json
 .env
 .DS_Store
 test_data/
