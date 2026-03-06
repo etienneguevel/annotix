@@ -171,6 +171,8 @@ top-ranked modified structure = putative annotation (MSI-3)
 
 This approach narrows the candidate space but does not eliminate ambiguity. The output remains a ranked list of structural proposals, not a confirmed identity. MSI level 3 is the ceiling without an authentic reference standard.
 
+> **Detailed documentation:** see [`analog_inference_doc.md`](analog_inference_doc.md) for a full technical reference of the analog structure inference module, including function-level documentation, supported modifications, and data flow diagrams.
+
 ---
 
 ## MSI Confidence Levels

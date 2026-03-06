@@ -130,11 +130,8 @@ def plot_spectrum(query_spectrum, ref_spectrum=None):
     """
     query_spectrum.set(key="compound_name", value="Query spectrum")
     if ref_spectrum is not None:
-
-        print(ref_spectrum)
-
         img = plot_molecule(ref_spectrum["smiles"], network_node_id=ref_spectrum["network_node_id"])
-        fig, ax = query_spectrum.plot_against(ref_spectrum["spectrum"])
+        fig, ax = query_spectrum.plot_against(ref_spectrum["spectrum"], figsize=(4, 3))
         img = OffsetImage(img, zoom=.3)
         ab = AnnotationBbox(img, (350, -.5))
         ax.add_artist(ab)

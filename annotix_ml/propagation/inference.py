@@ -450,6 +450,9 @@ def infer_structure(
     for _, row in result_df.iterrows():
         reference_smiles = row.get("smiles")
         node_id = row.get("network_node_id")
+        score = row.get("score")
+
+        print(f"Check candidate {node_id}. Score {score}")
 
         if not reference_smiles or not node_id:
             continue
@@ -477,8 +480,6 @@ def infer_structure(
             top_n=top_n,
             delta_mass_table=delta_mass_table
         )
-        print(candidates)
-
         all_candidates.extend(candidates)
 
     all_candidates.sort(key=lambda c: -c.fragmentation_score)

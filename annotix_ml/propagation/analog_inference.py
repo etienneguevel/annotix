@@ -797,7 +797,7 @@ def infer_analog_structure(
     # Step 1: resolve Δm
     modifications = resolve_delta_mass(delta_mz, tolerance_da=delta_mass_tolerance, delta_mass_table=delta_mass_table)
     if not modifications:
-        warnings.warn("No modification in delta mass. Returning an empty list")
+        print("  No modification in delta mass. Returning an empty list")
         return []
 
     # Step 2: fragment differential (shared across all modifications)

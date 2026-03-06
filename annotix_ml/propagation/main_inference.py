@@ -36,10 +36,11 @@ if __name__ == "__main__":
     with open(args.network_path, "r") as f:
         network = json_to_graph(json.load(f))
 
+    with open("resources/delta_mass_table.json", "r") as f:
+        delta_mass_table = json.load(f)
+
     # LOAD UNKNOWN SPECTRA
     query_spectra = load_spectra(Path(args.query_path))
-
-
 
     # Infer each new molecule
     for query in query_spectra:
@@ -47,29 +48,35 @@ if __name__ == "__main__":
         result_df = find_candidates(
             query=query,
             network=network,
-            direct_score_threshold=0.7,
+            direct_score_threshold=.7,
             direct_min_matched=6,
-            prop_score_threshold=0.5,
+            prop_score_threshold=.5,
             prop_min_matched=4,
             max_depth=2,
-            decay_factor=0.7,
-            mz_tolerance=0.02,
+            decay_factor=.7,
+            mz_tolerance=.02,
             top_n=10
         )
 
-        # Check for direct matches in the candidates molecules
-        for idx, row in result_df.iterrows():
-            if row["score"] == 1 and row["source"] == "direct_match" and not row["mass_shift_da"] and row["compound_name"] != "Unknown":
-                print(f"[Exact match] {row.get('compound_name', '?')} → {row["smiles"]}")
+        # Correct the confidence level for exact matches / should be in the function find_candidates
+        result_df.loc[(result_df["score"] == 1) & (result_df["source"] == "direct_match") & (result_df["mass_shift_da"] == 0) & (result_df["compound_name"] != "Unknown"), "confidence_level"] = "Exact match"
 
+        # Remove Unknown molecules
+        result_df = result_df[result_df["compound_name"] != "Unknown"]
+
+        # Check for exact matches in the candidates molecules
+        if "Exact match" in result_df["confidence_level"].values:
+            exact_matches = result_df[result_df["confidence_level"] == "Exact match"]
+            print(f"  Found {len(exact_matches)} exact matche(s)")
+            for _, row in exact_matches.iterrows():
+                print(f"  {row.get('compound_name', '?')} → {row["smiles"]}")
                 plot_spectrum(query, row)
                 plt.show()
 
-        print(result_df)
-
-        with open("resources/delta_mass_table.json", "r") as f:
-            delta_mass_table = json.load(f)
-
-        all_candidates = infer_structure(query=query, result_df=result_df, network=network, delta_mass_table=delta_mass_table, delta_mass_tolerance=0.05)
-        if all_candidates:
+        else:
+            all_candidates = infer_structure(query=query, result_df=result_df, network=network, delta_mass_table=delta_mass_table, delta_mass_tolerance=0.05)
             print(all_candidates)
+            # if all_candidates:
+            #     for idx, candidate in enumerate(all_candidates):
+            #         plot_spectrum(query, result_df.iloc[idx])
+            #         plt.show()
