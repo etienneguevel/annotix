@@ -8,7 +8,7 @@ import torch
 import wandb
 from omegaconf import OmegaConf
 from torch.linalg import LinAlgError
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
@@ -61,6 +61,11 @@ def train(cfg):
 
     # Make the training objects from the cfg mode (graphtransf or spec2mol)
     train_dataset, valid_dataset, collate_fn = setup_model_mode(cfg, device)
+
+    if (max_eval := cfg.valid.get("max_eval_samples")) is not None:
+        rng = torch.Generator().manual_seed(cfg.train.seed)
+        indices = torch.randperm(len(valid_dataset), generator=rng)[:max_eval].tolist()
+        valid_dataset = Subset(valid_dataset, indices)
 
     # Prepare the save path & check if there is already some existing checkpoints
     save_path = cfg.train.save_path

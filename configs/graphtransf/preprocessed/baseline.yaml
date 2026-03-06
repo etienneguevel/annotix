@@ -1,0 +1,32 @@
+run:
+  project: annotix_ml_preprocessed
+  name: digress_preprocessed_baseline
+
+dataset:
+  data_path: data/preprocessed/combined.csv
+  smile_column: smiles
+  split_column: split
+  val_tag: val
+  cache_path: data/cache/preprocessed
+
+model:
+  d: 256
+  de: 64
+  dy: 64
+  n_heads: 8
+  n_layers: 12
+  diffusion_steps: 500
+  noise_strategy: distribution
+  num_ev: 5
+  extra_features:
+    - laplacian_embedding
+    - node_cycle
+    - valence_features
+
+train:
+  batch_size: 512
+  num_train_steps: 100000
+  save_path: logs/preprocessed_baseline
+
+valid:
+  max_eval_samples: 5000
