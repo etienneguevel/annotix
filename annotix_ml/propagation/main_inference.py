@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from annotix_ml.propagation.inference import find_candidates, infer_structure
 from load_spectra import load_spectra
 from store import json_to_graph
-from plot import plot_spectrum
+from plot import plot_spectrum, plot_proposals
 
 def get_arguments():
     """
@@ -75,8 +75,7 @@ if __name__ == "__main__":
 
         else:
             all_candidates = infer_structure(query=query, result_df=result_df, network=network, delta_mass_table=delta_mass_table, delta_mass_tolerance=0.05)
-            print(all_candidates)
-            # if all_candidates:
-            #     for idx, candidate in enumerate(all_candidates):
-            #         plot_spectrum(query, result_df.iloc[idx])
-            #         plt.show()
+            if all_candidates:
+                ref_row = result_df.iloc[0] if not result_df.empty else None
+                plot_proposals(query, all_candidates, reference_row=ref_row)
+                plt.show()
