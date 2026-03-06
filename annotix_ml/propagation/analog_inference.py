@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+import json
 
 import numpy as np
 from matchms import Spectrum
@@ -35,33 +36,14 @@ except ImportError:
         stacklevel=2,
     )
 
-# =============================================================================
-# 1. DELTA MASS LOOKUP
-# =============================================================================
-
-# (exact_monoisotopic_mass_da, formula_delta_tag, human_readable_name)
-# formula_delta_tag is used as a key into _ENUMERATION_DISPATCH below.
-_DELTA_MASS_TABLE: list[tuple[float, str, str]] = [
-    (2.0157,   "+H2",      "reduction / hydrogenation"),
-    (2.0157,   "-H2",      "oxidation / dehydrogenation"),
-    (14.0157,  "+CH2",     "chain elongation or N-methylation"),
-    (15.9949,  "+O",       "hydroxylation / oxidation"),
-    (18.0106,  "-H2O",     "dehydration (ring closure or elimination)"),
-    (27.9949,  "+CO",      "carbonylation (aldehyde / ketone insertion)"),
-    (28.0313,  "+C2H4",    "chain elongation +2C (homologation)"),
-    (42.0106,  "+C2H2O",   "acetylation"),
-    (44.0262,  "+CO2",     "carboxylation"),
-    (79.9663,  "+HPO3",    "phosphorylation"),
-    (162.0528, "+Hex",     "hexosylation (O-glycoside)"),
-    (146.0579, "+dHex",    "deoxyhexosylation"),
-]
-
-_PROTON = 1.007276  # Da, for [M+H]+ ions
+# Da, for [M+H]+ ions
+_PROTON = 1.007276  
 
 
 def resolve_delta_mass(
     delta_da: float,
     tolerance_da: float = 0.02,
+    delta_mass_table = None
 ) -> list[dict]:
     """
     Map the signed precursor mass shift to known biochemical modifications.
@@ -82,8 +64,7 @@ def resolve_delta_mass(
     abs_delta = abs(delta_da)
     direction = "gain" if delta_da >= 0 else "loss"
     hits = []
-    for exact, formula, name in _DELTA_MASS_TABLE:
-        print(formula, delta_da, abs(abs_delta - exact), tolerance_da)
+    for exact, formula, name in delta_mass_table:
         if abs(abs_delta - exact) <= tolerance_da:
             hits.append({
                 "exact_mass_da": exact,
@@ -533,6 +514,7 @@ def infer_analog_structure(
     delta_mass_tolerance: float = 0.02,
     max_candidates_per_mod: int = 10,
     top_n: int = 5,
+    delta_mass_table = None
 ) -> list[StructureCandidate]:
     """
     Infer the structure of an unknown analog from spectral evidence.
@@ -583,9 +565,9 @@ def infer_analog_structure(
     delta_mz = query_mz - ref_mz  # signed
 
     # Step 1: resolve Δm
-    modifications = resolve_delta_mass(delta_mz, tolerance_da=delta_mass_tolerance)
+    modifications = resolve_delta_mass(delta_mz, tolerance_da=delta_mass_tolerance, delta_mass_table=delta_mass_table)
     if not modifications:
-        warnings.warn("No modification in delta mass")
+        warnings.warn("No modification in delta mass. Returning an empty list")
         return []
 
     # Step 2: fragment differential (shared across all modifications)

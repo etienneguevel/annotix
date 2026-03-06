@@ -7,11 +7,11 @@ FILENAME=Pesticide_Mix3_neg.mzXML
 SEQ=*..*
 IONMODE=negative
 ORGANISM=GNPS-COLLECTIONS-PESTICIDES-NEGATIVE
-NAME=Pesticide3_Chlorotoluron_C10H13ClN2O_Urea, N'-(3-chloro-4-methylphenyl)-N,N-dimethyl- M-H
+NAME=
 PI=Dorrestein/Touboul
 DATACOLLECTOR=lfnothias
-SMILES=CC1=C(C=C(C=C1)NC(=O)N(C)C)Cl
-INCHI=InChI=1S/C10H13ClN2O/c1-7-4-5-8(6-9(7)11)12-10(14)13(2)3/h4-6H,1-3H3,(H,12,14)
+SMILES=
+INCHI=
 INCHIAUX=N/A
 PUBMED=n/a
 SUBMITUSER=mwang87
@@ -106,11 +106,11 @@ FILENAME=Pesticide_Mix3_neg.mzXML
 SEQ=*..*
 IONMODE=negative
 ORGANISM=GNPS-COLLECTIONS-PESTICIDES-NEGATIVE
-NAME=Pesticide3_Flufenoxuron_C21H11ClF6N2O3_N-({4-[2-Chloro-4-(trifluoromethyl)phenoxy]-2-fluorophenyl}carbamoyl)-2,6-difluorobenzamide M-H
+NAME=
 PI=Dorrestein/Touboul
 DATACOLLECTOR=lfnothias
-SMILES=C1=CC(=C(C(=C1)F)C(=O)NC(=O)NC2=C(C=C(C=C2)OC3=C(C=C(C=C3)C(F)(F)F)Cl)F)F
-INCHI=InChI=1S/C21H11ClF6N2O3/c22-12-8-10(21(26,27)28)4-7-17(12)33-11-5-6-16(15(25)9-11)29-20(32)30-19(31)18-13(23)2-1-3-14(18)24/h1-9H,(H2,29,30,31,32)
+SMILES=
+INCHI=
 INCHIAUX=N/A
 PUBMED=n/a
 SUBMITUSER=mwang87

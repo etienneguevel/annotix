@@ -8,10 +8,12 @@ Final annotation script for unknown molecules
 from argparse import ArgumentParser
 from pathlib import Path
 import json
+import matplotlib.pyplot as plt
 
 from annotix_ml.propagation.inference import find_candidates, infer_structure
 from load_spectra import load_spectra
 from store import json_to_graph
+from plot import plot_spectrum
 
 def get_arguments():
     """
@@ -37,6 +39,8 @@ if __name__ == "__main__":
     # LOAD UNKNOWN SPECTRA
     query_spectra = load_spectra(Path(args.query_path))
 
+
+
     # Infer each new molecule
     for query in query_spectra:
         print(f"\n\033[95m*** Annotating {query.get('spectrum_id')} ***\033[0m")
@@ -53,8 +57,19 @@ if __name__ == "__main__":
             top_n=10
         )
 
-        print("Candidates:")
+        # Check for direct matches in the candidates molecules
+        for idx, row in result_df.iterrows():
+            if row["score"] == 1 and row["source"] == "direct_match" and not row["mass_shift_da"] and row["compound_name"] != "Unknown":
+                print(f"[Exact match] {row.get('compound_name', '?')} → {row["smiles"]}")
+
+                plot_spectrum(query, row)
+                plt.show()
+
         print(result_df)
 
-        all_candidates = infer_structure(query=query, result_df=result_df, network=network)
-        print(all_candidates)
+        with open("resources/delta_mass_table.json", "r") as f:
+            delta_mass_table = json.load(f)
+
+        all_candidates = infer_structure(query=query, result_df=result_df, network=network, delta_mass_table=delta_mass_table)
+        if all_candidates:
+            print(all_candidates)

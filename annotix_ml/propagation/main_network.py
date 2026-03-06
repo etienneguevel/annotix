@@ -11,7 +11,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 from time import time
 
-from annotix_ml.propagation.network import build_molecular_network
+from annotix_ml.propagation.network import build_molecular_network, build_molecular_network_vanilla
 from load_spectra import load_spectra
 from plot import draw
 
@@ -46,15 +46,29 @@ if __name__ == "__main__":
 
     # STEP 2: BUILD THE MOLECULAR NETWORK
     print("Building molecular network...")
-    network = build_molecular_network(
-        spectra=reference_spectra,
-        cosine_threshold=0.7,
-        min_matched_peaks=6,
-        top_k=10,
-        mz_tolerance=0.02,
-        path="./net.json",
-        n_workers=args.n_workers
-    )
+    
+    if len(reference_spectra) > 100:
+        
+        network = build_molecular_network(
+            spectra=reference_spectra,
+            cosine_threshold=0.7,
+            min_matched_peaks=6,
+            top_k=10,
+            mz_tolerance=0.02,
+            path="./net.json",
+            n_workers=args.n_workers
+        )
+    else:
+        print("Using vanilla algorithm")
+        network = build_molecular_network_vanilla(
+            spectra=reference_spectra,
+            cosine_threshold=0.7,
+            min_matched_peaks=6,
+            top_k=10,
+            mz_tolerance=0.02,
+            max_mz_diff=500,
+            path="./net.json"
+        )
 
     end = time()
     duration_seconds = end - current

@@ -1,6 +1,10 @@
 import plotly.graph_objects as go
 import networkx as nx
-
+from rdkit import Chem
+from rdkit.Chem import Draw
+import numpy as np
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
+from matchms import Spectrum
 
 def draw(network: nx.Graph, seed: int = 42) -> go.Figure:
     """
@@ -89,7 +93,7 @@ def draw(network: nx.Graph, seed: int = 42) -> go.Figure:
     unknown_trace = go.Scatter(
         x=unk["x"], y=unk["y"],
         mode="markers",
-        marker=dict(size=9, color="#6baed6", line=dict(width=1, color="white")),
+        marker=dict(size=14, color="#6baed6", line=dict(width=1.5, color="white")),
         hoverinfo="text",
         hovertext=unk["hover"],
         name="Unknown",
@@ -110,3 +114,32 @@ def draw(network: nx.Graph, seed: int = 42) -> go.Figure:
 
     fig.show()
     return fig
+
+def plot_molecule(smiles, network_node_id=""):
+    mol = Chem.MolFromSmiles(smiles)
+    fig = Draw.MolsToGridImage([mol], legends=[network_node_id], molsPerRow=1)
+    return fig
+
+def plot_spectrum(query_spectrum, ref_spectrum=None):
+    """
+    Plot one or two spectra.
+
+    Args:
+        query_spectrum (Spectrum): A query spectrum to plot
+        ref_spectrum (Series, optional): Series object with smiles, network_node_id and spectrum fields
+    """
+    query_spectrum.set(key="compound_name", value="Query spectrum")
+    if ref_spectrum is not None:
+
+        print(ref_spectrum)
+
+        img = plot_molecule(ref_spectrum["smiles"], network_node_id=ref_spectrum["network_node_id"])
+        fig, ax = query_spectrum.plot_against(ref_spectrum["spectrum"])
+        img = OffsetImage(img, zoom=.3)
+        ab = AnnotationBbox(img, (350, -.5))
+        ax.add_artist(ab)
+
+    else:
+        fig, ax = query_spectrum.plot()
+    
+    return fig, ax

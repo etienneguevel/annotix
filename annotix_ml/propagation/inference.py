@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Optional
 from matchms import Spectrum
 from matchms.similarity import ModifiedCosine
+import numpy as np
 
 from .analog_inference import infer_analog_structure, StructureCandidate
 
@@ -40,7 +41,8 @@ class Annotation:
     source: str = "unknown"          # "direct_match" or "propagation"
     propagation_depth: int = 0       # 0 = direct, 1 = 1-hop neighbor, etc.
     network_node_id: Optional[str] = None
-    mass_shift: float = 0.0          # precursor mass difference (for analogs)
+    mass_shift: float = 0.0,          # precursor mass difference (for analogs)
+    ms_spectrum: Spectrum = None
 
 def direct_match(
     query: Spectrum,
@@ -102,6 +104,7 @@ def direct_match(
                 propagation_depth=0,
                 network_node_id=node_id,
                 mass_shift=abs(query_mz - ref_mz) if query_mz and ref_mz else 0.0,
+                ms_spectrum=ref_spectrum
             ))
 
     # Rank by score descending
@@ -231,6 +234,7 @@ def propagate_annotations(
                         propagation_depth=depth,
                         network_node_id=current_id,
                         mass_shift=mass_shift,
+                        ms_spectrum=node_data.get("spectrum")
                     )
 
             # Expand neighbors
@@ -301,7 +305,7 @@ def find_candidates(
         return pd.DataFrame(columns=[
             "rank", "compound_name", "smiles", "inchi", "molecular_formula",
             "adduct", "score", "matched_peaks", "source", "propagation_depth",
-            "mass_shift_da", "network_node_id", "confidence_level",
+            "mass_shift_da", "network_node_id", "confidence_level", "spectrum"
         ])
 
     rows = []
@@ -320,6 +324,7 @@ def find_candidates(
             "mass_shift_da": round(ann.mass_shift, 4),
             "network_node_id": ann.network_node_id,
             "confidence_level": _assign_msi_level(ann),
+            "spectrum": ann.ms_spectrum
         })
 
     return pd.DataFrame(rows)
@@ -395,6 +400,7 @@ def infer_structure(
     delta_mass_tolerance: float = 0.02,
     max_candidates_per_mod: int = 10,
     top_n: int = 5,
+    delta_mass_table: list[tuple[float, str, str]] = None
 ) -> list[StructureCandidate]:
     """
     Attempt to infer the modified structure of an unknown analog.
@@ -457,7 +463,8 @@ def infer_structure(
             continue
 
         if row.get("mass_shift_da", 0.0) < delta_mass_tolerance:
-            print(f"  [direct match] {row.get('compound_name', '?')} → {reference_smiles}")
+            # print(f"  [direct match] {row.get('compound_name', '?')} → {reference_smiles}")
+            #TODO or an isomer
             continue
 
         candidates = infer_analog_structure(
@@ -468,7 +475,10 @@ def infer_structure(
             delta_mass_tolerance=delta_mass_tolerance,
             max_candidates_per_mod=max_candidates_per_mod,
             top_n=top_n,
+            delta_mass_table=delta_mass_table
         )
+        print(candidates)
+
         all_candidates.extend(candidates)
 
     all_candidates.sort(key=lambda c: -c.fragmentation_score)

@@ -181,29 +181,8 @@ def _score_row_shm(args: tuple) -> list[tuple[int, int, float, int]]:
             results.append((i, j, float(r['score']), int(r['matches'])))
     return results
 
-
 # =============================================================================
-# 1. DATA STRUCTURES
-# =============================================================================
-
-@dataclass
-class Annotation:
-    """A candidate annotation for an unknown spectrum."""
-    compound_name: str
-    smiles: Optional[str] = None
-    inchi: Optional[str] = None
-    molecular_formula: Optional[str] = None
-    adduct: Optional[str] = None
-    score: float = 0.0
-    matched_peaks: int = 0
-    source: str = "unknown"          # "direct_match" or "propagation"
-    propagation_depth: int = 0       # 0 = direct, 1 = 1-hop neighbor, etc.
-    network_node_id: Optional[str] = None
-    mass_shift: float = 0.0          # precursor mass difference (for analogs)
-
-
-# =============================================================================
-# 2. MOLECULAR NETWORK BUILDER
+# MOLECULAR NETWORK BUILDER
 # =============================================================================
 
 def _serialize_node_attrs(spec: Spectrum, node_id: str) -> dict:
