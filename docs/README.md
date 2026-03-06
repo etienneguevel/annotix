@@ -2,14 +2,14 @@
 
 Annotix ML predicts unknown molecular structures from MS/MS spectra using graph-based deep learning.
 The core approach uses a **DiGress diffusion model** that generates molecules as graphs (atoms = nodes, bonds = edges),
-optionally conditioned on mass-spectrometry fingerprints via **Spec2Mol**.
+optionally conditioned on mass-spectrometry fingerprints via a built-in `fp_projector`.
 
 ## Submodule Index
 
 | Doc | Submodule | Description |
 |-----|-----------|-------------|
 | [data.md](data.md) | `annotix_ml/data/` | Graph datasets, collators, samplers, atom/bond constants |
-| [graphtransf/arch.md](graphtransf/arch.md) | `annotix_ml/graphtransf/arch/` | `DigressMetaArch` and `Spec2MolMetaArch` orchestrators |
+| [graphtransf/arch.md](graphtransf/arch.md) | `annotix_ml/graphtransf/arch/` | `DigressMetaArch` orchestrator |
 | [graphtransf/models.md](graphtransf/models.md) | `annotix_ml/graphtransf/models/` | `GnnNodeEdges` backbone and `NoisingModel` |
 | [graphtransf/layers.md](graphtransf/layers.md) | `annotix_ml/graphtransf/layers/` | Attention, embeddings, FFN, MLP |
 | [graphtransf/math.md](graphtransf/math.md) | `annotix_ml/graphtransf/math/` | Losses, metrics, extra features, noise sampling |
@@ -20,13 +20,13 @@ optionally conditioned on mass-spectrometry fingerprints via **Spec2Mol**.
 ## High-level Architecture
 
 ```
-MS/MS spectrum
+MS/MS spectrum (optional)
       │
       ▼
  SpectraEncoder          (FormulaTransformer → fingerprint [bs, 4096])
-      │ merge_function
+      │ fp_projector     (Linear or MLP → [bs, morgan_nbits])
       ▼
- Spec2MolMetaArch
+ DigressMetaArch
   ├── NoisingModel       (adds forward-diffusion noise to graph)
   └── GnnNodeEdges       (denoises graph at each step, conditioned on y)
       │
@@ -51,9 +51,8 @@ Bond types: NoBond, SINGLE, DOUBLE, TRIPLE, AROMATIC
 ```python
 {
     "checkpoint": {
-        "diffuser":       ...,  # GnnNodeEdges state_dict
-        "noiser":         ...,  # NoisingModel state_dict
-        "merge_function": ...,  # (Spec2Mol only) Linear projection state_dict
+        "model":        ...,  # GnnNodeEdges state_dict
+        "fp_projector": ...,  # (only when fp_projector is active) Linear or MLP state_dict
     },
     "optimizer": { ... }
 }
@@ -62,19 +61,15 @@ Bond types: NoBond, SINGLE, DOUBLE, TRIPLE, AROMATIC
 ## Quick Start
 
 ```bash
-# Training (graphtransf mode)
-python -m annotix_ml.graphtransf.train.train \
-    --config configs/experiments/baseline.yaml
-
-# Training (spec2mol mode)
-python -m annotix_ml.graphtransf.train.train \
-    --config configs/spec2mol/baseline.yaml
+# Training
+python annotix_ml/graphtransf/train/train.py \
+    --config configs/graphtransf/qm9/medium_arhc/long.yaml
 
 # Molecule generation
-python -m annotix_ml.graphtransf.generate_molecules \
+python -m annotix_ml/graphtransf/generate_molecules.py \
     --num_samples 100 \
     --model_checkpoint logs/model.pt \
-    --config_path configs/experiments/baseline.yaml
+    --config_path configs/graphtransf/qm9/medium_arhc/long.yaml
 ```
 
 ### Distributed Training with torchrun
@@ -88,7 +83,7 @@ Set `model.distributed_strategy: "data"` in your config.
 torchrun \
     --standalone \
     --nproc_per_node 4 \
-    -m annotix_ml.graphtransf.train.train \
+    -m annotix_ml/graphtransf/train/train.py \
     --config configs/experiments/baseline.yaml \
     model.distributed_strategy=data
 ```
@@ -103,13 +98,16 @@ torchrun \
     --node_rank $NODE_RANK \
     --master_addr $MASTER_ADDR \
     --master_port 29500 \
-    -m annotix_ml.graphtransf.train.train \
+    -m annotix_ml/graphtransf/train/train.py \
     --config configs/experiments/baseline.yaml \
     model.distributed_strategy=data
 ```
 
 **Pipeline parallelism** (layers split across GPUs, requires static shapes):
-
+> ⚠️ pp has been deprecated since 02/2026 and should not work with most of the
+> current objects.
+> PP raise issues a little bit everywhere in the implementation, but the most
+> important one is with the generation of new samples.
 ```bash
 torchrun \
     --standalone \
