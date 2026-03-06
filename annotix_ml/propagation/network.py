@@ -349,3 +349,74 @@ def build_molecular_network(
             json.dump(json_data, f)
 
     return json_to_graph(json_data)
+
+
+def build_molecular_network_vanilla(
+    spectra: list[Spectrum],
+    cosine_threshold: float = 0.7,
+    min_matched_peaks: int = 6,
+    top_k: int = 10,
+    mz_tolerance: float = 0.02,
+    max_mz_diff: float = 500.0,
+    path: str = "",
+) -> nx.Graph:
+    """Single-process network builder — no shared memory, no fingerprint filter.
+
+    Use this for small datasets where multiprocessing overhead is not worth it
+    and where you want exact results (no fingerprint pre-filtering).
+    """
+    n = len(spectra)
+    if n == 0:
+        return nx.Graph()
+
+    node_ids = [s.get("spectrum_id") or f"spec_{i}" for i, s in enumerate(spectra)]
+    precursor_mzs = [float(s.get("precursor_mz") or 0.0) for s in spectra]
+
+    json_nodes = [_serialize_node_attrs(s, nid) for s, nid in zip(spectra, node_ids)]
+
+    heaps: list[list] = [[] for _ in range(n)]
+    similarity = ModifiedCosine(tolerance=mz_tolerance)
+
+    print(f"Computing pairwise similarities for {n} spectra (single process)...")
+    for i in tqdm(range(n)):
+        mz_i = precursor_mzs[i]
+        for j in range(i + 1, n):
+            if max_mz_diff > 0 and abs(mz_i - precursor_mzs[j]) > max_mz_diff:
+                continue
+            r = similarity.pair(spectra[i], spectra[j])
+            score = float(r["score"])
+            matches = int(r["matches"])
+            if score >= cosine_threshold and matches >= min_matched_peaks:
+                _heap_push(heaps, i, score, j, matches, top_k)
+                _heap_push(heaps, j, score, i, matches, top_k)
+
+    seen_edges: set[tuple[int, int]] = set()
+    json_links = []
+    for idx in range(n):
+        for score, other, matches in heaps[idx]:
+            edge_key = (min(idx, other), max(idx, other))
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                json_links.append({
+                    "source": node_ids[edge_key[0]],
+                    "target": node_ids[edge_key[1]],
+                    "weight": score,
+                    "matched_peaks": matches,
+                })
+
+    json_data = {
+        "directed": False,
+        "multigraph": False,
+        "graph": {},
+        "nodes": json_nodes,
+        "edges": json_links,
+    }
+
+    n_annotated = sum(1 for nd in json_nodes if nd.get("compound_name"))
+    print(f"Network: {n} nodes, {len(json_links)} edges, {n_annotated} annotated nodes")
+
+    if path:
+        with open(path, "w") as f:
+            json.dump(json_data, f)
+
+    return json_to_graph(json_data)
