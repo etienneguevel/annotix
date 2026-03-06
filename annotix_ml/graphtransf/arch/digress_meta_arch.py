@@ -92,10 +92,13 @@ class DigressMetaArch:
         morgan_nbits: int = 2048,
         encoder_output_size: int | None = None,
         fp_projector_type: str = "linear",
+        mixed_precision: bool = True,
     ):
         # Store information
         self.loss_ratio = loss_ratio
         self.device = device
+        self.scaler = torch.amp.GradScaler("cuda", enabled=mixed_precision)
+        self.mixed_precision = mixed_precision
 
         # Store extra features information
         self.extra_features = extra_features or []
@@ -248,6 +251,7 @@ class DigressMetaArch:
             morgan_nbits=morgan_nbits,
             encoder_output_size=encoder_output_size,
             fp_projector_type=cfg.model.get("fp_projector_type", "linear"),
+            mixed_precision=cfg.train.get("mixed_precision", True),
         )
 
     @classmethod
@@ -612,11 +616,14 @@ class DigressMetaArch:
                 y = torch.cat([y, fp], dim=-1)
 
             input_args = (E_noised, mask, y, pos_emb, N_noised)
-            out = self.diffuser(*input_args)
+            with torch.autocast(
+                device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
+            ):
+                out = self.diffuser(*input_args)
+                pN, pE, *_ = out
+                loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
 
-            pN, pE, *_ = out
-            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
-            loss.backward()
+            self.scaler.scale(loss).backward()
 
         if out is None:
             pN, pE, loss = None, None, None

@@ -266,7 +266,7 @@ def compute_training_metrics(
         mask_bool = mask.bool()
 
         # input: (bs, n)
-        input_masked = input[mask_bool]
+        input_masked = input[mask_bool].float()
         # target: (bs, n)
         target_masked = target[mask_bool].float()
 
