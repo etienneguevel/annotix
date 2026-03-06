@@ -28,5 +28,11 @@
     [176.0321, "+GlcA",    "glucuronidation"],
     [203.0794, "+HexNAc",  "N-acetylhexosamine (GlcNAc, GalNAc)"],
     [57.0215,  "+Gly",     "glycine conjugation"],
-    [307.0838, "+GSH",     "glutathione conjugation (Michael addition)"]
+    [307.0838, "+GSH",     "glutathione conjugation (Michael addition)"],
+    [15.9706,  "+Cl-F",    "Cl/F swap (replaces F with Cl)"],
+    [43.9495,  "+Br-F",    "Br/F swap (replaces F with Br)"],
+    [3.9941,   "+F2-O",    "O/F2 swap (replaces O with 2×F)"],
+    [21.9823,  "+2Cl-2F",  "double Cl/F swap"],
+    [51.9412,  "+2Cl-2H",  "double chlorination"],
+    [50.0215,  "+OCF3-Cl", "trifluoromethoxy replacing Cl"]
 ]

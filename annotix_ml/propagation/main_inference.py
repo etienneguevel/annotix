@@ -70,6 +70,6 @@ if __name__ == "__main__":
         with open("resources/delta_mass_table.json", "r") as f:
             delta_mass_table = json.load(f)
 
-        all_candidates = infer_structure(query=query, result_df=result_df, network=network, delta_mass_table=delta_mass_table)
+        all_candidates = infer_structure(query=query, result_df=result_df, network=network, delta_mass_table=delta_mass_table, delta_mass_tolerance=0.05)
         if all_candidates:
             print(all_candidates)

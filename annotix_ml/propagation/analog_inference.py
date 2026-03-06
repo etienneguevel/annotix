@@ -316,6 +316,222 @@ def _enumerate_plus_acetyl(mol) -> list:
     return results
 
 
+def _enumerate_plus_o2(mol) -> list:
+    """+O2 / di-hydroxylation (+31.990 Da): add OH to two different aliphatic CH carbons."""
+    results = []
+    for m in _enumerate_plus_o(mol):
+        results.extend(_enumerate_plus_o(m))
+    return results
+
+
+def _enumerate_plus_o_minus_h2(mol) -> list:
+    """+O-H2 / alcohol→ketone oxidation (+13.979 Da): oxidise C-OH to C=O."""
+    rxn = AllChem.ReactionFromSmarts("[C:1][OH]>>[C:1]=O")
+    results = []
+    for products_set in rxn.RunReactants((mol,)):
+        for prod in products_set:
+            try:
+                Chem.SanitizeMol(prod)
+                results.append(prod)
+            except Exception:
+                pass
+    return results
+
+
+def _enumerate_pm_h2(mol) -> list:
+    """±H2 / hydrogenation-dehydrogenation (+2.016 Da): saturate one C=C double bond."""
+    results = []
+    for bond in mol.GetBonds():
+        if bond.GetBondTypeAsDouble() == 2.0 and not bond.GetIsAromatic():
+            a1, a2 = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            if mol.GetAtomWithIdx(a1).GetAtomicNum() == 6 and mol.GetAtomWithIdx(a2).GetAtomicNum() == 6:
+                rw = Chem.RWMol(Chem.Mol(mol))
+                rw.GetBondBetweenAtoms(a1, a2).SetBondType(Chem.BondType.SINGLE)
+                try:
+                    Chem.SanitizeMol(rw)
+                    results.append(rw.GetMol())
+                except Exception:
+                    pass
+    return results
+
+
+def _enumerate_plus_nh3(mol) -> list:
+    """+NH3 / amination (+17.027 Da): add NH2 to each aliphatic CH carbon."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 6 or atom.GetIsAromatic():
+            continue
+        if atom.GetTotalNumHs() < 1:
+            continue
+        rw = Chem.RWMol(Chem.Mol(mol))
+        new_n = rw.AddAtom(Chem.Atom(7))
+        rw.AddBond(atom.GetIdx(), new_n, Chem.BondType.SINGLE)
+        try:
+            Chem.SanitizeMol(rw)
+            results.append(rw.GetMol())
+        except Exception:
+            pass
+    return results
+
+
+def _enumerate_plus_s(mol) -> list:
+    """+S / thiolation (+31.972 Da): add SH to each aliphatic CH carbon."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 6 or atom.GetIsAromatic():
+            continue
+        if atom.GetTotalNumHs() < 1:
+            continue
+        rw = Chem.RWMol(Chem.Mol(mol))
+        new_s = rw.AddAtom(Chem.Atom(16))
+        rw.AddBond(atom.GetIdx(), new_s, Chem.BondType.SINGLE)
+        try:
+            Chem.SanitizeMol(rw)
+            results.append(rw.GetMol())
+        except Exception:
+            pass
+    return results
+
+
+def _enumerate_plus_cl_minus_h(mol) -> list:
+    """+Cl-H / chlorination (+33.961 Da): replace one H on an aliphatic C with Cl."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 6:
+            continue
+        if atom.GetTotalNumHs() < 1:
+            continue
+        rw = Chem.RWMol(Chem.Mol(mol))
+        new_cl = rw.AddAtom(Chem.Atom(17))
+        rw.AddBond(atom.GetIdx(), new_cl, Chem.BondType.SINGLE)
+        try:
+            Chem.SanitizeMol(rw)
+            results.append(rw.GetMol())
+        except Exception:
+            pass
+    return results
+
+
+def _enumerate_plus_br_minus_h(mol) -> list:
+    """+Br-H / bromination (+77.911 Da): replace one H on an aliphatic C with Br."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 6:
+            continue
+        if atom.GetTotalNumHs() < 1:
+            continue
+        rw = Chem.RWMol(Chem.Mol(mol))
+        new_br = rw.AddAtom(Chem.Atom(35))
+        rw.AddBond(atom.GetIdx(), new_br, Chem.BondType.SINGLE)
+        try:
+            Chem.SanitizeMol(rw)
+            results.append(rw.GetMol())
+        except Exception:
+            pass
+    return results
+
+
+def _enumerate_plus_ch2o(mol) -> list:
+    """+CH2O / hydroxymethylation (+30.011 Da): add CH2OH to each terminal carbon."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 6:
+            continue
+        heavy_nb = [n for n in atom.GetNeighbors() if n.GetAtomicNum() > 1]
+        if len(heavy_nb) != 1:
+            continue
+        rw = Chem.RWMol(Chem.Mol(mol))
+        new_c = rw.AddAtom(Chem.Atom(6))
+        new_o = rw.AddAtom(Chem.Atom(8))
+        rw.AddBond(atom.GetIdx(), new_c, Chem.BondType.SINGLE)
+        rw.AddBond(new_c, new_o, Chem.BondType.SINGLE)
+        try:
+            Chem.SanitizeMol(rw)
+            results.append(rw.GetMol())
+        except Exception:
+            pass
+    return results
+
+
+def _enumerate_plus_co2(mol) -> list:
+    """+CO2 / carboxylation (+43.990 Da): add COOH to each terminal carbon."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 6:
+            continue
+        heavy_nb = [n for n in atom.GetNeighbors() if n.GetAtomicNum() > 1]
+        if len(heavy_nb) != 1:
+            continue
+        rw = Chem.RWMol(Chem.Mol(mol))
+        c_co = rw.AddAtom(Chem.Atom(6))
+        o_dbl = rw.AddAtom(Chem.Atom(8))
+        o_oh = rw.AddAtom(Chem.Atom(8))
+        rw.AddBond(atom.GetIdx(), c_co, Chem.BondType.SINGLE)
+        rw.AddBond(c_co, o_dbl, Chem.BondType.DOUBLE)
+        rw.AddBond(c_co, o_oh, Chem.BondType.SINGLE)
+        try:
+            Chem.SanitizeMol(rw)
+            results.append(rw.GetMol())
+        except Exception:
+            pass
+    return results
+
+
+def _enumerate_plus_c4h8(mol) -> list:
+    """+C4H8 / lipid chain elongation (+56.063 Da): four successive +CH2 extensions."""
+    results = []
+    for m1 in _enumerate_plus_ch2(mol):
+        for m2 in _enumerate_plus_ch2(m1):
+            results.extend(_enumerate_plus_c2h4(m2))
+    return results
+
+
+def _enumerate_cl_f_swap(mol) -> list:
+    """+Cl-F / replace one F atom with Cl."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() == 9:  # fluorine
+            rw = Chem.RWMol(Chem.Mol(mol))
+            rw.GetAtomWithIdx(atom.GetIdx()).SetAtomicNum(17)  # chlorine
+            try:
+                Chem.SanitizeMol(rw)
+                results.append(rw.GetMol())
+            except Exception:
+                pass
+    return results
+
+
+def _enumerate_br_f_swap(mol) -> list:
+    """+Br-F / replace one F atom with Br."""
+    results = []
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() == 9:  # fluorine
+            rw = Chem.RWMol(Chem.Mol(mol))
+            rw.GetAtomWithIdx(atom.GetIdx()).SetAtomicNum(35)  # bromine
+            try:
+                Chem.SanitizeMol(rw)
+                results.append(rw.GetMol())
+            except Exception:
+                pass
+    return results
+
+
+def _enumerate_double_cl_f_swap(mol) -> list:
+    """+2Cl-2F / replace two F atoms with Cl."""
+    results = []
+    for m in _enumerate_cl_f_swap(mol):
+        results.extend(_enumerate_cl_f_swap(m))
+    return results
+
+
+def _enumerate_double_cl_h(mol) -> list:
+    """+2Cl-2H / add Cl to two different CH carbons."""
+    results = []
+    for m in _enumerate_plus_cl_minus_h(mol):
+        results.extend(_enumerate_plus_cl_minus_h(m))
+    return results
+
+
 # Dispatch table: formula_delta_tag → enumeration function
 _ENUMERATION_DISPATCH: dict[str, object] = {
     "+CH2":    _enumerate_plus_ch2,
@@ -324,6 +540,20 @@ _ENUMERATION_DISPATCH: dict[str, object] = {
     "+CO":     _enumerate_plus_co,
     "+C2H4":   _enumerate_plus_c2h4,
     "+C2H2O":  _enumerate_plus_acetyl,
+    "+O2":     _enumerate_plus_o2,
+    "+O-H2":   _enumerate_plus_o_minus_h2,
+    "±H2":     _enumerate_pm_h2,
+    "+NH3":    _enumerate_plus_nh3,
+    "+S":      _enumerate_plus_s,
+    "+Cl-H":   _enumerate_plus_cl_minus_h,
+    "+Br-H":   _enumerate_plus_br_minus_h,
+    "+CH2O":   _enumerate_plus_ch2o,
+    "+CO2":    _enumerate_plus_co2,
+    "+C4H8":   _enumerate_plus_c4h8,
+    "+Cl-F":   _enumerate_cl_f_swap,
+    "+Br-F":   _enumerate_br_f_swap,
+    "+2Cl-2F": _enumerate_double_cl_f_swap,
+    "+2Cl-2H": _enumerate_double_cl_h,
 }
 
 
