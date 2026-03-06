@@ -113,6 +113,7 @@ def train(cfg):
             max_weight=train_dataset.max_weight,
         )
 
+    samples_seen_offset = 0
     if dist.is_main_process():
         print(f"Logging with main rank as : {dist._MAIN_RANK}")
 
@@ -135,6 +136,17 @@ def train(cfg):
             )
             with open(wandb_id_file, "w") as f:
                 f.write(wandb.run.id)
+
+        # Recover total_samples_seen offset for resumed runs
+        if last_epoch > 0:
+            summary_val = wandb.run.summary.get("train/total_samples_seen")
+            if summary_val is not None:
+                samples_seen_offset = int(summary_val)
+            else:
+                metadata_path = os.path.join(save_path, "training_metadata.json")
+                if os.path.isfile(metadata_path):
+                    with open(metadata_path) as f:
+                        samples_seen_offset = json.load(f).get("total_samples_seen", 0)
 
     # Make the DataLoaders
     sample_count = len(train_dataset)
@@ -330,6 +342,11 @@ def train(cfg):
                 loss_for_log, op=torch.distributed.ReduceOp.AVG
             )
 
+        total_samples_seen = (
+            samples_seen_offset
+            + (global_step - step_offset) * cfg.train.batch_size * data_size
+        )
+
         # If loss is None (on non-last ranks in PP), we skip logging
         if loss is not None:
             nodes, edges, mask, *_ = batch
@@ -352,6 +369,7 @@ def train(cfg):
                 "train/learning_rate": lr,
                 "train/epoch_time": time.time() - batch_start_time,
                 "train/total_time": time.time() - start_train_time,
+                "train/total_samples_seen": total_samples_seen,
             }
 
             for k, v in epoch_metrics.items():
@@ -377,6 +395,12 @@ def train(cfg):
                     optimizer,
                     os.path.join(cfg.train.save_path, f"checkpoint_{global_step}"),
                 )
+                if dist.is_main_process():
+                    metadata_path = os.path.join(
+                        cfg.train.save_path, "training_metadata.json"
+                    )
+                    with open(metadata_path, "w") as f:
+                        json.dump({"total_samples_seen": total_samples_seen}, f)
 
             else:
                 if dist.is_main_process():
@@ -387,6 +411,11 @@ def train(cfg):
                         },
                         os.path.join(cfg.train.save_path, f"{global_step}.pt"),
                     )
+                    metadata_path = os.path.join(
+                        cfg.train.save_path, "training_metadata.json"
+                    )
+                    with open(metadata_path, "w") as f:
+                        json.dump({"total_samples_seen": total_samples_seen}, f)
 
         # Start the evaluation
         if global_step % cfg.valid.num_eval_steps == 0:
@@ -483,6 +512,10 @@ def train(cfg):
             optimizer,
             os.path.join(cfg.train.save_path, "final"),
         )
+        if dist.is_main_process():
+            metadata_path = os.path.join(cfg.train.save_path, "training_metadata.json")
+            with open(metadata_path, "w") as f:
+                json.dump({"total_samples_seen": total_samples_seen}, f)
 
     else:
         if dist.is_main_process():
@@ -493,6 +526,9 @@ def train(cfg):
                 },
                 os.path.join(cfg.train.save_path, "final.pt"),
             )
+            metadata_path = os.path.join(cfg.train.save_path, "training_metadata.json")
+            with open(metadata_path, "w") as f:
+                json.dump({"total_samples_seen": total_samples_seen}, f)
 
     # Save the metrics (main rank only to avoid concurrent write corruption)
     if dist.is_main_process():

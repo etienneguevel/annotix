@@ -104,7 +104,7 @@ def setup_model_mode(cfg, device):
             cfg.dataset.split_column,
             cfg.dataset.val_tag,
             fingerprint=fingerprint,
-            verbose=True,
+            verbose=dist.is_main_process(),
             cache_path=cfg.dataset.get("cache_path"),
             save_cache=dist.is_main_process(),
             max_nodes=cfg.dataset.get("max_nodes"),
