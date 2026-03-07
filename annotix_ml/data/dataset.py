@@ -19,6 +19,10 @@ def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
     """
     Extract all unique atom symbols from a list of SMILES strings.
 
+    Only atoms present in VALID_ELEMENTS are returned; molecules containing
+    unsupported atoms (e.g. explicit H) will still have their valid atoms
+    counted, but unsupported symbols are silently dropped.
+
     Args:
     - smiles_list: list[str], list of SMILES strings to analyze
 
@@ -30,7 +34,9 @@ def _extract_atoms_from_smiles(smiles_list: list[str]) -> list[str]:
         mol = Chem.MolFromSmiles(smiles)
         if mol is not None:
             for atom in mol.GetAtoms():
-                atoms.add(atom.GetSymbol())
+                symbol = atom.GetSymbol()
+                if symbol in VALID_ELEMENTS:
+                    atoms.add(symbol)
     return sorted(list(atoms))
 
 
