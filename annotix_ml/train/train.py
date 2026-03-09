@@ -22,6 +22,7 @@ from annotix_ml.graphtransf.math.metrics import (
 from annotix_ml.train.eval import (
     allreduce_eval_metrics,
     allreduce_gen_metrics,
+    compute_gen_retrieval_metrics,
     do_eval,
     generate_samples,
     generate_samples_from_fp,
@@ -455,6 +456,13 @@ def train(cfg):
                 if cfg.train.get("distributed") == "data":
                     gen_metrics = allreduce_gen_metrics(gen_metrics)
 
+                # Compute expensive retrieval metrics (MCES, Tanimoto) only on
+                # main rank after allreduce, so other ranks aren't blocked.
+                if dist.is_main_process() and "spectra_fingerprint" in cfg.model.get(
+                    "extra_features"
+                ):
+                    gen_metrics = compute_gen_retrieval_metrics(gen_metrics)
+
                 validity = (
                     sum(gen_metrics["validity"]) / len(gen_metrics["validity"])
                     if gen_metrics.get("validity")
@@ -500,6 +508,11 @@ def train(cfg):
                         ) as f:
                             for s in valid_smiles:
                                 f.write(f"{s}\n")
+
+            # Barrier so all ranks are synchronized before the next training step.
+            # Prevents NCCL timeouts when eval/generation takes asymmetric time.
+            if cfg.train.get("distributed") == "data":
+                torch.distributed.barrier()
 
         # Stop the training when the desired number of steps has been reached
         if global_step >= cfg.train.num_train_steps:

@@ -271,6 +271,7 @@ def generate_samples_from_fp(
     while samples_generated < num_samples:
         try:
             batch = next(iter_loader)
+
         except StopIteration:
             print("Dataloader exhausted before reaching num_samples.")
             break
@@ -308,18 +309,32 @@ def generate_samples_from_fp(
             print("LinAlgError during generation batch, skipping batch...")
             continue
 
-        # Compute the metrics between the generated samples and original molecules
+        # Compute lightweight metrics; defer expensive ones (MCES, Tanimoto)
+        # to after allreduce so ranks stay synchronized.
         true_smiles = batch_graph_to_smiles(nodes, edges, mask, model.valid_elements)
-        tan_sim = compute_tanimoto_similarity(gen_smiles, true_smiles)
-        mces = compute_MCES_distance(gen_smiles, true_smiles)
 
         metrics["true_smiles"].extend(true_smiles)
         metrics["validity"].extend(compute_validity(gen_smiles))
         metrics["validity_digress"].extend(compute_validity(gen_smiles_digress))
-        metrics["tan_sim"].extend(tan_sim)
-        metrics["mces"].extend(mces)
 
         # Increase the counter of generated samples
         samples_generated += bs
 
     return metrics
+
+
+def compute_gen_retrieval_metrics(gen_metrics: dict[str, list]) -> dict[str, list]:
+    """Compute expensive retrieval metrics (Tanimoto, MCES) on gathered gen_metrics.
+
+    Call this after allreduce_gen_metrics so only the main rank pays the cost
+    and other ranks are not blocked.
+    """
+    gen_smiles = gen_metrics.get("all_gen_smiles", [])
+    true_smiles = gen_metrics.get("true_smiles", [])
+
+    tan_sim = compute_tanimoto_similarity(gen_smiles, true_smiles)
+    mces = compute_MCES_distance(gen_smiles, true_smiles)
+
+    gen_metrics["tan_sim"] = tan_sim
+    gen_metrics["mces"] = mces
+    return gen_metrics
