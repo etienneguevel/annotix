@@ -3,11 +3,8 @@ import networkx as nx
 from rdkit import Chem
 from rdkit.Chem import Draw
 import numpy as np
-import matplotlib.pyplot as plt
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
-from matplotlib import gridspec
 from matchms import Spectrum
-from matchms.plotting import plot_spectra_mirror
 
 def draw(network: nx.Graph, seed: int = 42) -> go.Figure:
     """
@@ -145,17 +142,34 @@ def plot_spectrum(query_spectrum, ref_spectrum=None):
     return fig, ax
 
 
+def _mol_to_data_uri(smiles: str, size: tuple[int, int] = (300, 300)) -> str | None:
+    """Render a SMILES string to a base64 PNG data URI."""
+    import base64
+    from io import BytesIO
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    img = Draw.MolToImage(mol, size=size)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{b64}"
+
+
 def plot_proposals(
     query_spectrum: Spectrum,
     candidates: list,
     reference_row=None,
     mol_img_size: tuple[int, int] = (300, 300),
-    cols: int = 3,
+    output_html: str | None = None,
 ):
     """
-    Plot all structure proposals in a single figure:
-    - Top: mirror spectrum (query vs reference)
-    - Bottom: grid of proposed candidate molecules with scores
+    Interactive visualization of structure proposals.
+
+    - Top: interactive Bokeh mirror spectrum (query vs reference) with
+      pan, zoom, hover tooltips showing m/z and intensity.
+    - Bottom: grid of candidate molecule images with scores.
 
     Args:
         query_spectrum: The unknown query spectrum.
@@ -164,68 +178,165 @@ def plot_proposals(
                        'spectrum' fields for the reference compound. If None,
                        only the query spectrum is plotted.
         mol_img_size: Pixel size for each molecule image.
-        cols: Number of molecule columns in the grid.
+        output_html: If set, save a standalone HTML file at this path.
+                     Otherwise the plot is shown in the browser / notebook.
+
+    Returns:
+        bokeh.layouts.column layout object.
     """
-    n_candidates = len(candidates)
-    if n_candidates == 0:
-        return plot_spectrum(query_spectrum, reference_row)
+    from bokeh.plotting import figure, output_file, save, show
+    from bokeh.models import ColumnDataSource, HoverTool, Div
+    from bokeh.layouts import column
 
-    rows_mol = (n_candidates + cols - 1) // cols
+    # -----------------------------------------------------------------
+    # 1. Interactive mirror spectrum
+    # -----------------------------------------------------------------
+    q_mz = np.asarray(query_spectrum.mz, dtype=np.float64)
+    q_int = np.asarray(query_spectrum.intensities, dtype=np.float64)
+    q_int_norm = q_int / q_int.max() if q_int.max() > 0 else q_int
 
-    fig = plt.figure(figsize=(cols * 3.5, 4 + rows_mol * 3))
-    gs = gridspec.GridSpec(
-        1 + rows_mol, cols,
-        height_ratios=[1.5] + [1] * rows_mol,
-        hspace=0.4, wspace=0.3,
+    spec_fig = figure(
+        width=900, height=400,
+        x_axis_label="m/z",
+        y_axis_label="Relative intensity",
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        active_drag="box_zoom",
+    )
+    spec_fig.y_range.start = -1.15
+    spec_fig.y_range.end = 1.15
+
+    # Query peaks (upward)
+    q_src = ColumnDataSource(data=dict(
+        mz=q_mz, intensity=q_int_norm,
+        raw_intensity=q_int,
+        zeros=np.zeros_like(q_mz),
+    ))
+    spec_fig.segment(x0="mz", y0="zeros", x1="mz", y1="intensity",
+                     source=q_src, color="#1f77b4", line_width=1.5,
+                     legend_label="Query")
+    q_hover_glyphs = spec_fig.scatter(
+        "mz", "intensity", source=q_src,
+        size=5, color="#1f77b4", alpha=0.6,
     )
 
-    # --- Top: mirror spectrum spanning full width ---
-    ax_spec = fig.add_subplot(gs[0, :])
-    query_spectrum.set(key="compound_name", value="Query spectrum")
+    title_parts = ["Query spectrum"]
+
     if reference_row is not None:
         ref_spec = reference_row["spectrum"]
-        plot_spectra_mirror(query_spectrum, ref_spec, ax=ax_spec)
-        ref_smiles = reference_row.get("smiles", "")
-        ref_name = reference_row.get("compound_name", reference_row.get("network_node_id", ""))
-        ax_spec.set_title(f"Query vs Reference: {ref_name}", fontsize=10)
-        if ref_smiles:
-            ref_mol = Chem.MolFromSmiles(ref_smiles)
-            if ref_mol:
-                ref_img = Draw.MolToImage(ref_mol, size=(200, 200))
-                imagebox = OffsetImage(ref_img, zoom=0.4)
-                ab = AnnotationBbox(imagebox, (0.85, -0.45), xycoords="axes fraction",
-                                    frameon=True, bboxprops=dict(edgecolor="gray", alpha=0.8))
-                ax_spec.add_artist(ab)
-    else:
-        query_spectrum.plot(ax=ax_spec)
-        ax_spec.set_title("Query spectrum", fontsize=10)
+        r_mz = np.asarray(ref_spec.mz, dtype=np.float64)
+        r_int = np.asarray(ref_spec.intensities, dtype=np.float64)
+        r_int_norm = r_int / r_int.max() if r_int.max() > 0 else r_int
 
-    # --- Bottom: molecule grid ---
-    for idx, candidate in enumerate(candidates):
-        row_i = 1 + idx // cols
-        col_i = idx % cols
-        ax_mol = fig.add_subplot(gs[row_i, col_i])
+        ref_name = reference_row.get("compound_name",
+                                     reference_row.get("network_node_id", "Reference"))
 
-        mol = Chem.MolFromSmiles(candidate.smiles)
-        if mol:
-            img = Draw.MolToImage(mol, size=mol_img_size)
-            ax_mol.imshow(img)
-        ax_mol.set_xticks([])
-        ax_mol.set_yticks([])
-
-        label = (
-            f"#{idx + 1}  {candidate.formula_delta}\n"
-            f"frag={candidate.fragmentation_score:.2f}  "
-            f"loc={candidate.localization_score:.2f}"
+        r_src = ColumnDataSource(data=dict(
+            mz=r_mz, intensity=-r_int_norm,
+            raw_intensity=r_int,
+            zeros=np.zeros_like(r_mz),
+        ))
+        spec_fig.segment(x0="mz", y0="zeros", x1="mz", y1="intensity",
+                         source=r_src, color="#e07b54", line_width=1.5,
+                         legend_label=ref_name)
+        r_hover_glyphs = spec_fig.scatter(
+            "mz", "intensity", source=r_src,
+            size=5, color="#e07b54", alpha=0.6,
         )
-        ax_mol.set_title(label, fontsize=8, pad=4)
-        ax_mol.set_xlabel(candidate.smiles, fontsize=6, color="gray")
 
-    # Hide unused grid cells
-    for idx in range(n_candidates, rows_mol * cols):
-        row_i = 1 + idx // cols
-        col_i = idx % cols
-        ax_empty = fig.add_subplot(gs[row_i, col_i])
-        ax_empty.set_visible(False)
+        # Zero line
+        spec_fig.line(
+            [min(q_mz.min(), r_mz.min()) - 10, max(q_mz.max(), r_mz.max()) + 10],
+            [0, 0], color="black", line_width=0.5,
+        )
 
-    return fig
+        title_parts = [f"Query vs Reference: {ref_name}"]
+
+        # Hover for reference
+        spec_fig.add_tools(HoverTool(
+            renderers=[r_hover_glyphs],
+            tooltips=[("m/z", "@mz{0.0000}"), ("intensity", "@raw_intensity{0.0}")],
+        ))
+
+        # Reference molecule image as inset
+        ref_smiles = reference_row.get("smiles", "")
+        if ref_smiles:
+            uri = _mol_to_data_uri(ref_smiles, size=(200, 200))
+            if uri:
+                title_parts.append(
+                    f'<img src="{uri}" style="height:100px; vertical-align:middle; '
+                    f'margin-left:20px; border:1px solid #ccc; border-radius:4px;">'
+                )
+
+    spec_fig.title.text = title_parts[0]
+    spec_fig.legend.click_policy = "hide"
+    spec_fig.legend.location = "top_left"
+
+    # Hover for query
+    spec_fig.add_tools(HoverTool(
+        renderers=[q_hover_glyphs],
+        tooltips=[("m/z", "@mz{0.0000}"), ("intensity", "@raw_intensity{0.0}")],
+    ))
+
+    # Optional: reference molecule as a Div beside the title
+    header_html = f"<h3 style='margin:0'>{title_parts[0]}</h3>"
+    if len(title_parts) > 1:
+        header_html = (
+            f"<div style='display:flex; align-items:center;'>"
+            f"<h3 style='margin:0'>{title_parts[0]}</h3>"
+            f"{title_parts[1]}</div>"
+        )
+    header_div = Div(text=header_html, width=900)
+
+    # -----------------------------------------------------------------
+    # 2. Molecule grid as HTML Divs
+    # -----------------------------------------------------------------
+    n_candidates = len(candidates)
+
+    if n_candidates > 0:
+        mol_divs = []
+        for idx, candidate in enumerate(candidates):
+            uri = _mol_to_data_uri(candidate.smiles, size=mol_img_size)
+            img_tag = (
+                f'<img src="{uri}" style="width:220px; height:220px;">'
+                if uri else "<p>(invalid SMILES)</p>"
+            )
+            cell_html = (
+                f'<div style="display:inline-block; text-align:center; '
+                f'margin:8px; padding:8px; border:1px solid #ddd; '
+                f'border-radius:6px; vertical-align:top; width:240px;">'
+                f'<div style="font-weight:bold; font-size:13px; margin-bottom:4px;">'
+                f'#{idx + 1}  {candidate.formula_delta}'
+                f'</div>'
+                f'{img_tag}'
+                f'<div style="font-size:11px; margin-top:4px;">'
+                f'frag={candidate.fragmentation_score:.2f} &nbsp; '
+                f'loc={candidate.localization_score:.2f}'
+                f'</div>'
+                f'<div style="font-size:10px; color:gray; '
+                f'word-break:break-all; margin-top:2px;">'
+                f'{candidate.smiles}'
+                f'</div>'
+                f'</div>'
+            )
+            mol_divs.append(cell_html)
+
+        grid_html = (
+            '<div style="display:flex; flex-wrap:wrap; justify-content:center;">'
+            + "".join(mol_divs)
+            + '</div>'
+        )
+        mol_grid = Div(text=grid_html, width=900)
+        layout = column(header_div, spec_fig, mol_grid)
+    else:
+        layout = column(header_div, spec_fig)
+
+    # -----------------------------------------------------------------
+    # 3. Output
+    # -----------------------------------------------------------------
+    if output_html:
+        output_file(output_html, title="Structure Proposals")
+        save(layout)
+    else:
+        show(layout)
+
+    return layout

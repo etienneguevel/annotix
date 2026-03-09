@@ -78,4 +78,3 @@ if __name__ == "__main__":
             if all_candidates:
                 ref_row = result_df.iloc[0] if not result_df.empty else None
                 plot_proposals(query, all_candidates, reference_row=ref_row)
-                plt.show()
