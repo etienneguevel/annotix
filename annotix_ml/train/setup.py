@@ -46,6 +46,9 @@ def setup(args):
     if args.distributed_strat:
         cfg.train.distributed = args.distributed_strat
 
+    if args.main_rank_only_generation:
+        cfg.valid.main_rank_only_generation = True
+
     return cfg
 
 

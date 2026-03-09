@@ -45,3 +45,4 @@ valid:
   num_samples: 1024
   num_eval_steps: 4000
   max_eval_samples: null
+  main_rank_only_generation: false

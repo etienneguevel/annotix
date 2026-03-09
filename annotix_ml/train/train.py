@@ -41,6 +41,11 @@ def get_args():
     parser.add_argument("--num-train-steps", type=int, required=False)
     parser.add_argument("--num-diffusion-steps", type=int, required=False)
     parser.add_argument("--distributed-strat", type=str, required=False)
+    parser.add_argument(
+        "--main-rank-only-generation",
+        action="store_true",
+        default=False,
+    )
 
     return parser.parse_args()
 
@@ -433,27 +438,34 @@ def train(cfg):
                     torch.distributed.barrier()
                     eval_metrics = allreduce_eval_metrics(eval_metrics)
 
+                main_rank_only_gen = cfg.valid.get("main_rank_only_generation", False)
+
                 # If DDP then we make each rank generates a part of the samples
-                if cfg.train.get("distributed") == "data":
+                if cfg.train.get("distributed") == "data" and not main_rank_only_gen:
                     world_size = dist.get_global_size()
                     samples_per_rank = max(1, cfg.valid.num_samples // world_size)
 
                 else:
                     samples_per_rank = cfg.valid.num_samples
 
-                if "spectra_fingerprint" in cfg.model.get("extra_features"):
-                    gen_metrics = generate_samples_from_fp(
-                        digress, samples_per_rank, valid_loader
-                    )
-                else:
-                    gen_metrics = generate_samples(
-                        digress,
-                        samples_per_rank,
-                        train_dataset.num_atoms_dist,
-                        cfg.valid.batch_size,
-                    )
+                should_generate = not main_rank_only_gen or dist.is_main_process()
 
-                if cfg.train.get("distributed") == "data":
+                if should_generate:
+                    if "spectra_fingerprint" in cfg.model.get("extra_features"):
+                        gen_metrics = generate_samples_from_fp(
+                            digress, samples_per_rank, valid_loader
+                        )
+                    else:
+                        gen_metrics = generate_samples(
+                            digress,
+                            samples_per_rank,
+                            train_dataset.num_atoms_dist,
+                            cfg.valid.batch_size,
+                        )
+                else:
+                    gen_metrics = {}
+
+                if cfg.train.get("distributed") == "data" and not main_rank_only_gen:
                     torch.distributed.barrier()
                     gen_metrics = allreduce_gen_metrics(gen_metrics)
 
