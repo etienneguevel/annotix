@@ -7,6 +7,7 @@ import os
 import random
 import re
 import socket
+from datetime import timedelta
 from typing import Dict, List
 
 import torch
@@ -256,6 +257,7 @@ def enable(
     overwrite: bool = False,
     allow_nccl_timeout: bool = False,
     main_rank: str = "first",
+    timeout_minutes: int = 30,
 ):
     """Enable distributed mode
 
@@ -286,6 +288,7 @@ def enable(
         world_size=torch_env.world_size,
         rank=torch_env.rank,
         device_id=torch.device("cuda", torch_env.local_rank),
+        timeout=timedelta(minutes=timeout_minutes),
     )
     dist.barrier()
 

@@ -454,6 +454,7 @@ def train(cfg):
                     )
 
                 if cfg.train.get("distributed") == "data":
+                    torch.distributed.barrier()
                     gen_metrics = allreduce_gen_metrics(gen_metrics)
 
                 # Compute expensive retrieval metrics (MCES, Tanimoto) only on
@@ -562,7 +563,12 @@ def main():
     else:
         main_rank = "first"
 
-    dist.enable(overwrite=True, main_rank=main_rank)
+    dist.enable(
+        overwrite=True,
+        main_rank=main_rank,
+        allow_nccl_timeout=True,
+        timeout_minutes=cfg.train.get("nccl_timeout_minutes", 30),
+    )
     train(cfg)
 
     if dist.is_enabled():
