@@ -186,7 +186,7 @@ def plot_proposals(
     """
     from bokeh.plotting import figure, output_file, save, show
     from bokeh.models import ColumnDataSource, HoverTool, Div
-    from bokeh.layouts import column
+    from bokeh.layouts import column, row
 
     # -----------------------------------------------------------------
     # 1. Interactive mirror spectrum
@@ -220,6 +220,7 @@ def plot_proposals(
     )
 
     title_parts = ["Query spectrum"]
+    ref_div = None
 
     if reference_row is not None:
         ref_spec = reference_row["spectrum"]
@@ -227,20 +228,15 @@ def plot_proposals(
         r_int = np.asarray(ref_spec.intensities, dtype=np.float64)
         r_int_norm = r_int / r_int.max() if r_int.max() > 0 else r_int
 
-        ref_name = reference_row.get("compound_name",
-                                     reference_row.get("network_node_id", "Reference"))
+        ref_name = reference_row.get("compound_name", reference_row.get("network_node_id", "Reference"))
 
         r_src = ColumnDataSource(data=dict(
             mz=r_mz, intensity=-r_int_norm,
             raw_intensity=r_int,
             zeros=np.zeros_like(r_mz),
         ))
-        spec_fig.segment(x0="mz", y0="zeros", x1="mz", y1="intensity",
-                         source=r_src, color="#e07b54", line_width=1.5,
-                         legend_label=ref_name)
-        r_hover_glyphs = spec_fig.scatter(
-            "mz", "intensity", source=r_src,
-            size=5, color="#e07b54", alpha=0.6,
+        spec_fig.segment(x0="mz", y0="zeros", x1="mz", y1="intensity", source=r_src, color="#e07b54", line_width=1.5)
+        r_hover_glyphs = spec_fig.scatter("mz", "intensity", source=r_src, size=5, color="#e07b54", alpha=0.6,
         )
 
         # Zero line
@@ -260,15 +256,17 @@ def plot_proposals(
         # Reference molecule image as inset
         ref_smiles = reference_row.get("smiles", "")
         if ref_smiles:
-            uri = _mol_to_data_uri(ref_smiles, size=(200, 200))
+            uri = _mol_to_data_uri(ref_smiles, size=mol_img_size)
             if uri:
-                title_parts.append(
-                    f'<img src="{uri}" style="height:100px; vertical-align:middle; '
-                    f'margin-left:20px; border:1px solid #ccc; border-radius:4px;">'
-                )
+                img_w, img_h = mol_img_size
+                ref_div = Div(text=(
+                    '<div style="text-align:center;">'
+                    '<h4 style="margin:0 0 4px 0;">Reference molecule</h4>'
+                    f'<img src="{uri}" style="width:{img_w}px; height:{img_h}px; '
+                    'border:1px solid #ccc; border-radius:4px;">'
+                    '</div>'
+                ), width=img_w + 40, height=img_h + 60)
 
-    spec_fig.title.text = title_parts[0]
-    spec_fig.legend.click_policy = "hide"
     spec_fig.legend.location = "top_left"
 
     # Hover for query
@@ -326,9 +324,11 @@ def plot_proposals(
             + '</div>'
         )
         mol_grid = Div(text=grid_html, width=900)
-        layout = column(header_div, spec_fig, mol_grid)
+        spec_row = row(spec_fig, ref_div) if ref_div else spec_fig
+        layout = column(header_div, spec_row, mol_grid)
     else:
-        layout = column(header_div, spec_fig)
+        spec_row = row(spec_fig, ref_div) if ref_div else spec_fig
+        layout = column(header_div, spec_row)
 
     # -----------------------------------------------------------------
     # 3. Output
