@@ -334,6 +334,7 @@ def plot_proposals(
 
         grid_html = (
             '<div style="display:flex; flex-wrap:wrap; justify-content:center;">'
+            '<h2 style="margin:0 0 4px 0;">Proposals</h2>'
             + "".join(mol_divs)
             + '</div>'
         )
