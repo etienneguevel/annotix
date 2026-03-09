@@ -928,7 +928,7 @@ FILENAME=Pesticide_Mix3_neg.mzXML
 SEQ=*..*
 IONMODE=negative
 ORGANISM=GNPS-COLLECTIONS-PESTICIDES-NEGATIVE
-NAME=Pesticide3_Novaluron_C17H9ClF8N2O4_N-({3-Chloro-4-[1,1,2-trifluoro-2-(trifluoromethoxy)ethoxy]phenyl}carbamoyl)-2,6-difluorobenzamide M-H
+NAME=
 PI=Dorrestein/Touboul
 DATACOLLECTOR=lfnothias
 SMILES=C1=CC(=C(C(=C1)F)C(=O)NC(=O)NC2=CC(=C(C=C2)OC(C(OC(F)(F)F)F)(F)F)Cl)F
@@ -1483,7 +1483,7 @@ FILENAME=Pesticide_mix3_BA3_01_8704.mzXML
 SEQ=*..*
 IONMODE=negative
 ORGANISM=GNPS-COLLECTIONS-PESTICIDES-NEGATIVE
-NAME=Pesticide3_Novaluron_C17H9ClF8N2O4_N-({3-Chloro-4-[1,1,2-trifluoro-2-(trifluoromethoxy)ethoxy]phenyl}carbamoyl)-2,6-difluorobenzamide M-H
+NAME=
 PI=Dorrestein/Touboul
 DATACOLLECTOR=lfnothias
 SMILES=C1=CC(=C(C(=C1)F)C(=O)NC(=O)NC2=CC(=C(C=C2)OC(C(OC(F)(F)F)F)(F)F)Cl)F
@@ -6310,6 +6310,7 @@ SCANS=1819
 342.024384	9468700.0
 342.192444	16998.355469
 END IONS
+
 
 BEGIN IONS
 PEPMASS=487.029

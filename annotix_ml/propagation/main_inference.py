@@ -46,6 +46,7 @@ if __name__ == "__main__":
     for query in query_spectra:
         print(f"\n\033[95m*** Annotating {query.get('spectrum_id')} ***\033[0m")
         true_smiles = query.metadata.get("smiles")
+        # print(f"True SMILES: {true_smiles}")
 
         result_df = find_candidates(
             query=query,

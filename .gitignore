@@ -1,3 +1,4 @@
+*.html
 train_network.json
 net.json
 .vscode

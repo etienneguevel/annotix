@@ -453,6 +453,7 @@ def infer_structure(
         score = row.get("score")
 
         print(f"Check candidate {node_id}. Score {score}")
+        # print(f"   {reference_smiles}")
 
         if not reference_smiles or not node_id:
             continue

@@ -40,6 +40,7 @@ def clean_spectrum(spec: Spectrum) -> Spectrum:
     return spec
 
 def load_spectra(ref_path, n_workers: int = None):
+    ref_path = Path(ref_path)
     print("Loading spectra...")
     if ref_path.suffix == ".mgf":
         raw = list(load_from_mgf(ref_path))
