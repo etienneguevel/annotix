@@ -163,6 +163,7 @@ def plot_proposals(
     reference_row=None,
     mol_img_size: tuple[int, int] = (300, 300),
     output_html: str | None = None,
+    true_smiles: str = None
 ):
     """
     Interactive visualization of structure proposals.
@@ -180,13 +181,14 @@ def plot_proposals(
         mol_img_size: Pixel size for each molecule image.
         output_html: If set, save a standalone HTML file at this path.
                      Otherwise the plot is shown in the browser / notebook.
+        true_smiles: true smiles string for checking if available
 
     Returns:
         bokeh.layouts.column layout object.
     """
     from bokeh.plotting import figure, output_file, save, show
     from bokeh.models import ColumnDataSource, HoverTool, Div
-    from bokeh.layouts import column, row
+    from bokeh.layouts import column, row, grid
 
     # -----------------------------------------------------------------
     # 1. Interactive mirror spectrum
@@ -245,7 +247,7 @@ def plot_proposals(
             [0, 0], color="black", line_width=0.5,
         )
 
-        title_parts = [f"Query vs Reference: {ref_name}"]
+        title_parts = ["Query vs Reference", ref_name]
 
         # Hover for reference
         spec_fig.add_tools(HoverTool(
@@ -261,8 +263,20 @@ def plot_proposals(
                 img_w, img_h = mol_img_size
                 ref_div = Div(text=(
                     '<div style="text-align:center;">'
-                    '<h4 style="margin:0 0 4px 0;">Reference molecule</h4>'
+                    '<h2 style="margin:0 0 4px 0;">Reference molecule</h2>'
                     f'<img src="{uri}" style="width:{img_w}px; height:{img_h}px; '
+                    'border:1px solid #ccc; border-radius:4px;">'
+                    '</div>'
+                ), width=img_w + 40, height=img_h + 60)
+
+        if true_smiles:
+            true_uri = _mol_to_data_uri(true_smiles, size=mol_img_size)
+            if uri:
+                img_w, img_h = mol_img_size
+                true_div = Div(text=(
+                    '<div style="text-align:center;">'
+                    '<h2 style="margin:0 0 4px 0;">True molecule</h2>'
+                    f'<img src="{true_uri}" style="width:{img_w}px; height:{img_h}px; '
                     'border:1px solid #ccc; border-radius:4px;">'
                     '</div>'
                 ), width=img_w + 40, height=img_h + 60)
@@ -276,12 +290,12 @@ def plot_proposals(
     ))
 
     # Optional: reference molecule as a Div beside the title
-    header_html = f"<h3 style='margin:0'>{title_parts[0]}</h3>"
+    header_html = f"<h2 style='margin:0'>{title_parts[0]}</h2>"
     if len(title_parts) > 1:
         header_html = (
             f"<div style='display:flex; align-items:center;'>"
-            f"<h3 style='margin:0'>{title_parts[0]}</h3>"
-            f"{title_parts[1]}</div>"
+            f"<h2 style='margin:0'>{title_parts[0]}</h2></div>"
+            f"<div>{title_parts[1]}</div>"
         )
     header_div = Div(text=header_html, width=900)
 
@@ -324,11 +338,11 @@ def plot_proposals(
             + '</div>'
         )
         mol_grid = Div(text=grid_html, width=900)
-        spec_row = row(spec_fig, ref_div) if ref_div else spec_fig
-        layout = column(header_div, spec_row, mol_grid)
+        layout = grid([header_div, [spec_fig, ref_div], [mol_grid, true_div]])
+
+
     else:
-        spec_row = row(spec_fig, ref_div) if ref_div else spec_fig
-        layout = column(header_div, spec_row)
+        layout = grid([header_div, [spec_fig, ref_div], [None, true_div]])
 
     # -----------------------------------------------------------------
     # 3. Output

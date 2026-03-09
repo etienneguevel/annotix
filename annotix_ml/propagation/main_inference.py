@@ -45,6 +45,8 @@ if __name__ == "__main__":
     # Infer each new molecule
     for query in query_spectra:
         print(f"\n\033[95m*** Annotating {query.get('spectrum_id')} ***\033[0m")
+        true_smiles = query.metadata.get("smiles")
+
         result_df = find_candidates(
             query=query,
             network=network,
@@ -77,4 +79,4 @@ if __name__ == "__main__":
             all_candidates = infer_structure(query=query, result_df=result_df, network=network, delta_mass_table=delta_mass_table, delta_mass_tolerance=0.05)
             if all_candidates:
                 ref_row = result_df.iloc[0] if not result_df.empty else None
-                plot_proposals(query, all_candidates, reference_row=ref_row)
+                plot_proposals(query, all_candidates, reference_row=ref_row, true_smiles=true_smiles)
