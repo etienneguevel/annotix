@@ -39,6 +39,7 @@ train:
   distributed:
   num_microbatches:
   mixed_precision: True
+  compile: True
 
 valid:
   batch_size: 512
