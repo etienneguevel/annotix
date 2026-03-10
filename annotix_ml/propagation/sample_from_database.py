@@ -9,6 +9,7 @@ from argparse import ArgumentParser
 _KEY_MAP = {"PRECURSORMZ": "precursor_mz"}
 NR_SIMILAR = 5
 THRESHOLD = .7
+THRESHOLD_PEAKS = 4
 
 def get_arguments():
     parser = ArgumentParser(prog="Annotix")
@@ -45,7 +46,7 @@ def find_matches():
                 if len(match_positions[spec_id]) >= NR_SIMILAR:
                     continue
                 sim = ModifiedCosine().pair(reference=ref, query=query)
-                if sim["score"] > THRESHOLD:
+                if sim["score"] > THRESHOLD and sim["matches"] > THRESHOLD_PEAKS:
                     print(f"Query {spec_id} matched {ref_id} (score: {sim['score']}, matches: {sim['matches']}). Position: {position}")
                     match_positions[spec_id].append(position)
 

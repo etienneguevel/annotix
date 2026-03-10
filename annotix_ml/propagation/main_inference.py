@@ -52,7 +52,7 @@ if __name__ == "__main__":
             query=query,
             network=network,
             direct_score_threshold=.7,
-            direct_min_matched=6,
+            direct_min_matched=1,
             prop_score_threshold=.5,
             prop_min_matched=4,
             max_depth=2,
@@ -60,6 +60,8 @@ if __name__ == "__main__":
             mz_tolerance=.02,
             top_n=10
         )
+
+        print(result_df)
 
         # Correct the confidence level for exact matches / should be in the function find_candidates
         result_df.loc[(result_df["score"] == 1) & (result_df["source"] == "direct_match") & (result_df["mass_shift_da"] == 0) & (result_df["compound_name"] != "Unknown"), "confidence_level"] = "Exact match"
