@@ -16,7 +16,6 @@ from annotix_ml.data.data_utils import (
 from annotix_ml.graphtransf.arch import DigressMetaArch
 from annotix_ml.graphtransf.math.metrics import (
     compute_MCES_distance,
-    compute_metrics,
     compute_tanimoto_similarity,
     compute_validity,
 )
@@ -69,22 +68,7 @@ def do_eval(
             p_edges.argmax(-1), num_classes=p_edges.shape[-1]
         )  # (bs, n, n, n_edges)
 
-        # Convert the graph to smiles
-        true_smiles = batch_graph_to_smiles(
-            nodes, edges, mask, model.valid_elements
-        )  # (bs,)
-        pred_smiles = batch_graph_to_smiles(N_, E_, mask, model.valid_elements)  # (bs,)
-
-        # Compute the metrics
-        batch_metrics = compute_metrics(
-            pred_smiles,
-            true_smiles,
-            p_nodes,
-            p_edges,
-            nodes,
-            edges,
-            mask,
-        )
+        batch_metrics = {}
 
         # Compute accuracy per node type
         target_nodes = nodes.argmax(-1)
