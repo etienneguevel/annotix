@@ -1,5 +1,6 @@
 *.html
 train_network.json
+match_positions.json
 net.json
 .vscode
 *.pt
