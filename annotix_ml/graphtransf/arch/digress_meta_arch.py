@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.data.data_utils import mask_any_tensor
-from annotix_ml.distributed import get_global_rank, get_local_rank, is_main_process
+from annotix_ml.distributed import get_global_rank, get_local_rank, get_global_size
 from annotix_ml.distributed.pipeline_parallelism import auto_model_split
 from annotix_ml.graphtransf.layers.mlp import MLP
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
@@ -729,7 +729,7 @@ class DigressMetaArch:
                     reversed(range(1, self.noiser.T)),
                     total=self.noiser.T - 1,
                     desc="Denoising",
-                    disable=not is_main_process(),
+                    position=get_global_rank() + get_global_size(),
                 )
             else:
                 t_range = reversed(range(1, self.noiser.T))

@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict
 
 import torch
@@ -181,12 +182,24 @@ def generate_samples(
 ) -> dict[str, list]:
     # Generate the graphs
     batch_size = min(num_samples, batch_size)
-    print(f"Generating {num_samples} graphs in batches of {batch_size}...")
+    if dist.is_main_process():
+        print(f"Generating {num_samples} graphs in batches of {batch_size}...")
 
     # Init the lists
     all_gen_smiles = []
     all_gen_smiles_digress = []
     samples_generated = 0
+
+    rank = dist.get_global_rank()
+    num_ranks = dist.get_global_size()
+    num_batches = math.ceil(num_samples / batch_size)
+    pbar = tqdm(
+        total=num_batches,
+        desc=f"Rank {rank} | Generating",
+        unit="batch",
+        position=rank,
+        leave=True,
+    )
 
     while samples_generated < num_samples:
         # Sample from the distribution
@@ -200,7 +213,9 @@ def generate_samples(
 
         try:
             gen_N, gen_E, gen_mask = model.generate(
-                num_samples=n, max_nodes=n.max().item(), progress_bar=True
+                num_samples=n,
+                max_nodes=n.max().item(),
+                progress_bar=True,
             )
 
             # Convert to smiles
@@ -220,6 +235,9 @@ def generate_samples(
             continue
 
         samples_generated += batch_size
+        pbar.update(1)
+
+    pbar.close()
 
     # Trim to exactly num_samples to avoid overshoot bias in validity metrics.
     all_gen_smiles = all_gen_smiles[:num_samples]
@@ -268,6 +286,16 @@ def generate_samples_from_fp(
     # Make the eval loader as iterable
     iter_loader = iter(eval_dataloader)
 
+    rank = dist.get_global_rank()
+    num_ranks = dist.get_global_size()
+    num_batches = math.ceil(num_samples / eval_dataloader.batch_size)
+    pbar = tqdm(
+        total=num_batches,
+        desc=f"Rank {rank} | Generating from fp",
+        unit="batch",
+        leave=True,
+    )
+
     while samples_generated < num_samples:
         try:
             batch = next(iter_loader)
@@ -290,6 +318,7 @@ def generate_samples_from_fp(
                 num_samples=n,
                 max_nodes=int(n.max().item()),
                 progress_bar=True,
+                tqdm_position=num_ranks + rank,
                 fp=fp,
             )
 
@@ -319,7 +348,9 @@ def generate_samples_from_fp(
 
         # Increase the counter of generated samples
         samples_generated += bs
+        pbar.update(bs)
 
+    pbar.close()
     return metrics
 
 
