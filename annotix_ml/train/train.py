@@ -143,6 +143,16 @@ def train(cfg):
             with open(wandb_id_file, "w") as f:
                 f.write(wandb.run.id)
 
+        num_atoms_dist = train_dataset.num_atoms_dist.tolist()
+        bin_edges = list(range(1, len(num_atoms_dist) + 2))
+        wandb.log(
+            {
+                "dataset/num_atoms_dist": wandb.Histogram(
+                    np_histogram=(num_atoms_dist, bin_edges)
+                )
+            }
+        )
+
         # Recover total_samples_seen offset for resumed runs
         if last_epoch > 0:
             summary_val = wandb.run.summary.get("train/total_samples_seen")
