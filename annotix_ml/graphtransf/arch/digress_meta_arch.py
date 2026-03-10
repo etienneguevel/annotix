@@ -550,6 +550,7 @@ class DigressMetaArch:
         edges: torch.Tensor,
         mask: torch.Tensor,
         fp: torch.Tensor | None = None,
+        loss_scale: float = 1.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Noise the input batch, predict the clean graph, compute loss, and run backpropagation.
@@ -623,7 +624,7 @@ class DigressMetaArch:
                 pN, pE, *_ = out
                 loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
 
-            self.scaler.scale(loss).backward()
+            self.scaler.scale(loss * loss_scale).backward()
 
         if out is None:
             pN, pE, loss = None, None, None

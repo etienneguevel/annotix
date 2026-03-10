@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import time
@@ -160,12 +161,35 @@ def train(cfg):
                     with open(metadata_path) as f:
                         samples_seen_offset = json.load(f).get("total_samples_seen", 0)
 
+    # Compute gradient accumulation steps
+    is_ddp = dist.is_enabled() and cfg.train.get("distributed") == "data"
+
+    if cfg.train.get("distributed") == "pipeline":
+        accum_steps = 1
+    else:
+        effective_per_step = cfg.train.mini_batch_size * data_size
+        accum_steps = max(1, cfg.train.global_batch_size // effective_per_step)
+        actual_global_batch = effective_per_step * accum_steps
+        if actual_global_batch != cfg.train.global_batch_size:
+            print(
+                f"Warning: global_batch_size={cfg.train.global_batch_size} is not evenly "
+                f"divisible by mini_batch_size * world_size "
+                f"({cfg.train.mini_batch_size} * {data_size}). "
+                f"Using effective global batch size of {actual_global_batch}."
+            )
+        print(
+            f"Gradient accumulation: {accum_steps} steps "
+            f"(mini_batch={cfg.train.mini_batch_size}, world_size={data_size}, "
+            f"effective_global_batch={actual_global_batch})"
+        )
+
     # Make the DataLoaders
     sample_count = len(train_dataset)
     shuffle = True
     seed = cfg.train.seed
     advance = (
-        ((last_epoch + 1) * cfg.train.batch_size) % len(train_dataset)
+        ((last_epoch + 1) * accum_steps * cfg.train.mini_batch_size)
+        % len(train_dataset)
         if (last_epoch > 0 and not shuffle)
         else 0
     )
@@ -173,7 +197,7 @@ def train(cfg):
     # If the training is pipeline dist -> train and valid bs need to be =
     # TODO : find a way to rm that dependency
     if cfg.train.get("distributed") == "pipeline":
-        cfg.valid.batch_size = cfg.train.batch_size
+        cfg.valid.batch_size = cfg.train.mini_batch_size
         data_rank = 0
         data_size = 1
         print(
@@ -191,7 +215,7 @@ def train(cfg):
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=cfg.train.batch_size,
+        batch_size=cfg.train.mini_batch_size,
         sampler=sampler_type,
         collate_fn=collate_fn,
         num_workers=cfg.train.num_workers,
@@ -303,8 +327,11 @@ def train(cfg):
     # Start the training loop
     step_offset = last_epoch + 1 if last_epoch > 0 else 0
 
+    optimizer.zero_grad()
+    train_iter = iter(train_loader)
+
     pbar = tqdm(
-        enumerate(train_loader, start=step_offset),
+        range(step_offset, cfg.train.num_train_steps + 1),
         desc="Training",
         disable=not dist.is_main_process(),
         initial=step_offset,
@@ -314,83 +341,105 @@ def train(cfg):
         torch.distributed.barrier()
 
     start_train_time = time.time()
-    for global_step, batch in pbar:
+    for global_step in pbar:
         batch_start_time = time.time()
-        # Make the model in train mode
         digress.diffuser.train()
 
-        # Reset memory tracker for this step
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
 
-        # Move the batch to the correct device
-        batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
+        # --- Gradient accumulation inner loop ---
+        skip_window = False
+        losses_for_log = []
+        accumulated_metrics = defaultdict(list)
+        last_batch = None
 
-        # Do the forward and loss computation
-        try:
-            p_nodes, p_edges, loss = digress.forward_backward(*batch)
-            skip = torch.zeros(1, device=device)
+        for accum_i in range(accum_steps):
+            batch = next(train_iter)
+            batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
+            last_batch = batch
 
-        except LinAlgError:
-            print("LinAlgError in forward or digress_loss")
-            p_nodes, p_edges, loss = None, None, None
-            skip = torch.ones(1, device=device)
+            is_last_accum = accum_i == accum_steps - 1
+            sync_ctx = (
+                digress.diffuser.no_sync()
+                if is_ddp and not is_last_accum
+                else contextlib.nullcontext()
+            )
 
-        if dist.is_enabled():
-            torch.distributed.all_reduce(skip, op=torch.distributed.ReduceOp.MAX)
+            try:
+                with sync_ctx:
+                    p_nodes, p_edges, loss = digress.forward_backward(
+                        *batch, loss_scale=1.0 / accum_steps
+                    )
+                skip = torch.zeros(1, device=device)
 
-        if skip.item():
+            except LinAlgError:
+                print("LinAlgError in forward or digress_loss")
+                p_nodes, p_edges, loss = None, None, None
+                skip = torch.ones(1, device=device)
+
+            if dist.is_enabled():
+                torch.distributed.all_reduce(skip, op=torch.distributed.ReduceOp.MAX)
+
+            if skip.item():
+                skip_window = True
+                break
+
+            if loss is not None:
+                losses_for_log.append(loss.detach())
+                nodes, edges, mask, *_ = batch
+                step_metrics = compute_training_metrics(
+                    p_nodes, p_edges, nodes, edges, mask, digress.valid_elements
+                )
+                for k, v in step_metrics.items():
+                    accumulated_metrics[k].append(
+                        v.item() if isinstance(v, torch.Tensor) else v
+                    )
+
+        if skip_window:
             optimizer.zero_grad()
             continue
 
+        # --- Post-accumulation: sync extra gradients (DDP only) ---
         if dist.is_enabled() and cfg.train.get("distributed") == "data":
             digress.sync_extra_gradients()
 
-        # All-reduce loss scalar so the logged value is the global average (DDP only)
-        loss_for_log = loss
-        if loss is not None and cfg.train.get("distributed") == "data":
-            loss_for_log = loss.detach().clone()
-            torch.distributed.all_reduce(
-                loss_for_log, op=torch.distributed.ReduceOp.AVG
-            )
-
         total_samples_seen = (
             samples_seen_offset
-            + (global_step - step_offset) * cfg.train.batch_size * data_size
+            + (global_step - step_offset) * cfg.train.global_batch_size
         )
 
-        # If loss is None (on non-last ranks in PP), we skip logging
-        if loss is not None:
-            nodes, edges, mask, *_ = batch
-            epoch_metrics = compute_training_metrics(
-                p_nodes, p_edges, nodes, edges, mask, digress.valid_elements
-            )
+        # --- Logging ---
+        if losses_for_log:
+            avg_loss = sum(losses_for_log) / len(losses_for_log)
+            loss_for_log = avg_loss
+            if cfg.train.get("distributed") == "data":
+                loss_for_log = avg_loss.clone()
+                torch.distributed.all_reduce(
+                    loss_for_log, op=torch.distributed.ReduceOp.AVG
+                )
+
+            epoch_metrics = {k: sum(v) / len(v) for k, v in accumulated_metrics.items()}
 
             for k, v in epoch_metrics.items():
-                if isinstance(v, torch.Tensor):
-                    v = v.item()
                 train_metrics[k].append(v)
 
-            # Update the progress bar
             lr = optimizer.param_groups[0]["lr"]
             pbar.set_postfix(loss=loss_for_log.item(), lr=lr, **epoch_metrics)
 
-            # Log training metrics to wandb
-            train_log = {
-                "train/loss": loss_for_log.item(),
-                "train/learning_rate": lr,
-                "train/epoch_time": time.time() - batch_start_time,
-                "train/total_time": time.time() - start_train_time,
-                "train/total_samples_seen": total_samples_seen,
-            }
-
-            for k, v in epoch_metrics.items():
-                train_log[f"train/{k}"] = v
-
             if dist.is_main_process():
+                train_log = {
+                    "train/loss": loss_for_log.item(),
+                    "train/learning_rate": lr,
+                    "train/epoch_time": time.time() - batch_start_time,
+                    "train/total_time": time.time() - start_train_time,
+                    "train/total_samples_seen": total_samples_seen,
+                }
+                for k, v in epoch_metrics.items():
+                    train_log[f"train/{k}"] = v
                 wandb.log(train_log, step=global_step)
 
-        # Update the parameters with the scaler
+        # --- Optimizer step ---
         digress.scaler.step(optimizer)
         digress.scaler.update()
         optimizer.zero_grad()

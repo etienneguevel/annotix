@@ -32,7 +32,7 @@ def setup(args):
         cfg.model.extra_features = [i.strip() for i in args.extra_features.split(",")]
 
     if args.batch_size:
-        cfg.train.batch_size = args.batch_size
+        cfg.train.mini_batch_size = args.batch_size
 
     if args.num_train_steps:
         cfg.train.num_train_steps = args.num_train_steps

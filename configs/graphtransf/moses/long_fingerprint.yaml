@@ -26,6 +26,6 @@ model:
     - spectra_fingerprint
 
 train:
-  batch_size: 512
+  mini_batch_size: 512
   num_train_steps: 100000
   save_path: logs/moses_medium_long
