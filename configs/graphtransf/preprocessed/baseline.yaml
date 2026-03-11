@@ -27,11 +27,13 @@ model:
     - spectra_fingerprint
 
 train:
-  mini_batch_size: 512
-  num_train_steps: 100000
+  global_batch_size: 1024
+  mini_batch_size: 64
+  num_train_steps: 500000
   save_path: logs/preprocessed_baseline
   nccl_timeout_minutes: 120
   distributed: data
 
 valid:
   max_eval_samples: 2048
+  num_eval_steps: 50000

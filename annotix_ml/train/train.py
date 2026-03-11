@@ -331,7 +331,7 @@ def train(cfg):
     train_iter = iter(train_loader)
 
     pbar = tqdm(
-        range(step_offset, cfg.train.num_train_steps + 1),
+        range(step_offset, cfg.train.num_train_steps),
         desc="Training",
         disable=not dist.is_main_process(),
         initial=step_offset,
