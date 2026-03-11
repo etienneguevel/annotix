@@ -302,7 +302,6 @@ def generate_samples_from_fp(
                 num_samples=n,
                 max_nodes=int(n.max().item()),
                 progress_bar=True,
-                tqdm_position=num_ranks + rank,
                 fp=fp,
             )
 
