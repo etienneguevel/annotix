@@ -13,7 +13,7 @@ Entry point: `python annotix_ml/graphtransf/train/train.py --config <path>`
 
 ```python
 setup(cfg)                    → load + merge config
-setup_model_mode(cfg)         → select arch, dataset, collator
+setup_model_mode(cfg)         → select dataset, collator
 distributed.enable(strategy)  → DDP or pipeline
 
 for step in range(max_steps):
@@ -48,14 +48,17 @@ train:
 
 ### Checkpoint resume
 
-If `cfg.run.checkpoint` is set, `load_pretrained` is called and the optimizer state
-and step counter are restored. The `InfiniteSampler` is advanced by the saved step count
-so training resumes from exactly the right data position.
+If when lauching the training the `cfg.train.save_path` is already indicated,
+then the last file corresponding to intermediary weights is loaded and the
+training starts back from this epoch. It allows smooth continuation when training
+has crashed (useful for long distributed training).
 
 ### WandB integration
 
-Metrics are logged to Weights & Biases when `cfg.run.wandb` is `true`. The run name
-and project are taken from `cfg.run.name` and `cfg.run.project`.
+Metrics are logged to Weights & Biases. The run name
+and project are taken from `cfg.run.name` and `cfg.run.project`. If training is
+resumed, the script looks for `wandb_run_id.txt` file that would indicate a
+logging script to continue.
 
 In case of distributed training the main rank is logged (see `distributed.md` for
 more information on main rank).
@@ -85,8 +88,8 @@ Takes the `argparse.Namespace` returned by `get_args()` and builds the final con
 | `--distributed-strat` | `cfg.train.distributed` |
 
 ```bash
-python -m annotix_ml.graphtransf.train.train \
-    --config configs/spec2mol/baseline.yaml \
+python annotix_ml/train/train.py \
+    --config configs/graphtransf/qm9/medium_arch/long.yaml \
     --batch-size 32 \
     --distributed-strat data
 ```
@@ -95,23 +98,18 @@ python -m annotix_ml.graphtransf.train.train \
 
 Branches based on whether `cfg.spectra_encoder` is present in the config:
 
-| Condition | Arch class | Datasets | Collator |
-|-----------|-----------|---------|---------|
-| no `spectra_encoder` section | `DigressMetaArch` | `GraphDatasetFromSMILEs` | `collateGraph` |
-| no `spectra_encoder` + pipeline distributed | `DigressMetaArch` | `GraphDatasetFromSMILEs` | `collateGraphStatic` (n_max auto-derived from dataset) |
-| `spectra_encoder` present | `Spec2MolMetaArch` | `GraphSpecDataset` | `collateGraphSpec` |
-| `spectra_encoder` present + pipeline distributed | — | — | raises `ValueError` (not supported) |
+| Condition | Datasets | Collator |
+|-----------|-----------|---------|
+| `spectra_encoder` present | `GraphSpecDataset` | `collateGraph` |
+| no `spectra_encoder` + `spectra_fingerpint` in `cfg.model.extra_features`| `GraphDatasetWithFP` | `collateGraph` |
+| no `spectra_encoder` + pipeline distributed | `GraphDatasetFromSMILEs` | `collateGraphStatic` (n_max auto-derived from dataset) |
+| else | `GraphDatasetFromSMILEs` | `collateGraph` |
 
-Returns `(train_dataset, valid_dataset, arch_class, collate_fn)`. Note that `arch` is returned
-as a **class**, not an instance — instantiation happens later in `train()` via
-`arch.init_from_cfg(...)` or `arch.load_pretrained(...)`.
+
 
 ```python
-train_dataset, valid_dataset, arch, collate_fn = setup_model_mode(cfg)
+train_dataset, valid_dataset, collate_fn = setup_model_mode(cfg)
 ```
-
-When pipeline parallelism is active (`cfg.train.distributed == "pipeline"`), `collateGraphStatic`
-is used with `n_max = len(train_dataset.num_atoms_dist)` so all batches have a fixed shape.
 
 ---
 
@@ -122,7 +120,6 @@ is used with `n_max = len(train_dataset.num_atoms_dist)` so all batches have a f
 Runs reconstruction evaluation on the validation set. For each batch it:
 1. Noises the graph with `model.noiser`
 2. Runs `model.forward` to get predicted node and edge logits
-3. Converts predictions and ground truth to SMILES and computes reconstruction metrics
 4. Computes per-atom-type node accuracy and per-edge-type edge accuracy
 
 Returns a flat `dict[str, float]` of averaged metrics across the full loader.
@@ -138,8 +135,8 @@ eval_metrics = do_eval(
 #                    "accuracy_edge_SINGLE", ..., "accuracy_edge_global", ...
 ```
 
-> **Note:** `do_eval` only measures reconstruction quality. Generation metrics (validity, …)
-> are computed separately by `generate_samples` / `generate_samples_from_spec`.
+> **Note:** `do_eval` corresponds to the training task (randomly noise and try to predict sample).
+> Generation quality is computed separately by `generate_samples` / `generate_samples_from_fp`.
 
 ---
 
@@ -169,9 +166,9 @@ gen_metrics = generate_samples(
 
 ---
 
-### `generate_samples_from_spec(model, num_samples, eval_dataloader) -> dict[str, list]`
+### `generate_samples_from_fp(model, num_samples, eval_dataloader) -> dict[str, list]`
 
-Generates molecules conditioned on spectra drawn from `eval_dataloader`. For each batch, node
+Generates molecules conditioned on fingerprint drawn from `eval_dataloader`. For each batch, node
 counts are matched to the ground-truth molecules (`n = mask.sum(-1)`). Iterates until
 `num_samples` have been generated; stops early if the dataloader is exhausted.
 
@@ -197,6 +194,9 @@ gen_metrics = generate_samples_from_spec(
 
 ---
 
+
+
+
 ### `allreduce_eval_metrics(eval_metrics: dict[str, float]) -> dict[str, float]`
 
 Gathers `eval_metrics` dicts from all DDP ranks via `all_gather_object` and returns a single
@@ -208,6 +208,8 @@ Gathers `gen_metrics` dicts from all DDP ranks via `all_gather_object` and **con
 the per-sample lists, giving a single combined dict over all ranks. Used to merge the partial
 generation results when each rank generates only `num_samples // world_size` molecules.
 
+> In case of DDP setting the script makes each rank work on the eval stage.
+> These functions are used to sync their results.
 ---
 
 ## `log_utils.py` — WandB Logging
@@ -327,6 +329,6 @@ train:
   num_train_steps: 100000
   save_path: logs/msg/baseline_no_ms2
   save_steps: 4000
-  distributed: "pipeline"
+  distributed: "data"
   num_microbatches: 4
 ```

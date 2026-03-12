@@ -43,7 +43,7 @@ All molecules are represented as:
 - **Mask** `mask`: `(bs, n)` bool tensor — `True` for real atoms, `False` for padding
 - **Global** `y`: `(bs, d)` float32 conditioning vector (e.g., spectral fingerprint)
 
-Elements: C, N, O, S, P, F, Cl, Br, I, B, As, Si, Se, Fe, Co, K, Na
+Elements: C, N, O, S, P, F, Cl, Br, I, B, As, Si, Se, Fe, Co, K, Na.
 Bond types: NoBond, SINGLE, DOUBLE, TRIPLE, AROMATIC
 
 ## Checkpoint Format
@@ -63,13 +63,13 @@ Bond types: NoBond, SINGLE, DOUBLE, TRIPLE, AROMATIC
 ```bash
 # Training
 python annotix_ml/graphtransf/train/train.py \
-    --config configs/graphtransf/qm9/medium_arhc/long.yaml
+    --config configs/graphtransf/qm9/medium_arch/long.yaml
 
 # Molecule generation
 python -m annotix_ml/graphtransf/generate_molecules.py \
     --num_samples 100 \
     --model_checkpoint logs/model.pt \
-    --config_path configs/graphtransf/qm9/medium_arhc/long.yaml
+    --config_path configs/graphtransf/qm9/medium_arch/long.yaml
 ```
 
 ### Distributed Training with torchrun
@@ -82,42 +82,17 @@ Set `model.distributed_strategy: "data"` in your config.
 ```bash
 torchrun \
     --standalone \
-    --nproc_per_node 4 \
-    -m annotix_ml/graphtransf/train/train.py \
+    --nproc-per-node 4 \
+    annotix_ml/graphtransf/train/train.py \
     --config configs/experiments/baseline.yaml \
-    model.distributed_strategy=data
+    --distributed-strat data
 ```
 
-**Multiple nodes** (e.g. 2 nodes × 4 GPUs = 8 processes):
-
-```bash
-# Run on every node — set MASTER_ADDR to the hostname of node 0
-torchrun \
-    --nnodes 2 \
-    --nproc_per_node 4 \
-    --node_rank $NODE_RANK \
-    --master_addr $MASTER_ADDR \
-    --master_port 29500 \
-    -m annotix_ml/graphtransf/train/train.py \
-    --config configs/experiments/baseline.yaml \
-    model.distributed_strategy=data
-```
 
 **Pipeline parallelism** (layers split across GPUs, requires static shapes):
 > ⚠️ pp has been deprecated since 02/2026 and should not work with most of the
 > current objects.
 > PP raise issues a little bit everywhere in the implementation, but the most
 > important one is with the generation of new samples.
-```bash
-torchrun \
-    --standalone \
-    --nproc_per_node 4 \
-    -m annotix_ml.graphtransf.train.train \
-    --config configs/experiments/baseline.yaml \
-    model.distributed_strategy=pipeline
-```
-
-> **Note:** Pipeline parallelism requires a fixed maximum graph size. Set `dataset.max_nodes`
-> in your config — the collator will pad all graphs to that size.
 
 See [`distributed.md`](distributed.md) for implementation details.

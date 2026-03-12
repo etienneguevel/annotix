@@ -243,12 +243,6 @@ collate_fn = partial(collateGraphStatic, n_max=50)
 
 ---
 
-### `collateGraphJagged(batch)`
-
-Experimental jagged-tensor collator. Stacks all graphs into one flat `(1, L, d)` tensor and computes a `FlexAttention` block mask. Not used in the main training pipeline.
-
----
-
 ## `samplers.py` — Infinite Sampler
 
 ### `InfiniteSampler`
