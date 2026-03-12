@@ -271,7 +271,6 @@ def generate_samples_from_fp(
     iter_loader = iter(eval_dataloader)
 
     rank = dist.get_global_rank()
-    num_ranks = dist.get_global_size()
     num_batches = math.ceil(num_samples / eval_dataloader.batch_size)
     pbar = tqdm(
         total=num_batches,

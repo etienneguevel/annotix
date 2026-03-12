@@ -294,7 +294,7 @@ class DigressMetaArch:
             max_weight,
         )
 
-        saved = torch.load(model_path, weights_only=True)
+        saved = torch.load(model_path, weights_only=True, map_location=device)
         # Unwrap the "checkpoint" envelope used by the new save format;
         # fall back to the raw dict for old-format files.
         state = (

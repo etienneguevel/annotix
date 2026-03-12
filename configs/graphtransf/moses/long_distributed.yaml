@@ -15,7 +15,7 @@ model:
   dy: 64
   n_heads: 8
   n_layers: 12
-  diffusion_steps: 1000
+  diffusion_steps: 500
   noise_strategy: distribution
   num_ev: 5
   extra_features:

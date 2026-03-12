@@ -324,6 +324,22 @@ def train(cfg):
     metrics = defaultdict(list)
     train_metrics = defaultdict(list)
 
+    # Save dataset metadata once so the model can be reloaded without the dataset
+    if dist.is_main_process():
+        dataset_meta_path = os.path.join(save_path, "dataset_meta.json")
+        if not os.path.isfile(dataset_meta_path):
+            with open(dataset_meta_path, "w") as f:
+                json.dump(
+                    {
+                        "valid_elements": train_dataset.valid_elements,
+                        "nodes_distribution": train_dataset.nodes_distribution.tolist(),
+                        "edges_distribution": train_dataset.edges_distribution.tolist(),
+                        "max_weight": train_dataset.max_weight,
+                        "num_atoms_dist": train_dataset.num_atoms_dist.tolist(),
+                    },
+                    f,
+                )
+
     # Start the training loop
     step_offset = last_epoch + 1 if last_epoch > 0 else 0
 
