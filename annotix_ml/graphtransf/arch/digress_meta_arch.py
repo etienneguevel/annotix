@@ -26,6 +26,21 @@ from annotix_ml.graphtransf.math.losses import digress_loss
 from annotix_ml.graphtransf.math.noising import sample_discrete_features
 
 
+def _unwrap_module(module):
+    """Unwrap DDP (.module) and torch.compile (._orig_mod)."""
+    module = getattr(module, "module", module)
+    module = getattr(module, "_orig_mod", module)
+    return module
+
+
+def _strip_orig_mod(state_dict):
+    """Strip '_orig_mod.' prefix from keys (saved by torch.compile)."""
+    prefix = "_orig_mod."
+    if any(k.startswith(prefix) for k in state_dict):
+        return {k.removeprefix(prefix): v for k, v in state_dict.items()}
+    return state_dict
+
+
 class DigressMetaArch:
     """
     Architecture for the DiGress model.
@@ -314,10 +329,10 @@ class DigressMetaArch:
 
     def checkpoint_state_dict(self) -> dict:
         """Return the state dict for checkpointing."""
-        diffuser = getattr(self.diffuser, "module", self.diffuser)
+        diffuser = _unwrap_module(self.diffuser)
         state = {"model": diffuser.state_dict()}
         if self.fp_projector is not None:
-            projector = getattr(self.fp_projector, "module", self.fp_projector)
+            projector = _unwrap_module(self.fp_projector)
             state["fp_projector"] = projector.state_dict()
         return state
 
@@ -325,18 +340,18 @@ class DigressMetaArch:
         """Load the model state from a checkpoint state dict."""
         # Support both the old format (bare state_dict) and the new format
         # ({"model": state_dict, "optimizer": ...}).
-        diffuser = getattr(self.diffuser, "module", self.diffuser)
+        diffuser = _unwrap_module(self.diffuser)
         if isinstance(state, dict) and "model" in state:
-            diffuser.load_state_dict(state["model"])
+            diffuser.load_state_dict(_strip_orig_mod(state["model"]))
         else:
-            diffuser.load_state_dict(state)
+            diffuser.load_state_dict(_strip_orig_mod(state))
         if (
             self.fp_projector is not None
             and isinstance(state, dict)
             and "fp_projector" in state
         ):
-            projector = getattr(self.fp_projector, "module", self.fp_projector)
-            projector.load_state_dict(state["fp_projector"])
+            projector = _unwrap_module(self.fp_projector)
+            projector.load_state_dict(_strip_orig_mod(state["fp_projector"]))
 
     def sync_extra_gradients(self):
         """
