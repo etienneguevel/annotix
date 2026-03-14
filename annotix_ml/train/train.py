@@ -350,7 +350,6 @@ def train(cfg):
         range(step_offset, cfg.train.num_train_steps),
         desc="Training",
         disable=not dist.is_main_process(),
-        initial=step_offset,
     )
 
     if dist.is_enabled():
@@ -368,12 +367,10 @@ def train(cfg):
         skip_window = False
         losses_for_log = []
         accumulated_metrics = defaultdict(list)
-        last_batch = None
 
         for accum_i in range(accum_steps):
             batch = next(train_iter)
             batch = [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
-            last_batch = batch
 
             is_last_accum = accum_i == accum_steps - 1
             sync_ctx = (
