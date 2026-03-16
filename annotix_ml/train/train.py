@@ -136,7 +136,11 @@ def train(cfg):
                 if "checkpoint" in pretrain_model.keys()
                 else pretrain_model.get("model")
             )
-            weights = {k: v for k, v in weights.items() if "EmbeddingNodes" not in k}
+            weights = {
+                k: v
+                for k, v in weights.items()
+                if all([m not in k for m in ["MLPN", "EmbeddingNodes"]])
+            }
 
             digress = DigressMetaArch.init_from_cfg(
                 cfg,
