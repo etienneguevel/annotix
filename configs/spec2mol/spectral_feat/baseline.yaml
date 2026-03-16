@@ -9,16 +9,16 @@ dataset:
   datadir: data/BanyulsInference
   labels_file: data/BanyulsInference/labels.tsv
   morgan_nbits: 2048
-  cache_path: data/cache/msg_50nodes
+  cache_path: data/cache/msg_70nodes
   val_tag: test
-  max_nodes: 40
+  max_nodes: 70
 
 model:
   y_update: False
   no_y: True
   diffusion_steps: 500
   noise_strategy: distribution
-  num_ev: 2
+  num_ev: 5
   extra_features:
     - laplacian_embedding
     - node_cycle
@@ -46,5 +46,4 @@ train:
   num_train_steps: 100000
   save_path: logs/msg/baseline_no_ms2
   save_steps: 4000
-  distributed: "pipeline"
-  num_microbatches: 4
+  distributed: "data"

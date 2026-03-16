@@ -47,6 +47,7 @@ def get_args():
         action="store_true",
         default=False,
     )
+    parser.add_argument("--pretrain-path", type=str, required=False)
 
     return parser.parse_args()
 
@@ -107,6 +108,45 @@ def train(cfg):
             train_dataset.edges_distribution,
             train_dataset.max_weight,
         )
+
+    elif (pretrain_path := cfg.train.pretrain_path) is not None:
+        with open(os.path.join(pretrain_path, "dataset_meta.json")) as f:
+            dataset_meta = json.load(f)
+
+        model_path = os.path.join(pretrain_path, "pretrained_model.pt")
+
+        # Check if the atoms used for pretrained model and this dataset are the same
+        if set(train_dataset.valid_elements) == set(dataset_meta.get("valid_elements")):
+            digress = DigressMetaArch.load_pretrained(
+                cfg,
+                device,
+                model_path,
+                train_dataset.valid_elements,
+                train_dataset.nodes_distribution,
+                train_dataset.edges_distribution,
+                train_dataset.max_weight,
+            )
+
+        else:
+            pretrain_model = torch.load(
+                model_path, weights_only=True, map_location=device
+            )
+            weights = (
+                pretrain_model.get("checkpoint").get("model")
+                if "checkpoint" in pretrain_model.keys()
+                else pretrain_model.get("model")
+            )
+            weights = {k: v for k, v in weights.items() if "EmbeddingNodes" not in k}
+
+            digress = DigressMetaArch.init_from_cfg(
+                cfg,
+                device,
+                train_dataset.valid_elements,
+                train_dataset.nodes_distribution,
+                train_dataset.edges_distribution,
+                max_weight=train_dataset.max_weight,
+            )
+            digress.load_checkpoint_state_dict({"model": weights}, strict=False)
 
     else:
         # Define the model

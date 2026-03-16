@@ -1,3 +1,4 @@
+import os
 from functools import partial
 
 import torch
@@ -14,9 +15,15 @@ from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowin
 
 
 def setup(args):
-    # Load default config
-    default_cfg_path = BASE_DIR / "configs" / "default_config.yaml"
-    default_cfg = OmegaConf.load(default_cfg_path)
+    # Check if there is a pretrain path indicated, if so load cfg from it as base
+    if args.pretrain_path is not None:
+        default_cfg = OmegaConf.load(os.path.join(args.pretrain_path, "config.yaml"))
+        default_cfg.train.pretrain_path = args.pretrain_path
+
+    else:
+        # Else load default config
+        default_cfg_path = BASE_DIR / "configs" / "default_config.yaml"
+        default_cfg = OmegaConf.load(default_cfg_path)
 
     # Load user config
     user_cfg = OmegaConf.load(args.config)

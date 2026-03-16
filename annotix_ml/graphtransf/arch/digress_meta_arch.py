@@ -336,22 +336,24 @@ class DigressMetaArch:
             state["fp_projector"] = projector.state_dict()
         return state
 
-    def load_checkpoint_state_dict(self, state: dict):
+    def load_checkpoint_state_dict(self, state: dict, strict: bool = True):
         """Load the model state from a checkpoint state dict."""
         # Support both the old format (bare state_dict) and the new format
         # ({"model": state_dict, "optimizer": ...}).
         diffuser = _unwrap_module(self.diffuser)
         if isinstance(state, dict) and "model" in state:
-            diffuser.load_state_dict(_strip_orig_mod(state["model"]))
+            diffuser.load_state_dict(_strip_orig_mod(state["model"]), strict=strict)
         else:
-            diffuser.load_state_dict(_strip_orig_mod(state))
+            diffuser.load_state_dict(_strip_orig_mod(state), strict=strict)
         if (
             self.fp_projector is not None
             and isinstance(state, dict)
             and "fp_projector" in state
         ):
             projector = _unwrap_module(self.fp_projector)
-            projector.load_state_dict(_strip_orig_mod(state["fp_projector"]))
+            projector.load_state_dict(
+                _strip_orig_mod(state["fp_projector"]), strict=strict
+            )
 
     def sync_extra_gradients(self):
         """
