@@ -4,6 +4,7 @@ run:
 
 dataset:
   data_path: data/qm9.csv
+  cache_path: data/cache/qm9
 
 model:
   arch: defog
@@ -26,6 +27,7 @@ train:
   num_train_steps: 100000
   save_steps: 20000
   save_path: logs/qm9_defog_baseline
+  compile: False
 
 valid:
   batch_size: 1024

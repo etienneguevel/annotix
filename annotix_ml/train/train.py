@@ -122,7 +122,7 @@ def train(cfg):
             train_dataset.max_weight,
         )
 
-    elif (pretrain_path := cfg.train.pretrain_path) is not None:
+    elif (pretrain_path := cfg.train.get("pretrain_path")) is not None:
         with open(os.path.join(pretrain_path, "dataset_meta.json")) as f:
             dataset_meta = json.load(f)
 
