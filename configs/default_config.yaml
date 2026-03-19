@@ -29,8 +29,8 @@ model:
   fp_projector_type: linear
 
 train:
-  global_batch_size: 512 # total effective batch size (all ranks × accum steps)
-  mini_batch_size: 512 # per-rank per-step batch size
+  global_batch_size: 512
+  mini_batch_size: 512
   num_train_steps: 40000
   loss_ratio: 1
   starting_learning_rate: 0.0002
