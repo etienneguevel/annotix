@@ -14,7 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import annotix_ml.distributed as dist
-from annotix_ml.graphtransf.arch import DigressMetaArch
+from annotix_ml.graphtransf.arch import DigressMetaArch, DefogMetaArch
 from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import (
@@ -52,6 +52,12 @@ def get_args():
     return parser.parse_args()
 
 
+_ARCH_CLASSES = {
+    "digress": DigressMetaArch,
+    "defog": DefogMetaArch,
+}
+
+
 def train(cfg):
     # Select the device for the training
     device = (
@@ -62,6 +68,13 @@ def train(cfg):
         else torch.device("cpu")
     )
     print(f"Using device: {device}\n")
+
+    arch_name = cfg.model.get("arch", "digress")
+    if arch_name not in _ARCH_CLASSES:
+        raise ValueError(
+            f"Unknown arch: {arch_name!r}. Expected one of {list(_ARCH_CLASSES)}"
+        )
+    arch_cls = _ARCH_CLASSES[arch_name]
 
     # Determine the collation function and distributed data rank/size
     data_rank = dist.get_global_rank()
@@ -99,7 +112,7 @@ def train(cfg):
         last_epoch = int(last_checkpoint.split(".")[0])
 
         print(f"Checkpoints found, loading from the weights at {checkpoint_path}.")
-        digress = DigressMetaArch.load_pretrained(
+        digress = arch_cls.load_pretrained(
             cfg,
             device,
             checkpoint_path,
@@ -117,7 +130,7 @@ def train(cfg):
 
         # Check if the atoms used for pretrained model and this dataset are the same
         if set(train_dataset.valid_elements) == set(dataset_meta.get("valid_elements")):
-            digress = DigressMetaArch.load_pretrained(
+            digress = arch_cls.load_pretrained(
                 cfg,
                 device,
                 model_path,
@@ -142,7 +155,7 @@ def train(cfg):
                 if all([m not in k for m in ["MLPN", "EmbeddingNodes"]])
             }
 
-            digress = DigressMetaArch.init_from_cfg(
+            digress = arch_cls.init_from_cfg(
                 cfg,
                 device,
                 train_dataset.valid_elements,
@@ -155,7 +168,7 @@ def train(cfg):
     else:
         # Define the model
         print("No checkpoints found, init from zero.")
-        digress = DigressMetaArch.init_from_cfg(
+        digress = arch_cls.init_from_cfg(
             cfg,
             device,
             train_dataset.valid_elements,

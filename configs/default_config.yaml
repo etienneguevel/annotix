@@ -18,17 +18,19 @@ model:
   y_update: False
   no_y: True
   diffusion_steps: 500
+  arch: digress
   noise_strategy: distribution
   num_ev: 2
   extra_features:
     - laplacian_embedding
     - node_cycle
     - valence_features
+
   fp_projector_type: linear
 
 train:
-  global_batch_size: 512   # total effective batch size (all ranks × accum steps)
-  mini_batch_size: 512     # per-rank per-step batch size
+  global_batch_size: 512 # total effective batch size (all ranks × accum steps)
+  mini_batch_size: 512 # per-rank per-step batch size
   num_train_steps: 40000
   loss_ratio: 1
   starting_learning_rate: 0.0002
