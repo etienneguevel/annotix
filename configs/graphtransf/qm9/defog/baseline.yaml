@@ -1,0 +1,35 @@
+run:
+  project: annotix_ml
+  name: defog_qm9_baseline
+
+dataset:
+  data_path: data/qm9.csv
+  cache_path: data/cache/qm9
+
+model:
+  arch: defog
+  d: 256
+  de: 64
+  dy: 64
+  n_heads: 8
+  n_layers: 12
+  diffusion_steps: 500
+  noise_strategy: marginal
+  no_y: True
+  num_ev: 2
+  extra_features:
+    - laplacian_embedding
+    - node_cycle
+    - valence_features
+
+train:
+  global_batch_size: 512
+  num_train_steps: 100000
+  save_steps: 20000
+  save_path: logs/qm9_defog_baseline
+  compile: False
+
+valid:
+  batch_size: 1024
+  num_samples: 1024
+  num_eval_steps: 10000

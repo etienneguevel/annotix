@@ -1,1 +1,2 @@
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
+from annotix_ml.graphtransf.arch.defog_meta_arch import DefogMetaArch
