@@ -31,7 +31,7 @@ train:
   global_batch_size: 1024
   num_train_steps: 100000
   save_steps: 10000
-  save_path: logs/moses_defog_baseline
+  save_path: logs/defog/moses_small_polydec
   compile: False
 
 valid:
