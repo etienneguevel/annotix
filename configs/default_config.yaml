@@ -27,6 +27,8 @@ model:
     - valence_features
 
   fp_projector_type: linear
+  train_distortion: identity
+  sample_distortion: identity
 
 train:
   global_batch_size: 512

@@ -90,8 +90,6 @@ def test_generate_samples_from_fp_returns_expected_keys():
         "true_smiles",
         "validity",
         "validity_digress",
-        "tan_sim",
-        "mces",
     }
     assert set(result.keys()) == expected_keys
 

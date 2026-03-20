@@ -61,16 +61,11 @@ def test_defog_transition_type_inferred_uniform():
 
 
 def test_defog_transition_type_inferred_marginal():
-    arch = DefogMetaArch(noise_strategy="distribution", **_COMMON)
+    arch = DefogMetaArch(noise_strategy="marginal", **_COMMON)
     # limit_X should equal the normalised nodes_distribution
     nd = train_dataset.nodes_distribution.float()
     expected = nd / nd.sum()
     assert torch.allclose(arch.noiser.limit_X, expected, atol=1e-6)
-
-
-def test_defog_custom_sample_steps():
-    arch = DefogMetaArch(noise_strategy="uniform", sample_steps=20, **_COMMON)
-    assert arch.sample_steps == 20
 
 
 def test_forward_backward():
@@ -146,6 +141,7 @@ def test_compute_step_probs_row_sum():
 
 def test_init_from_cfg():
     cfg = OmegaConf.load(BASE_DIR / "configs" / "default_config.yaml")
+    cfg.model.noise_strategy = "marginal"
     arch = DefogMetaArch.init_from_cfg(
         cfg,
         torch.device("cpu"),

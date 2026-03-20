@@ -7,7 +7,11 @@ from annotix_ml.data.atoms_data import VALID_ELEMENTS
 from annotix_ml.data.data_utils import mask_any_tensor
 from annotix_ml.distributed import get_global_rank, get_global_size
 from annotix_ml.graphtransf.arch.digress_meta_arch import DigressMetaArch
-from annotix_ml.graphtransf.math.flow_matching import sample_feature_noise
+from annotix_ml.graphtransf.math.flow_matching import (
+    TimeDistorter,
+    sample_feature_noise,
+)
+from annotix_ml.graphtransf.math.losses import digress_loss
 from annotix_ml.graphtransf.math.noising import sample_discrete_features
 from annotix_ml.graphtransf.models.noising_defog import NoisingModelDefog
 
@@ -60,6 +64,8 @@ class DefogMetaArch(DigressMetaArch):
         rdb_crit="x_1",
         eta=0.0,
         omega=0.0,
+        train_distortion="identity",
+        sample_distortion="identity",
     ):
         super().__init__(
             d=d,
@@ -101,6 +107,7 @@ class DefogMetaArch(DigressMetaArch):
         self.rdb_crit = rdb_crit
         self.eta = eta
         self.omega = omega
+        self.time_distorter = TimeDistorter(train_distortion, sample_distortion)
 
     @classmethod
     def init_from_cfg(
@@ -148,7 +155,82 @@ class DefogMetaArch(DigressMetaArch):
             rdb_crit=cfg.model.get("rdb_crit", "x_1"),
             eta=cfg.model.get("eta", 0.0),
             omega=cfg.model.get("omega", 0.0),
+            train_distortion=cfg.model.get("train_distortion", "identity"),
+            sample_distortion=cfg.model.get("sample_distortion", "identity"),
         )
+
+    def forward_backward(
+        self,
+        nodes: torch.Tensor,
+        edges: torch.Tensor,
+        mask: torch.Tensor,
+        fp: torch.Tensor | None = None,
+        loss_scale: float = 1.0,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Override parent to sample time via ``TimeDistorter`` instead of uniform.
+
+        The distorted time is passed explicitly to the noiser so that the model
+        sees more of certain timesteps during training (e.g. cos distortion
+        spends more time near t=0 and t=1).
+        """
+        bs = nodes.shape[0]
+
+        # Sample distorted time and convert to integer steps for the noiser
+        t_float = self.time_distorter.train_ft(bs, nodes.device)  # (bs, 1)
+        t_int = (t_float * self.noiser.T).long().clamp(1, self.noiser.T - 1)
+
+        if self.train_schedule:
+            target = torch.hstack(
+                [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
+            )
+
+            if self.train_model.is_first:
+                N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask, t=t_int)
+                pos_emb, y = self.compute_extra_features(
+                    N_noised, E_noised, mask, sampled_t
+                )
+                if fp is not None:
+                    if self.fp_projector is not None:
+                        fp = self.fp_projector(fp)
+                    y = torch.cat([y, fp], dim=-1)
+
+                input_args = (E_noised, mask, y, pos_emb, N_noised)
+                out = self.train_schedule.step(*input_args)
+
+            elif self.train_model.is_last:
+                losses = []
+                out = self.train_schedule.step(target=target, losses=losses)
+                loss = sum(losses) / len(losses)
+                pN, pE, *_ = out
+
+            else:
+                out = self.train_schedule.step()
+
+        else:
+            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask, t=t_int)
+            pos_emb, y = self.compute_extra_features(
+                N_noised, E_noised, mask, sampled_t
+            )
+            if fp is not None:
+                if self.fp_projector is not None:
+                    fp = self.fp_projector(fp)
+                y = torch.cat([y, fp], dim=-1)
+
+            input_args = (E_noised, mask, y, pos_emb, N_noised)
+            with torch.autocast(
+                device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
+            ):
+                out = self.diffuser(*input_args)
+                pN, pE, *_ = out
+                loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
+
+            self.scaler.scale(loss * loss_scale).backward()
+
+        if out is None:
+            pN, pE, loss = None, None, None
+
+        return pN, pE, loss
 
     @torch.no_grad()
     def generate(
@@ -209,8 +291,6 @@ class DefogMetaArch(DigressMetaArch):
 
             self.diffuser.eval()
 
-            dt = 1.0 / self.sample_steps
-
             if progress_bar:
                 t_range = tqdm(
                     range(self.sample_steps),
@@ -223,8 +303,16 @@ class DefogMetaArch(DigressMetaArch):
 
             try:
                 for t_int in t_range:
-                    t_float = t_int / self.sample_steps
-                    s_float = (t_int + 1) / self.sample_steps
+                    t_raw = torch.tensor(
+                        [t_int / self.sample_steps], device=self.device
+                    )
+                    s_raw = torch.tensor(
+                        [(t_int + 1) / self.sample_steps], device=self.device
+                    )
+
+                    t_distorted = self.time_distorter.sample_ft(t_raw).item()
+                    s_distorted = self.time_distorter.sample_ft(s_raw).item()
+                    dt = max(s_distorted - t_distorted, 1e-6)
 
                     N = N.float().to(self.device)
                     E = E.float().to(self.device)
@@ -233,20 +321,20 @@ class DefogMetaArch(DigressMetaArch):
 
                     t_cond = torch.full(
                         (num_samples, 1),
-                        t_float * self.noiser.T,
-                        device=self.device,  # TODO: Verify that line
+                        t_distorted * self.noiser.T,
+                        device=self.device,
                     )
 
                     pN, pE = self.forward(N, E, mask, t_cond, fp)
                     pN = pN.softmax(-1)
                     pE = pE.softmax(-1)
 
-                    if s_float >= 1.0:
+                    if s_distorted >= 1.0:
                         N, E = sample_discrete_features(pN, pE, mask)
                         break
 
                     t_float_tensor = torch.full(
-                        (num_samples, 1), t_float, device=self.device
+                        (num_samples, 1), t_distorted, device=self.device
                     )
                     R_t_X, R_t_E = self.noiser.compute_rate_matrix(
                         t_float_tensor,

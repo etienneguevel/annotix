@@ -1,5 +1,66 @@
+import math
+
 import torch
 import torch.nn.functional as F
+
+VALID_DISTORTIONS = {"identity", "cos", "revcos", "polyinc", "polydec"}
+
+
+class TimeDistorter:
+    """
+    Warp time during training (to bias which timesteps the model sees)
+    and during generation (to reshape the sampling schedule).
+
+    Ported from DeFoG's ``flow_matching/time_distorter.py``, keeping only the
+    closed-form distortions (identity, cos, revcos, polyinc, polydec).
+
+    Args:
+        train_distortion: Distortion applied when sampling training times.
+        sample_distortion: Distortion applied to the generation schedule.
+    """
+
+    def __init__(
+        self,
+        train_distortion: str = "identity",
+        sample_distortion: str = "identity",
+    ):
+        if train_distortion not in VALID_DISTORTIONS:
+            raise ValueError(
+                f"Unknown train_distortion '{train_distortion}'. "
+                f"Valid: {sorted(VALID_DISTORTIONS)}"
+            )
+        if sample_distortion not in VALID_DISTORTIONS:
+            raise ValueError(
+                f"Unknown sample_distortion '{sample_distortion}'. "
+                f"Valid: {sorted(VALID_DISTORTIONS)}"
+            )
+        self.train_distortion = train_distortion
+        self.sample_distortion = sample_distortion
+
+    def train_ft(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        """Sample distorted training times from U[0,1]. Returns (bs, 1)."""
+        t = torch.rand((batch_size, 1), device=device)
+        return self.apply_distortion(t, self.train_distortion)
+
+    def sample_ft(self, t: torch.Tensor) -> torch.Tensor:
+        """Apply sample distortion to a time tensor. Returns same shape."""
+        return self.apply_distortion(t, self.sample_distortion)
+
+    @staticmethod
+    def apply_distortion(t: torch.Tensor, distortion_type: str) -> torch.Tensor:
+        """Apply a closed-form time distortion to *t* in [0, 1]."""
+        if distortion_type == "identity":
+            return t
+        elif distortion_type == "cos":
+            return (1 - torch.cos(t * math.pi)) / 2
+        elif distortion_type == "revcos":
+            return 2 * t - (1 - torch.cos(t * math.pi)) / 2
+        elif distortion_type == "polyinc":
+            return t**2
+        elif distortion_type == "polydec":
+            return 2 * t - t**2
+        else:
+            raise ValueError(f"Unknown distortion type: {distortion_type}")
 
 
 def p_xt_g_x1(
