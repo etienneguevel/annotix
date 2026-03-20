@@ -3,15 +3,12 @@ from typing import Literal
 
 import torch
 from omegaconf import DictConfig
-from torch.distributed.pipelining import ScheduleGPipe
 from torch.linalg import LinAlgError
-from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
 from annotix_ml.data.atoms_data import TYPE_EDGES, VALID_ELEMENTS
 from annotix_ml.data.data_utils import mask_any_tensor
-from annotix_ml.distributed import get_global_rank, get_local_rank, get_global_size
-from annotix_ml.distributed.pipeline_parallelism import auto_model_split
+from annotix_ml.distributed import get_global_rank, get_global_size
 from annotix_ml.graphtransf.layers.mlp import MLP
 from annotix_ml.graphtransf.models.gnn import GnnNodeEdges, GnnNodeEdgesWithoutY
 from annotix_ml.graphtransf.models.noising import NoisingModel
@@ -168,7 +165,7 @@ class DigressMetaArch:
 
         else:
             pass
-            #raise ValueError(f"{noise_strategy} is not a recognized noise strategy.")
+            # raise ValueError(f"{noise_strategy} is not a recognized noise strategy.")
 
         if (nodes_distribution is None) | (edges_distribution is None):
             raise TypeError("edges or nodes distribution not given.")
@@ -202,13 +199,6 @@ class DigressMetaArch:
                 raise ValueError(
                     f"Unknown fp_projector_type: {fp_projector_type!r}. Expected 'linear' or 'mlp'."
                 )
-
-        # Put some variables in case of distributed training
-        self.rank = -1
-        self.train_schedule = None
-        self.eval_schedule = None
-        self.train_model = None
-        self.eval_model = None
 
     @classmethod
     def init_from_cfg(
@@ -517,48 +507,17 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
         """
-        # Use the schedule to make the forward pass if pp distributed
-        if self.eval_schedule:
-            if self.eval_model.is_first:
-                # Only the first stage needs the extra features; non-first stages
-                # receive intermediate activations from the previous stage via P2P.
-                pos_emb, y = self.compute_extra_features(
-                    nodes, edges, mask, t
-                )  # (bs, node_features), (bs, global_features)
-                if fp is not None:
-                    if self.fp_projector is not None:
-                        fp = self.fp_projector(fp)
-                    y = torch.cat([y, fp], dim=-1)
+        pos_emb, y = self.compute_extra_features(
+            nodes, edges, mask, t
+        )  # (bs, node_features), (bs, global_features)
 
-                input_args = (edges, mask, y, pos_emb, nodes)
-                out = self.eval_schedule.step(*input_args)
+        if fp is not None:
+            if self.fp_projector is not None:
+                fp = self.fp_projector(fp)
+            y = torch.cat([y, fp], dim=-1)
 
-            elif self.eval_model.is_last:
-                out = self.eval_schedule.step()
-                pN, pE, *_ = out
-
-            else:
-                out = self.eval_schedule.step()
-
-        # For data parallelism (DDP), forward() is only called under torch.no_grad()
-        # during eval/generation, so calling self.diffuser directly is correct —
-        # no gradient sync is needed.
-        else:
-            pos_emb, y = self.compute_extra_features(
-                nodes, edges, mask, t
-            )  # (bs, node_features), (bs, global_features)
-
-            # Add the fp if is in the batch
-            if fp is not None:
-                if self.fp_projector is not None:
-                    fp = self.fp_projector(fp)
-                y = torch.cat([y, fp], dim=-1)
-
-            out = self.diffuser(edges, mask, y, pos_emb, nodes)
-            pN, pE, *_ = out
-
-        if out is None:
-            pN, pE = None, None
+        out = self.diffuser(edges, mask, y, pos_emb, nodes)
+        pN, pE, *_ = out
 
         return pN, pE
 
@@ -590,62 +549,26 @@ class DigressMetaArch:
                 - pN (torch.Tensor): Predicted node probabilities of shape (bs, n, natoms).
                 - pE (torch.Tensor): Predicted edge probabilities of shape (bs, n, n, nedges).
                 - loss (torch.Tensor): Scalar total loss. May be None on non-last ranks in
-                  pipeline parallelism.
+                  non-last ranks.
         """
-        # Compute the output of the diffuser, for pp we need to use the schedule
-        if self.train_schedule:
-            # Make the target -> need to stack to be splitted for mb
-            target = torch.hstack(
-                [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
-            )  # (bs, n * natoms + n * n * nedges)
+        N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
+        pos_emb, y = self.compute_extra_features(
+            N_noised, E_noised, mask, sampled_t
+        )  # (bs, node_features), (bs, global_features)
+        if fp is not None:
+            if self.fp_projector is not None:
+                fp = self.fp_projector(fp)
+            y = torch.cat([y, fp], dim=-1)
 
-            if self.train_model.is_first:
-                # Only the first stage needs noised inputs and extra features;
-                # non-first stages receive intermediate activations via P2P.
-                N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
-                pos_emb, y = self.compute_extra_features(
-                    N_noised, E_noised, mask, sampled_t
-                )  # (bs, node_features), (bs, global_features)
+        input_args = (E_noised, mask, y, pos_emb, N_noised)
+        with torch.autocast(
+            device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
+        ):
+            out = self.diffuser(*input_args)
+            pN, pE, *_ = out
+            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
 
-                if fp is not None:
-                    if self.fp_projector is not None:
-                        fp = self.fp_projector(fp)
-                    y = torch.cat([y, fp], dim=-1)
-
-                input_args = (E_noised, mask, y, pos_emb, N_noised)
-                out = self.train_schedule.step(*input_args)
-
-            elif self.train_model.is_last:
-                losses = []
-                out = self.train_schedule.step(target=target, losses=losses)
-                loss = sum(losses) / len(losses)
-                pN, pE, *_ = out
-
-            else:
-                out = self.train_schedule.step()
-
-        else:
-            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask)
-            pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t
-            )  # (bs, node_features), (bs, global_features)
-            if fp is not None:
-                if self.fp_projector is not None:
-                    fp = self.fp_projector(fp)
-                y = torch.cat([y, fp], dim=-1)
-
-            input_args = (E_noised, mask, y, pos_emb, N_noised)
-            with torch.autocast(
-                device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
-            ):
-                out = self.diffuser(*input_args)
-                pN, pE, *_ = out
-                loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
-
-            self.scaler.scale(loss * loss_scale).backward()
-
-        if out is None:
-            pN, pE, loss = None, None, None
+        self.scaler.scale(loss * loss_scale).backward()
 
         return pN, pE, loss
 
@@ -768,10 +691,9 @@ class DigressMetaArch:
                         torch.tensor(t).unsqueeze(-1).expand((num_samples, -1))
                     )  # bs, 1
 
-                    # Forward pass — all ranks must call this to drive the pipeline.
                     pN, pE = self.forward(N, E, mask, t_tensor, fp)
 
-                    # Only the last pipeline rank gets valid predictions.
+                    # Only valid when predictions are not None.
                     if pN is not None and pE is not None:
                         pN = pN.softmax(-1)  #  (bs, n, n_atoms)
                         pE = pE.softmax(-1)  #  (bs, n, n, n_edges)
@@ -812,67 +734,3 @@ class DigressMetaArch:
                     f"{type(e).__name__}: {e}"
                 )
                 i += 1
-
-    # TODO: error when valid bs != train bs -> put an example_batch for eval_model would fix that but make code longer.
-    def _setup_distributed(
-        self, mode: Literal["pipeline", "tensor"], num_microbatches: int, example_batch
-    ):
-        self.rank = get_global_rank()
-        if mode == "pipeline":
-            # Slice the example batch to the micro-batch size
-            N, E, mask = example_batch
-            bs = N.shape[0]
-            mb_size = bs // num_microbatches
-
-            # Make the example microbatch for the pipeline
-            N_mb = N[:mb_size]
-            E_mb = E[:mb_size]
-            mask_mb = mask[:mb_size]
-
-            # Compute the extra features for the example microbatch
-            t = torch.randint(
-                1, self.noiser.T, (mb_size,), device=self.device
-            ).unsqueeze(1)
-            pos_emb, y = self.compute_extra_features(N_mb, E_mb, mask_mb, t=t)
-            example_input = (E_mb, mask_mb, y, pos_emb, N_mb)
-
-            # Move the input to the correct device
-            example_input = tuple(v.to(self.device) for v in example_input)
-
-            # Split the model in pipeline
-            train_model, eval_model = auto_model_split(self.diffuser, example_input)
-            self.train_model = train_model
-            self.eval_model = eval_model
-
-            # Make a loss function for the pipeline
-            def loss_fn(logits: list[torch.Tensor], target: torch.Tensor):
-                # Unpack the predictions in normalized order (h, e, mask)
-                pN, pE, mask = logits
-
-                # Remake the nodes and edges
-                _, n, natoms = pN.shape
-                *_, nedges = pE.shape
-
-                nodes = target[:, : (n * natoms)].unflatten(-1, (n, natoms))
-                edges = target[:, (n * natoms) :].unflatten(-1, (n, n, nedges))
-
-                loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
-                return loss
-
-            self.train_schedule = ScheduleGPipe(
-                train_model, num_microbatches, loss_fn=loss_fn
-            )
-            self.eval_schedule = ScheduleGPipe(eval_model, num_microbatches)
-
-        elif mode == "data":
-            self.diffuser = DDP(self.diffuser, device_ids=[get_local_rank()])
-            if self.fp_projector is not None:
-                self.fp_projector = DDP(
-                    self.fp_projector, device_ids=[get_local_rank()]
-                )
-
-        elif mode == "tensor":
-            pass
-
-        else:
-            raise ValueError(f"{mode} is not a recognized distributed mode.")

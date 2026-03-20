@@ -32,7 +32,6 @@ train:
   num_train_steps: 500000
   save_path: logs/preprocessed_baseline
   nccl_timeout_minutes: 120
-  distributed: data
 
 valid:
   max_eval_samples: 2048

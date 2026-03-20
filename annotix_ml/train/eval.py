@@ -25,7 +25,6 @@ def do_eval(
     model: DigressMetaArch,
     eval_loader: DataLoader,
     device: torch.device,
-    expected_bs: int | None = None,
 ) -> dict[str, float]:
     DisableLog("rdApp.*")
     metrics = defaultdict(list)
@@ -38,12 +37,6 @@ def do_eval(
         # Unpack the elements
         nodes, edges, mask, *args = batch
 
-        # If last batch, then size will be < to the one planned by schedule
-        # To avoid error -> skip it when there is a schedule (ie pp)
-        if model.eval_schedule:
-            if nodes.shape[0] != expected_bs:
-                continue
-
         # Noise the elements
         nodes_noised, edges_noised, sampled_t = model.noiser(nodes, edges, mask)
 
@@ -55,8 +48,6 @@ def do_eval(
         except LinAlgError:
             continue
 
-        # Non-last ranks in pipeline parallelism get None outputs;
-        # they must keep looping so every rank calls schedule.step().
         if p_nodes is None or p_edges is None:
             continue
 

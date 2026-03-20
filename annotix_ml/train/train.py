@@ -8,6 +8,7 @@ from collections import defaultdict
 import torch
 import wandb
 from omegaconf import OmegaConf
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.linalg import LinAlgError
 from torch.utils.data import DataLoader, Subset
 from torch.utils.data.distributed import DistributedSampler
@@ -15,7 +16,6 @@ from tqdm import tqdm
 
 import annotix_ml.distributed as dist
 from annotix_ml.graphtransf.arch import DigressMetaArch, DefogMetaArch
-from annotix_ml.distributed.pipeline_parallelism import save_checkpoint
 from annotix_ml.data.samplers import InfiniteSampler
 from annotix_ml.graphtransf.math.metrics import (
     compute_training_metrics,
@@ -41,7 +41,6 @@ def get_args():
     parser.add_argument("--batch-size", type=int, required=False)
     parser.add_argument("--num-train-steps", type=int, required=False)
     parser.add_argument("--num-diffusion-steps", type=int, required=False)
-    parser.add_argument("--distributed-strat", type=str, required=False)
     parser.add_argument(
         "--main-rank-only-generation",
         action="store_true",
@@ -177,8 +176,8 @@ def train(cfg):
             max_weight=train_dataset.max_weight,
         )
 
-    # Compile the diffuser for faster training (skip for pipeline parallelism)
-    if cfg.train.get("compile", False) and cfg.train.get("distributed") != "pipeline":
+    # Compile the diffuser for faster training
+    if cfg.train.get("compile", False):
         digress.diffuser = torch.compile(digress.diffuser)
         if digress.fp_projector is not None:
             digress.fp_projector = torch.compile(digress.fp_projector)
@@ -219,26 +218,22 @@ def train(cfg):
                         samples_seen_offset = json.load(f).get("total_samples_seen", 0)
 
     # Compute gradient accumulation steps
-    is_ddp = dist.is_enabled() and cfg.train.get("distributed") == "data"
 
-    if cfg.train.get("distributed") == "pipeline":
-        accum_steps = 1
-    else:
-        effective_per_step = cfg.train.mini_batch_size * data_size
-        accum_steps = max(1, cfg.train.global_batch_size // effective_per_step)
-        actual_global_batch = effective_per_step * accum_steps
-        if actual_global_batch != cfg.train.global_batch_size:
-            print(
-                f"Warning: global_batch_size={cfg.train.global_batch_size} is not evenly "
-                f"divisible by mini_batch_size * world_size "
-                f"({cfg.train.mini_batch_size} * {data_size}). "
-                f"Using effective global batch size of {actual_global_batch}."
-            )
+    effective_per_step = cfg.train.mini_batch_size * data_size
+    accum_steps = max(1, cfg.train.global_batch_size // effective_per_step)
+    actual_global_batch = effective_per_step * accum_steps
+    if actual_global_batch != cfg.train.global_batch_size:
         print(
-            f"Gradient accumulation: {accum_steps} steps "
-            f"(mini_batch={cfg.train.mini_batch_size}, world_size={data_size}, "
-            f"effective_global_batch={actual_global_batch})"
+            f"Warning: global_batch_size={cfg.train.global_batch_size} is not evenly "
+            f"divisible by mini_batch_size * world_size "
+            f"({cfg.train.mini_batch_size} * {data_size}). "
+            f"Using effective global batch size of {actual_global_batch}."
         )
+    print(
+        f"Gradient accumulation: {accum_steps} steps "
+        f"(mini_batch={cfg.train.mini_batch_size}, world_size={data_size}, "
+        f"effective_global_batch={actual_global_batch})"
+    )
 
     # Make the DataLoaders
     sample_count = len(train_dataset)
@@ -250,16 +245,6 @@ def train(cfg):
         if (last_epoch > 0 and not shuffle)
         else 0
     )
-
-    # If the training is pipeline dist -> train and valid bs need to be =
-    # TODO : find a way to rm that dependency
-    if cfg.train.get("distributed") == "pipeline":
-        cfg.valid.batch_size = cfg.train.mini_batch_size
-        data_rank = 0
-        data_size = 1
-        print(
-            f"Pipeline Parallelism detected: setting data_rank={data_rank}, data_size={data_size} to synchronize input/targets"
-        )
 
     sampler_type = InfiniteSampler(
         sample_count=sample_count,
@@ -277,7 +262,7 @@ def train(cfg):
         collate_fn=collate_fn,
         num_workers=cfg.train.num_workers,
     )
-    if cfg.train.get("distributed") == "data":
+    if dist.is_enabled():
         valid_sampler = DistributedSampler(
             valid_dataset,
             num_replicas=data_size,
@@ -341,12 +326,13 @@ def train(cfg):
     print(f"Max weight in dataset: {train_dataset.max_weight}")
     print("=" * 50 + "\n")
 
-    # Setup for distributed training
-    if cfg.train.get("distributed") is not None:
-        example_batch = next(iter(train_loader))
-        digress._setup_distributed(
-            cfg.train.distributed, cfg.train.num_microbatches, example_batch
-        )
+    # Setup for distributed training — auto-DDP when world_size > 1
+    if dist.is_enabled() and dist.get_global_size() > 1:
+        digress.diffuser = DDP(digress.diffuser, device_ids=[dist.get_local_rank()])
+        if digress.fp_projector is not None:
+            digress.fp_projector = DDP(
+                digress.fp_projector, device_ids=[dist.get_local_rank()]
+            )
 
     # Make the optimizer
     optimizer = torch.optim.AdamW(
@@ -420,7 +406,7 @@ def train(cfg):
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
 
-        # --- Gradient accumulation inner loop ---
+        # Gradient accumulation inner loop
         skip_window = False
         losses_for_log = []
         accumulated_metrics = defaultdict(list)
@@ -432,7 +418,7 @@ def train(cfg):
             is_last_accum = accum_i == accum_steps - 1
             sync_ctx = (
                 digress.diffuser.no_sync()
-                if is_ddp and not is_last_accum
+                if dist.is_enabled() and not is_last_accum
                 else contextlib.nullcontext()
             )
 
@@ -470,8 +456,8 @@ def train(cfg):
             optimizer.zero_grad()
             continue
 
-        # --- Post-accumulation: sync extra gradients (DDP only) ---
-        if dist.is_enabled() and cfg.train.get("distributed") == "data":
+        # Post-accumulation: sync extra gradients (DDP only)
+        if dist.is_enabled():
             digress.sync_extra_gradients()
 
         total_samples_seen = (
@@ -479,11 +465,11 @@ def train(cfg):
             + (global_step - step_offset) * cfg.train.global_batch_size
         )
 
-        # --- Logging ---
+        # Logging train results
         if losses_for_log:
             avg_loss = sum(losses_for_log) / len(losses_for_log)
             loss_for_log = avg_loss
-            if cfg.train.get("distributed") == "data":
+            if dist.is_enabled():
                 loss_for_log = avg_loss.clone()
                 torch.distributed.all_reduce(
                     loss_for_log, op=torch.distributed.ReduceOp.AVG
@@ -520,53 +506,36 @@ def train(cfg):
 
         # Save the model
         if (global_step % cfg.train.save_steps == 0) & (global_step > 0):
-            if cfg.train.get("distributed") == "pipeline":
-                save_checkpoint(
-                    digress.diffuser,
-                    optimizer,
-                    os.path.join(cfg.train.save_path, f"checkpoint_{global_step}"),
+            if dist.is_main_process():
+                torch.save(
+                    {
+                        "checkpoint": digress.checkpoint_state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                    },
+                    os.path.join(cfg.train.save_path, f"{global_step}.pt"),
                 )
-                if dist.is_main_process():
-                    metadata_path = os.path.join(
-                        cfg.train.save_path, "training_metadata.json"
-                    )
-                    with open(metadata_path, "w") as f:
-                        json.dump({"total_samples_seen": total_samples_seen}, f)
-
-            else:
-                if dist.is_main_process():
-                    torch.save(
-                        {
-                            "checkpoint": digress.checkpoint_state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                        },
-                        os.path.join(cfg.train.save_path, f"{global_step}.pt"),
-                    )
-                    metadata_path = os.path.join(
-                        cfg.train.save_path, "training_metadata.json"
-                    )
-                    with open(metadata_path, "w") as f:
-                        json.dump({"total_samples_seen": total_samples_seen}, f)
+                metadata_path = os.path.join(
+                    cfg.train.save_path, "training_metadata.json"
+                )
+                with open(metadata_path, "w") as f:
+                    json.dump({"total_samples_seen": total_samples_seen}, f)
 
         # Start the evaluation
         if global_step % cfg.valid.num_eval_steps == 0:
             # Make the model in eval mode
             digress.diffuser.eval()
 
-            # Do the evaluation — all ranks must participate for pipeline parallelism
             with torch.no_grad():
-                eval_metrics = do_eval(
-                    digress, valid_loader, device, cfg.valid.batch_size
-                )
+                eval_metrics = do_eval(digress, valid_loader, device)
 
-                if cfg.train.get("distributed") == "data":
+                if dist.is_enabled():
                     torch.distributed.barrier()
                     eval_metrics = allreduce_eval_metrics(eval_metrics)
 
                 main_rank_only_gen = cfg.valid.get("main_rank_only_generation", False)
 
                 # If DDP then we make each rank generates a part of the samples
-                if cfg.train.get("distributed") == "data" and not main_rank_only_gen:
+                if dist.is_enabled() and not main_rank_only_gen:
                     world_size = dist.get_global_size()
                     samples_per_rank = max(1, cfg.valid.num_samples // world_size)
 
@@ -590,7 +559,7 @@ def train(cfg):
                 else:
                     gen_metrics = {}
 
-                if cfg.train.get("distributed") == "data" and not main_rank_only_gen:
+                if dist.is_enabled() and not main_rank_only_gen:
                     torch.distributed.barrier()
                     gen_metrics = allreduce_gen_metrics(gen_metrics)
 
@@ -649,7 +618,7 @@ def train(cfg):
 
             # Barrier so all ranks are synchronized before the next training step.
             # Prevents NCCL timeouts when eval/generation takes asymmetric time.
-            if cfg.train.get("distributed") == "data":
+            if dist.is_enabled():
                 torch.distributed.barrier()
 
         # Stop the training when the desired number of steps has been reached
@@ -657,29 +626,17 @@ def train(cfg):
             break
 
     # Save the final model
-    if cfg.train.get("distributed") == "pipeline":
-        save_checkpoint(
-            digress.diffuser,
-            optimizer,
-            os.path.join(cfg.train.save_path, "final"),
+    if dist.is_main_process():
+        torch.save(
+            {
+                "checkpoint": digress.checkpoint_state_dict(),
+                "optimizer": optimizer.state_dict(),
+            },
+            os.path.join(cfg.train.save_path, "final.pt"),
         )
-        if dist.is_main_process():
-            metadata_path = os.path.join(cfg.train.save_path, "training_metadata.json")
-            with open(metadata_path, "w") as f:
-                json.dump({"total_samples_seen": total_samples_seen}, f)
-
-    else:
-        if dist.is_main_process():
-            torch.save(
-                {
-                    "checkpoint": digress.checkpoint_state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                },
-                os.path.join(cfg.train.save_path, "final.pt"),
-            )
-            metadata_path = os.path.join(cfg.train.save_path, "training_metadata.json")
-            with open(metadata_path, "w") as f:
-                json.dump({"total_samples_seen": total_samples_seen}, f)
+        metadata_path = os.path.join(cfg.train.save_path, "training_metadata.json")
+        with open(metadata_path, "w") as f:
+            json.dump({"total_samples_seen": total_samples_seen}, f)
 
     # Save the metrics (main rank only to avoid concurrent write corruption)
     if dist.is_main_process():
@@ -694,15 +651,8 @@ def main():
     args = get_args()
     cfg = setup(args)
 
-    if cfg.train.get("distributed") == "pipeline":
-        main_rank = "last"
-
-    else:
-        main_rank = "first"
-
     dist.enable(
         overwrite=True,
-        main_rank=main_rank,
         allow_nccl_timeout=True,
         timeout_minutes=cfg.train.get("nccl_timeout_minutes", 30),
     )
