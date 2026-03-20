@@ -167,7 +167,8 @@ class DigressMetaArch:
             pass
 
         else:
-            raise ValueError(f"{noise_strategy} is not a recognized noise strategy.")
+            pass
+            #raise ValueError(f"{noise_strategy} is not a recognized noise strategy.")
 
         if (nodes_distribution is None) | (edges_distribution is None):
             raise TypeError("edges or nodes distribution not given.")
