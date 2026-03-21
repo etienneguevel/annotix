@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-import json
 
 import numpy as np
 from matchms import Spectrum
