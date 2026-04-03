@@ -1,5 +1,4 @@
 import os
-from functools import partial
 
 import torch
 from omegaconf import OmegaConf
@@ -8,7 +7,6 @@ import annotix_ml.distributed as dist
 from annotix_ml import BASE_DIR
 from annotix_ml.data.datacollator import (
     collateGraph,
-    collateGraphStatic,
 )
 from annotix_ml.data.loaders import make_datasets, make_spec_datasets
 from annotix_ml.spectraencoder.model.spectra_encoder import SpectraEncoderGrowing
@@ -50,9 +48,6 @@ def setup(args):
     if args.num_diffusion_steps:
         cfg.model.diffusion_steps = args.num_diffusion_steps
 
-    if args.distributed_strat:
-        cfg.train.distributed = args.distributed_strat
-
     if args.main_rank_only_generation:
         cfg.valid.main_rank_only_generation = True
 
@@ -70,8 +65,7 @@ def setup_model_mode(cfg, device):
       pre-computed at dataset time. Uses `collateGraph` as the collate function.
     - **Graph-only path** (`cfg.spectra_encoder` absent): Uses `GraphDatasetWithFP` when
       `"spectra_fingerprint"` is listed in `cfg.model.extra_features`, otherwise uses
-      `GraphDatasetFromSMILEs`. For pipeline-parallel training, switches to
-      `collateGraphStatic` with a fixed `n_max` derived from the training set.
+      `GraphDatasetFromSMILEs`.
 
     Args:
         cfg (DictConfig): Merged OmegaConf configuration object.
@@ -120,13 +114,6 @@ def setup_model_mode(cfg, device):
             max_nodes=cfg.dataset.get("max_nodes"),
         )
 
-        if cfg.train.get("distributed") == "pipeline":
-            # Derive n_max from the distribution of number of atoms
-            n_max = len(train_dataset.num_atoms_dist)
-            collate_fn = partial(collateGraphStatic, n_max=n_max)
-            print(f"Using static shape data collator with n_max={n_max}")
-
-        else:
-            collate_fn = collateGraph
+        collate_fn = collateGraph
 
     return train_dataset, valid_dataset, collate_fn

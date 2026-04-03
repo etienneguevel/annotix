@@ -41,8 +41,6 @@ train:
   save_steps: 1000
   num_workers: 4
   seed: 24
-  distributed:
-  num_microbatches:
   mixed_precision: True
   compile: True
 

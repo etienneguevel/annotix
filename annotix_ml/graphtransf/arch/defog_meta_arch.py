@@ -180,55 +180,22 @@ class DefogMetaArch(DigressMetaArch):
         t_float = self.time_distorter.train_ft(bs, nodes.device)  # (bs, 1)
         t_int = (t_float * self.noiser.T).long().clamp(1, self.noiser.T - 1)
 
-        if self.train_schedule:
-            target = torch.hstack(
-                [nodes.flatten(start_dim=1), edges.flatten(start_dim=1)]
-            )
+        N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask, t=t_int)
+        pos_emb, y = self.compute_extra_features(N_noised, E_noised, mask, sampled_t)
+        if fp is not None:
+            if self.fp_projector is not None:
+                fp = self.fp_projector(fp)
+            y = torch.cat([y, fp], dim=-1)
 
-            if self.train_model.is_first:
-                N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask, t=t_int)
-                pos_emb, y = self.compute_extra_features(
-                    N_noised, E_noised, mask, sampled_t
-                )
-                if fp is not None:
-                    if self.fp_projector is not None:
-                        fp = self.fp_projector(fp)
-                    y = torch.cat([y, fp], dim=-1)
+        input_args = (E_noised, mask, y, pos_emb, N_noised)
+        with torch.autocast(
+            device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
+        ):
+            out = self.diffuser(*input_args)
+            pN, pE, *_ = out
+            loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
 
-                input_args = (E_noised, mask, y, pos_emb, N_noised)
-                out = self.train_schedule.step(*input_args)
-
-            elif self.train_model.is_last:
-                losses = []
-                out = self.train_schedule.step(target=target, losses=losses)
-                loss = sum(losses) / len(losses)
-                pN, pE, *_ = out
-
-            else:
-                out = self.train_schedule.step()
-
-        else:
-            N_noised, E_noised, sampled_t = self.noiser(nodes, edges, mask, t=t_int)
-            pos_emb, y = self.compute_extra_features(
-                N_noised, E_noised, mask, sampled_t
-            )
-            if fp is not None:
-                if self.fp_projector is not None:
-                    fp = self.fp_projector(fp)
-                y = torch.cat([y, fp], dim=-1)
-
-            input_args = (E_noised, mask, y, pos_emb, N_noised)
-            with torch.autocast(
-                device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
-            ):
-                out = self.diffuser(*input_args)
-                pN, pE, *_ = out
-                loss = digress_loss(pN, pE, nodes, edges, mask, self.loss_ratio)
-
-            self.scaler.scale(loss * loss_scale).backward()
-
-        if out is None:
-            pN, pE, loss = None, None, None
+        self.scaler.scale(loss * loss_scale).backward()
 
         return pN, pE, loss
 
