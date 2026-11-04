@@ -195,7 +195,11 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
         super().__init__()
         self.max_nodes = max_nodes
         if isinstance(data, (str, PosixPath)):
-            data = pd.read_csv(data)
+            if data.endswith(".csv"):
+                data = pd.read_csv(data)
+
+            elif data.endswith(".parquet"):
+                data = pd.read_parquet(data)
 
         elif isinstance(data, DataFrame):
             pass

@@ -12,6 +12,7 @@ def make_datasets(
     smile_column: str = "smiles",
     split_column: str = "fold",
     val_tag: str | None = "test",
+    val_path: str | None = None,
     fingerprint: bool = False,
     verbose: bool = True,
     cache_path: str | None = None,
@@ -42,7 +43,7 @@ def make_datasets(
     """
     # Derive per-split cache paths from the base cache_path prefix
     train_cache = f"{cache_path}_train.pt" if cache_path is not None else None
-    valid_cache = f"{cache_path}_valid.pt" if cache_path is not None else None
+    val_cache = f"{cache_path}_valid.pt" if cache_path is not None else None
 
     dataset_type = GraphDatasetWithFP if fingerprint else GraphDatasetFromSMILEs
 
@@ -58,19 +59,33 @@ def make_datasets(
         save_cache=save_cache,
         max_nodes=max_nodes,
     )
-    valid_dataset = dataset_type(
-        data=data_path,
-        smile_column=smile_column,
-        split=val_tag,
-        split_column=split_column,
-        sanitizer=graph_to_smiles_digress,
-        verbose=verbose,
-        cache_path=valid_cache,
-        save_cache=save_cache,
-        max_nodes=max_nodes,
-    )
+    if val_path:
+        val_dataset = dataset_type(
+            data=val_path,
+            smile_column=smile_column,
+            split=None,
+            split_column=None,
+            sanitizer=graph_to_smiles_digress,
+            verbose=verbose,
+            cache_path=val_cache,
+            save_cache=save_cache,
+            max_nodes=max_nodes,
+        )
 
-    return train_dataset, valid_dataset
+    else:
+        val_dataset = dataset_type(
+            data=data_path,
+            smile_column=smile_column,
+            split=val_tag,
+            split_column=split_column,
+            sanitizer=graph_to_smiles_digress,
+            verbose=verbose,
+            cache_path=val_cache,
+            save_cache=save_cache,
+            max_nodes=max_nodes,
+        )
+
+    return train_dataset, val_dataset
 
 
 def make_spec_datasets(

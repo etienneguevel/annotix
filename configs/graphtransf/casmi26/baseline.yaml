@@ -1,0 +1,37 @@
+run:
+  project: annotix_ml_casmi26
+  name: digress_casmi26_baseline
+
+dataset:
+  data_path: data/enveda-CASMI26/train.parquet
+  val_path: data/enveda-CASMI26/test.parquet
+  smile_column: normalized_smiles
+  cache_path: data/cache/casmi_48
+  morgan_nbits: 2048
+  max_nodes: 48
+
+model:
+  d: 256
+  de: 64
+  dy: 64
+  n_heads: 8
+  n_layers: 12
+  diffusion_steps: 500
+  noise_strategy: distribution
+  num_ev: 5
+  extra_features:
+    - laplacian_embedding
+    - node_cycle
+    - valence_features
+    - spectra_fingerprint
+
+train:
+  global_batch_size: 1024
+  mini_batch_size: 64
+  num_train_steps: 500000
+  save_path: logs/casmi26_baseline
+  nccl_timeout_minutes: 120
+
+valid:
+  max_eval_samples: 2048
+  num_eval_steps: 50000

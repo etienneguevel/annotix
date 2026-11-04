@@ -7,14 +7,9 @@ net.json
 *.model
 *.csv
 outputs/
-<<<<<<< HEAD
 resources/
 logs
 profiling/
-=======
-resources/POS_LC.json
-resources/POS_LC_sample_2.json
->>>>>>> a73aea4a51aeae1b30c5b9252577bc8f6484509d
 .env
 .DS_Store
 .vscode
