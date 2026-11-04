@@ -2,6 +2,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
+from annotix_ml import BASE_DIR
 from annotix_ml.data.dataset import GraphDatasetFromSMILEs, GraphDatasetWithFP
 from annotix_ml.data.spec_dataset import GraphSpecDataset
 from annotix_ml.data.data_utils import graph_to_smiles_digress
@@ -42,14 +43,16 @@ def make_datasets(
         tuple[Dataset, Dataset]: A tuple (train_dataset, valid_dataset).
     """
     # Derive per-split cache paths from the base cache_path prefix
-    train_cache = f"{cache_path}_train.pt" if cache_path is not None else None
-    val_cache = f"{cache_path}_valid.pt" if cache_path is not None else None
+    train_cache = (
+        f"{BASE_DIR / cache_path}_train.pt" if cache_path is not None else None
+    )
+    val_cache = f"{BASE_DIR / cache_path}_valid.pt" if cache_path is not None else None
 
     dataset_type = GraphDatasetWithFP if fingerprint else GraphDatasetFromSMILEs
 
     # Make the datasets
     train_dataset = dataset_type(
-        data=data_path,
+        data=BASE_DIR / data_path,
         smile_column=smile_column,
         split="train",
         split_column=split_column,
@@ -61,7 +64,7 @@ def make_datasets(
     )
     if val_path:
         val_dataset = dataset_type(
-            data=val_path,
+            data=BASE_DIR / val_path,
             smile_column=smile_column,
             split=None,
             split_column=None,
@@ -74,7 +77,7 @@ def make_datasets(
 
     else:
         val_dataset = dataset_type(
-            data=data_path,
+            data=BASE_DIR / data_path,
             smile_column=smile_column,
             split=val_tag,
             split_column=split_column,

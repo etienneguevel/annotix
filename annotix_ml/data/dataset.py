@@ -162,7 +162,7 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
 
     def __init__(
         self,
-        data: str | DataFrame,
+        data: str | DataFrame | PosixPath,
         smile_column: str = "smiles",
         split: str | None = None,
         split_column: str | None = None,
