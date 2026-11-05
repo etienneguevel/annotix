@@ -27,10 +27,11 @@ def main():
     df_train = pd.read_parquet(OUT_PATH / "train.parquet")
 
     # Shuffle the data and sample part of its for eval / test (in case of need)
+    col = df_train.columns.get_loc("split")
     df_train = df_train.sample(frac=1, random_state=12)
     df_train["split"] = "train"
-    df_train.iloc[-20000:-10000]["split"] = "val"
-    df_train.iloc[-10000:]["split"] = "test"
+    df_train.iloc[-20000:-10000, col] = "val"
+    df_train.iloc[-10000:, col] = "test"
 
     df_train.to_parquet(OUT_PATH / "train_val_test.parquet", index=False)
 
