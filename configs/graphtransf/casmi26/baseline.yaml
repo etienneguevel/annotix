@@ -3,10 +3,10 @@ run:
   name: digress_casmi26_baseline
 
 dataset:
-  data_path: data/enveda-CASMI26/train.parquet
-  val_path: data/enveda-CASMI26/test.parquet
+  data_path: data/enveda-CASMI26/train_val_test.parquet
   smile_column: normalized_smiles
   cache_path: data/cache/casmi_48
+  val_tag: val
   morgan_nbits: 2048
   max_nodes: 48
 

@@ -13,7 +13,6 @@ def make_datasets(
     smile_column: str = "smiles",
     split_column: str = "fold",
     val_tag: str | None = "test",
-    val_path: str | None = None,
     fingerprint: bool = False,
     verbose: bool = True,
     cache_path: str | None = None,
@@ -62,31 +61,18 @@ def make_datasets(
         save_cache=save_cache,
         max_nodes=max_nodes,
     )
-    if val_path:
-        val_dataset = dataset_type(
-            data=BASE_DIR / val_path,
-            smile_column=smile_column,
-            split=None,
-            split_column=None,
-            sanitizer=graph_to_smiles_digress,
-            verbose=verbose,
-            cache_path=val_cache,
-            save_cache=save_cache,
-            max_nodes=max_nodes,
-        )
 
-    else:
-        val_dataset = dataset_type(
-            data=BASE_DIR / data_path,
-            smile_column=smile_column,
-            split=val_tag,
-            split_column=split_column,
-            sanitizer=graph_to_smiles_digress,
-            verbose=verbose,
-            cache_path=val_cache,
-            save_cache=save_cache,
-            max_nodes=max_nodes,
-        )
+    val_dataset = dataset_type(
+        data=BASE_DIR / data_path,
+        smile_column=smile_column,
+        split=val_tag,
+        split_column=split_column,
+        sanitizer=graph_to_smiles_digress,
+        verbose=verbose,
+        cache_path=val_cache,
+        save_cache=save_cache,
+        max_nodes=max_nodes,
+    )
 
     return train_dataset, val_dataset
 
