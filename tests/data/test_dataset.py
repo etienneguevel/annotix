@@ -103,3 +103,47 @@ def test_graph_dataset_withfp():
     assert nodes.dim() == 2
     assert edges.dim() == 3
     assert fp.dim() == 1
+
+
+def _split_df_missing_element_in_val():
+    # Train contains Cl, val does not -> val auto-detection would yield fewer elements
+    return pd.DataFrame(
+        {
+            "smiles": ["CCCl", "CCO", "CCN", "CCC", "CCO", "CN"],
+            "fold": ["train", "train", "train", "test", "test", "test"],
+        }
+    )
+
+
+def test_make_datasets_val_uses_train_elements(tmp_path):
+    from annotix_ml.data.loaders import make_datasets
+
+    data_path = tmp_path / "data.csv"
+    _split_df_missing_element_in_val().to_csv(data_path, index=False)
+
+    train_ds, valid_ds = make_datasets(
+        str(data_path), split_column="fold", val_tag="test", verbose=False
+    )
+
+    assert "Cl" in train_ds.valid_elements
+    assert valid_ds.valid_elements == train_ds.valid_elements
+    nodes, _ = valid_ds[0]
+    assert nodes.shape[-1] == len(train_ds.valid_elements)
+
+
+def test_cache_rebuilt_on_valid_elements_mismatch(tmp_path):
+    df = _split_df_missing_element_in_val()
+    val_df = df[df.fold == "test"]
+    cache_path = str(tmp_path / "cache_valid.pt")
+
+    # Build a stale cache with auto-detected (reduced) elements
+    stale = GraphDatasetFromSMILEs(val_df, cache_path=cache_path, verbose=False)
+    assert "Cl" not in stale.valid_elements
+
+    expected = ["C", "Cl", "N", "O"]
+    ds = GraphDatasetFromSMILEs(
+        val_df, valid_elements=expected, cache_path=cache_path, verbose=False
+    )
+    assert ds.valid_elements == expected
+    assert ds[0][0].shape[-1] == len(expected)
+    assert torch.load(cache_path, weights_only=False)["valid_elements"] == expected

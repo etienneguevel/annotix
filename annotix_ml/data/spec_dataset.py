@@ -104,9 +104,20 @@ class GraphSpecDataset(Dataset, GraphDatasetMixin):
         self.spec_featurizer = PeakFormula(subform_folder=str(subform_folder), **kwargs)
 
         # Try to load from cache if a cache path is provided
+        cache = None
         if cache_path is not None and os.path.isfile(cache_path):
-            print(f"Loading dataset from cache: {cache_path}")
             cache = torch.load(cache_path, weights_only=False)
+            if valid_elements is not None and list(cache["valid_elements"]) != list(
+                valid_elements
+            ):
+                print(
+                    f"Cache {cache_path} was built with valid_elements="
+                    f"{cache['valid_elements']}, expected {valid_elements}. Rebuilding."
+                )
+                cache = None
+
+        if cache is not None:
+            print(f"Loading dataset from cache: {cache_path}")
             self.smiles = cache["smiles"]
             self.spec_names = cache["spec_names"]
             self.formulas = cache["formulas"]

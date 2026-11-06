@@ -62,11 +62,13 @@ def make_datasets(
         max_nodes=max_nodes,
     )
 
+    # Reuse the train elements so the one-hot columns match the model's natoms
     val_dataset = dataset_type(
         data=BASE_DIR / data_path,
         smile_column=smile_column,
         split=val_tag,
         split_column=split_column,
+        valid_elements=train_dataset.valid_elements,
         sanitizer=graph_to_smiles_digress,
         verbose=verbose,
         cache_path=val_cache,

@@ -216,10 +216,21 @@ class GraphDatasetFromSMILEs(Dataset, GraphDatasetMixin):
         smiles_list = data[smile_column].to_list()
 
         # Try to load from cache if a cache path is provided
+        cache = None
         if cache_path is not None and os.path.isfile(cache_path):
+            cache = torch.load(cache_path, weights_only=False)
+            if valid_elements is not None and list(cache["valid_elements"]) != list(
+                valid_elements
+            ):
+                print(
+                    f"Cache {cache_path} was built with valid_elements="
+                    f"{cache['valid_elements']}, expected {valid_elements}. Rebuilding."
+                )
+                cache = None
+
+        if cache is not None:
             if verbose:
                 print(f"Loading dataset from cache: {cache_path}")
-            cache = torch.load(cache_path, weights_only=False)
             self.smiles = cache["smiles"]
             self.valid_elements = cache["valid_elements"]
             self.nodes_distribution = cache["nodes_distribution"]
